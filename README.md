@@ -3,8 +3,7 @@
 **A Kafka-centric industrial data gateway that dynamically connects OT systems to modern IT, cloud, and AI platforms with zero data loss, full decoupling, and real-time observability.**
 
 ## Overview
-
-Industrial Data Gateway is a protocol-agnostic streaming platform that bridges the gap between Operational Technology (OT) and Information Technology (IT) environments. Built on Apache Kafka as the authoritative data backbone, it provides reliable, replayable, and scalable data flows across manufacturing, oil & gas, utilities, and smart factory environments.
+StreamForge is a protocol-agnostic streaming platform that bridges the gap between Operational Technology (OT) and Information Technology (IT) environments. Built on Apache Kafka as the authoritative data backbone, it provides reliable, replayable, and scalable data flows across manufacturing, oil & gas, utilities, and smart factory environments.
 
 ## Key Features
 
@@ -27,15 +26,15 @@ The system is composed of two distinct planes:
 - **Control Database**: PostgreSQL for configuration state and audit trails
 
 ### Data Plane (Data Movement)
-- **Gateway Runtime**: Edge daemon that manages protocol adapters and local buffering
+- **Gateway Runtime**: Edge daemon that manages protocol adapters and local Kafka
 - **Protocol Adapters**: Containerized plugins for industrial protocols (Modbus, OPC UA, MQTT, XBee)
-- **Kafka Clusters**: Distributed log as the system of record (edge + central)
-- **Sink Services**: Independent consumers for databases, cloud platforms, and analytics
+- **Local Kafka**: Embedded Kafka on each gateway (the only Kafka StreamForge manages)
+- **Sink Services**: Push data to customer's destinations (databases, cloud, or their own Kafka)
 
 ## Project Structure
 
 ```
-industrial-data-gateway/
+streamforge/
 ├── docs/                      # Comprehensive documentation
 │   ├── ARCHITECTURE.md        # System architecture and design decisions
 │   ├── DATA_FLOW.md          # End-to-end data flow documentation
@@ -75,7 +74,7 @@ Data is classified at ingestion:
 - **Logs**: Operational messages (adapter crashed, connection lost)
 
 ### 4. Edge-First Design
-Gateways operate autonomously with local buffering. Network failures don't stop data collection.
+Gateways are fully self-contained with embedded Kafka. No central Kafka required—external Kafka is just another sink option for customers needing multi-gateway aggregation.
 
 ## Quick Start
 
@@ -133,7 +132,8 @@ python -m gateway_runtime.main
 
 ## Documentation
 
-- [Architecture & Design](docs/ARCHITECTURE.md) - Deep dive into system design and decisions
+- [Architecture & Design](docs/ARCHITECTURE.md) - Complete system architecture (30 decisions)
+- [Architecture Decision Records](docs/adr/) - Key design decisions with rationale
 - [Data Flow](docs/DATA_FLOW.md) - End-to-end data flow with examples
 - [Deployment Guide](docs/DEPLOYMENT.md) - Edge, on-prem, and cloud deployment patterns
 - [Security Model](docs/SECURITY.md) - Authentication, authorization, and encryption
