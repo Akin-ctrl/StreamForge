@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GatewayConfig",
+  "type": "object",
+  "required": ["gateway_id", "adapters"],
+  "properties": {
+    "gateway_id": {"type": "string"},
+    "adapters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["adapter_id", "adapter_type", "config"],
+        "properties": {
+          "adapter_id": {"type": "string"},
+          "adapter_type": {"type": "string"},
+          "config": {"type": "object"}
+        }
+      }
+    }
+  }
+}

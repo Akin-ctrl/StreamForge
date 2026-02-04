@@ -1,0 +1,14 @@
+{
+  "type": "record",
+  "name": "TelemetryReading",
+  "namespace": "streamforge.telemetry",
+  "fields": [
+    {"name": "asset_id", "type": "string"},
+    {"name": "parameter", "type": "string"},
+    {"name": "value", "type": "double"},
+    {"name": "unit", "type": "string"},
+    {"name": "quality", "type": "string"},
+    {"name": "device_time", "type": ["null", "string"], "default": null},
+    {"name": "gateway_time", "type": "string"}
+  ]
+}

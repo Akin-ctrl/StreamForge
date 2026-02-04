@@ -1,0 +1,23 @@
+{
+  "gateway_id": "gateway-demo-01",
+  "adapters": [
+    {
+      "adapter_id": "modbus-demo-01",
+      "adapter_type": "modbus_tcp",
+      "config": {
+        "host": "modbus-simulator",
+        "port": 502,
+        "unit_id": 1,
+        "poll_interval_ms": 1000,
+        "registers": [
+          {"address": 40001, "param": "temperature", "type": "float32", "unit": "celsius"}
+        ],
+        "output": {
+          "kafka_bootstrap": "kafka:9092",
+          "topic": "telemetry.raw",
+          "asset_id": "demo_sensor_01"
+        }
+      }
+    }
+  ]
+}

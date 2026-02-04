@@ -2,7 +2,7 @@
 
 from typing import Dict
 
-from adapter_base.base_adapter import BaseAdapter
+from adapters.adapter_base.base_adapter import BaseAdapter
 
 
 class ModbusTcpAdapter(BaseAdapter):
