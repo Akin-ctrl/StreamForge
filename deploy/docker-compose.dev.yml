@@ -4,6 +4,7 @@ services:
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     environment:
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
       KAFKA_PROCESS_ROLES: "broker,controller"
       KAFKA_NODE_ID: 1
       KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
@@ -22,21 +23,35 @@ services:
     ports:
       - "502:502"
 
-  gateway-runtime:
-    image: streamforge/gateway-runtime:dev
+  gateway_runtime:
+    image: streamforge/gateway_runtime:dev
+    build:
+      context: ..
+      dockerfile: gateway_runtime/Dockerfile
     depends_on:
       - kafka
       - modbus-simulator
     volumes:
       - ./gateway_config.sample.json:/config/gateway_config.json:ro
+    environment:
+      GATEWAY_CONFIG: /config/gateway_config.json
+      KAFKA_BOOTSTRAP: kafka:9092
+      HEALTH_HOST: 0.0.0.0
+      HEALTH_PORT: "8088"
 
-  adapter-modbus-tcp:
-    image: streamforge/adapter-modbus-tcp:dev
+  adapter_modbus_tcp:
+    image: streamforge/adapter_modbus_tcp:dev
+    build:
+      context: ../adapters
+      dockerfile: adapter_modbus_tcp/Dockerfile
     depends_on:
       - kafka
       - modbus-simulator
     volumes:
-      - ./gateway_config.sample.json:/config/gateway_config.json:ro
+      - ./adapter_config.sample.json:/config/adapter_config.json:ro
+    environment:
+      ADAPTER_CONFIG: /config/adapter_config.json
+    command: ["sh", "-c", "sleep 3 && python -m adapters.adapter_modbus_tcp.main"]
 
 volumes:
   kafka-data:

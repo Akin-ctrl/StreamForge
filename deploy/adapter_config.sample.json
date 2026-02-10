@@ -1,0 +1,14 @@
+{
+  "host": "modbus-simulator",
+  "port": 5020,
+  "unit_id": 1,
+  "poll_interval_ms": 1000,
+  "registers": [
+    {"address": 40001, "param": "temperature", "type": "float32", "unit": "celsius"}
+  ],
+  "output": {
+    "kafka_bootstrap": "kafka:9092",
+    "topic": "telemetry.raw",
+    "asset_id": "demo_sensor_01"
+  }
+}
