@@ -33,25 +33,34 @@ services:
       - modbus-simulator
     volumes:
       - ./gateway_config.sample.json:/config/gateway_config.json:ro
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       GATEWAY_CONFIG: /config/gateway_config.json
       KAFKA_BOOTSTRAP: kafka:9092
       HEALTH_HOST: 0.0.0.0
       HEALTH_PORT: "8088"
+      DOCKER_NETWORK: deploy_default
+    ports:
+      - "8088:8088"
 
-  adapter_modbus_tcp:
-    image: streamforge/adapter_modbus_tcp:dev
-    build:
-      context: ../adapters
-      dockerfile: adapter_modbus_tcp/Dockerfile
+  kafdrop:
+    image: obsidiandynamics/kafdrop:3.30.0
     depends_on:
       - kafka
-      - modbus-simulator
-    volumes:
-      - ./adapter_config.sample.json:/config/adapter_config.json:ro
     environment:
-      ADAPTER_CONFIG: /config/adapter_config.json
-    command: ["sh", "-c", "sleep 3 && python -m adapters.adapter_modbus_tcp.main"]
+      KAFKA_BROKERCONNECT: kafka:9092
+    ports:
+      - "9000:9000"
+
+  kafka_ui:
+    image: provectuslabs/kafka-ui:latest
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "local"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:9092"
 
 volumes:
   kafka-data:

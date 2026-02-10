@@ -170,12 +170,12 @@ Gateways are fully self-contained:
 - **Deployment**: Docker containers
 - **Isolation**: Each adapter runs in its own container with resource limits
 - **Available Adapters**:
-  - `adapter-modbus-tcp` - Modbus TCP client
-  - `adapter-modbus-rtu` - Modbus RTU over serial
-  - `adapter-opcua` - OPC UA client
-  - `adapter-mqtt` - MQTT subscriber
-  - `adapter-xbee` - XBee wireless
-  - `adapter-lora` - LoRa wireless
+  - `adapter_modbus_tcp` - Modbus TCP client
+  - `adapter_modbus_rtu` - Modbus RTU over serial
+  - `adapter_opcua` - OPC UA client
+  - `adapter_mqtt` - MQTT subscriber
+  - `adapter_xbee` - XBee wireless
+  - `adapter_lora` - LoRa wireless
 
 #### 3. Local Kafka
 - **Deployment**: Embedded single-node KRaft mode
@@ -186,11 +186,11 @@ Gateways are fully self-contained:
 - **Deployment**: Docker containers on gateway
 - **Pattern**: Kafka consumer → external writer
 - **Examples**:
-  - `sink-timescaledb` - Writes to TimescaleDB
-  - `sink-postgres` - Writes to PostgreSQL
-  - `sink-kafka` - Replicates to customer's Kafka cluster
-  - `sink-s3` - Batch writes to S3 in Parquet format
-  - `sink-http` - HTTP POST to cloud endpoints
+  - `sink_timescaledb` - Writes to TimescaleDB
+  - `sink_postgres` - Writes to PostgreSQL
+  - `sink_kafka` - Replicates to customer's Kafka cluster
+  - `sink_s3` - Batch writes to S3 in Parquet format
+  - `sink_http` - HTTP POST to cloud endpoints
 
 #### 5. Validator Module
 - **Deployment**: Module inside Gateway Runtime (not a container)
@@ -280,7 +280,7 @@ Every adapter is a Docker container implementing this interface:
 Passed via environment variable `ADAPTER_CONFIG` (JSON):
 ```json
 {
-  "adapter_id": "adapter-modbus-001",
+  "adapter_id": "adapter_modbus_001",
   "pipeline_id": "factory_line_1",
   "protocol": "modbus_tcp",
   "source": {
@@ -316,7 +316,7 @@ Passed via environment variable `ADAPTER_CONFIG` (JSON):
     "gateway_time": "2026-01-29T10:00:00.456Z"
   },
   "metadata": {
-    "adapter_id": "adapter-modbus-001",
+    "adapter_id": "adapter_modbus_001",
     "adapter_version": "1.2.0"
   }
 }

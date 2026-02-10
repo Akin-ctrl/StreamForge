@@ -111,9 +111,9 @@ services:
     restart: unless-stopped
 
   # Gateway Runtime
-  gateway-runtime:
-    image: streamforge/gateway-runtime:1.0.0
-    container_name: gateway-runtime
+  gateway_runtime:
+    image: streamforge/gateway_runtime:1.0.0
+    container_name: gateway_runtime
     environment:
       CONTROL_API_URL: https://control.streamforge.cloud
       GATEWAY_ID: ${GATEWAY_ID}  # Unique ID
@@ -164,7 +164,7 @@ services:
       REPORT_INTERVAL_SEC: 60
     depends_on:
       - kafka
-      - gateway-runtime
+      - gateway_runtime
     restart: unless-stopped
 ```
 
@@ -191,7 +191,7 @@ cd /opt/streamforge
 docker-compose -f docker-compose.edge.yml up -d
 
 # 5. Verify
-docker-compose logs -f gateway-runtime
+docker-compose logs -f gateway_runtime
 ```
 
 ### Cloud Deployment (Kubernetes)

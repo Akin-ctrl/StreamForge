@@ -70,7 +70,7 @@ Poll Interval: 1000ms
   "adapter": {
     "type": "xbee_modbus",
     "version": "1.2.0",
-    "image": "registry.example.com/adapter-xbee-modbus:1.2.0",
+    "image": "registry.example.com/adapter_xbee_modbus:1.2.0",
     "config": {
       "source": {
         "xbee_port": "/dev/ttyUSB0",
@@ -137,7 +137,7 @@ reading = {
         "kafka_time": None  # Set by Kafka
     },
     "metadata": {
-        "adapter_id": "adapter-xbee-modbus-001",
+        "adapter_id": "adapter_xbee_modbus_001",
         "adapter_version": "1.2.0",
         "pipeline_id": "offshore_well_12"
     }
@@ -642,7 +642,7 @@ INSERT INTO alarms_history (
   },
   "clock_skew_ms": 878,
   "metadata": {
-    "adapter_id": "adapter-xbee-modbus-001",
+    "adapter_id": "adapter_xbee_modbus_001",
     "adapter_version": "1.2.0",
     "pipeline_id": "offshore_well_12",
     "gateway_id": "gateway-rig-alpha",
@@ -672,7 +672,7 @@ INSERT INTO alarms_history (
     "gateway_time": "2025-01-10T08:30:00.150Z"
   },
   "metadata": {
-    "adapter_id": "adapter-modbus-tcp-002",
+    "adapter_id": "adapter_modbus_tcp_002",
     "pipeline_id": "assembly_line_plc_01"
   }
 }
@@ -728,7 +728,7 @@ INSERT INTO alarms_history (
 {
   "classification": "LOG",
   "log_level": "WARNING",
-  "component": "adapter-xbee-modbus-001",
+  "component": "adapter_xbee_modbus_001",
   "message": "XBee communication timeout, retrying...",
   "timestamp": "2025-01-10T12:05:00.456Z",
   "details": {

@@ -6,7 +6,7 @@
       "adapter_type": "modbus_tcp",
       "config": {
         "host": "modbus-simulator",
-        "port": 502,
+        "port": 5020,
         "unit_id": 1,
         "poll_interval_ms": 1000,
         "registers": [

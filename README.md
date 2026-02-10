@@ -41,12 +41,13 @@ streamforge/
 │   ├── DEPLOYMENT.md         # Deployment patterns and guides
 │   └── SECURITY.md           # Security model and best practices
 ├── control-plane/            # Configuration & control API (FastAPI)
-├── gateway-runtime/          # Edge daemon (Python)
+├── gateway_runtime/          # Edge daemon (Python)
 ├── adapters/                 # Protocol adapter implementations
-│   ├── modbus/              # Modbus TCP/RTU adapter
-│   ├── opcua/               # OPC UA adapter
-│   ├── mqtt/                # MQTT adapter
-│   └── xbee-modbus/         # XBee to Modbus virtual adapter
+│   ├── adapter_modbus_tcp/  # Modbus TCP adapter
+│   ├── adapter_modbus_rtu/  # Modbus RTU adapter
+│   ├── adapter_opcua/       # OPC UA adapter
+│   ├── adapter_mqtt/        # MQTT adapter
+│   └── adapter_xbee/        # XBee adapter
 ├── ui/                      # Web interface (React/TypeScript)
 ├── copilot/                 # AI Copilot service (Python)
 ├── sinks/                   # Sink service implementations
@@ -106,7 +107,7 @@ npm install
 npm run dev
 
 # Start gateway runtime (on edge device or locally)
-cd ../gateway-runtime
+cd ../gateway_runtime
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
