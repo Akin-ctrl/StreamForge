@@ -1,4 +1,4 @@
-"""Minimal health endpoint server for Phase 1."""
+"""Minimal health endpoint server."""
 
 from __future__ import annotations
 

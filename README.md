@@ -155,26 +155,26 @@ python -m gateway_runtime.main
 
 ## Roadmap
 
-**Phase 1: Core Platform** (Current)
+**Milestone 1: Core Platform** (Current)
 - ✅ Architecture design complete
 - 🚧 Control plane API
 - 🚧 Gateway runtime engine
 - 🚧 Basic protocol adapters (Modbus, MQTT)
 - 🚧 UI for pipeline configuration
 
-**Phase 2: Reliability & Scale**
+**Milestone 2: Reliability & Scale**
 - Schema registry integration
 - Edge buffering with overflow handling
 - Multi-gateway fleet management
 - Advanced sink services
 
-**Phase 3: Intelligence**
+**Milestone 3: Intelligence**
 - AI Copilot integration
 - Anomaly detection
 - Auto-configuration suggestions
 - Predictive buffering
 
-**Phase 4: Enterprise Features**
+**Milestone 4: Enterprise Features**
 - Advanced RBAC
 - Multi-tenancy
 - SaaS deployment option

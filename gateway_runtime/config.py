@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 import json
+import time
+from urllib import request, error
 
 from gateway_runtime.errors import ConfigError
 
@@ -29,8 +31,8 @@ class ConfigRepository:
     """
     Repository for loading configuration.
 
-    Phase 1: loads static config from local file.
-    Phase 2: swap to Control Plane API.
+    Loads static config from local file.
+    Future versions can swap the source to the Control Plane API.
     """
 
     def __init__(self, path: str, schema_path: str | None = None) -> None:
@@ -88,3 +90,85 @@ class ConfigRepository:
         for item in raw["adapters"]:
             if not all(key in item for key in ("adapter_id", "adapter_type", "config")):
                 raise ConfigError("Each adapter must include 'adapter_id', 'adapter_type', and 'config'")
+
+
+class ControlPlaneConfigRepository(ConfigRepository):
+    """Repository that loads gateway configuration from Control Plane API."""
+
+    def __init__(self, base_url: str, gateway_id: str, token: str, schema_path: str | None = None) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._gateway_id = gateway_id
+        self._token = token
+        self._token_refreshed_at = time.time()
+        if schema_path is None:
+            repo_root = Path(__file__).resolve().parents[1]
+            self._schema_path = repo_root / "schemas" / "gateway_config.schema.json"
+        else:
+            self._schema_path = Path(schema_path)
+
+    def load(self) -> GatewayConfig:
+        """Load and validate gateway configuration from control plane."""
+        # Refresh token if it's been > 24 hours since last refresh
+        if time.time() - self._token_refreshed_at > 86400:
+            self._refresh_token()
+        
+        url = f"{self._base_url}/api/v1/gateways/{self._gateway_id}/config"
+        req = request.Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with request.urlopen(req, timeout=10) as response:
+                payload = response.read().decode("utf-8")
+        except error.HTTPError as exc:
+            raise ConfigError(f"Control Plane config request failed: HTTP {exc.code}") from exc
+        except error.URLError as exc:
+            raise ConfigError(f"Control Plane config request failed: {exc.reason}") from exc
+
+        try:
+            raw = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise ConfigError(f"Control Plane returned invalid JSON: {exc}") from exc
+
+        self._validate(raw)
+
+        adapters = [
+            AdapterConfig(
+                adapter_id=item["adapter_id"],
+                adapter_type=item["adapter_type"],
+                config=item["config"],
+            )
+            for item in raw["adapters"]
+        ]
+
+        return GatewayConfig(gateway_id=raw["gateway_id"], adapters=adapters)
+
+    def _refresh_token(self) -> None:
+        """Refresh the gateway token from the control plane."""
+        url = f"{self._base_url}/api/v1/gateways/{self._gateway_id}/token"
+        req = request.Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with request.urlopen(req, timeout=10) as response:
+                payload = response.read().decode("utf-8")
+        except error.HTTPError as exc:
+            raise ConfigError(f"Token refresh failed: HTTP {exc.code}") from exc
+        except error.URLError as exc:
+            raise ConfigError(f"Token refresh failed: {exc.reason}") from exc
+        
+        try:
+            data = json.loads(payload)
+            self._token = data.get("token")
+            if not self._token:
+                raise ConfigError("Token refresh returned empty token")
+            self._token_refreshed_at = time.time()
+        except json.JSONDecodeError as exc:
+            raise ConfigError(f"Token refresh returned invalid JSON: {exc}") from exc

@@ -15,8 +15,6 @@ from gateway_runtime.errors import AdapterStartError
 class AdapterManager:
     """
     Starts and monitors adapter containers.
-
-    Phase 1: Manage Docker containers for adapters.
     """
 
     def __init__(self, factory: AdapterFactory) -> None:
@@ -68,6 +66,53 @@ class AdapterManager:
         for adapter_id, container_id in list(self._containers.items()):
             self._stop_container(client, container_id)
             self._containers.pop(adapter_id, None)
+
+    def start_adapter(self, config: AdapterConfig) -> None:
+        """Start a single adapter with given config."""
+        if config.adapter_id in self._containers:
+            # Already running; stop it first to apply new config
+            self.stop_adapter(config.adapter_id)
+        
+        client = self._docker_client()
+        network = self._resolve_network(client)
+        
+        container_name = self._container_name(config.adapter_id)
+        image = self._image_for(config.adapter_type)
+        env = {
+            "ADAPTER_CONFIG_JSON": json.dumps(config.config),
+            "ADAPTER_CONFIG": json.dumps(config.config),
+        }
+        
+        labels = {
+            "app": "streamforge",
+            "component": "adapter",
+            "adapter_id": config.adapter_id,
+            "adapter_type": config.adapter_type,
+        }
+        labels.update(self._compose_labels())
+        
+        container = self._ensure_container(
+            client=client,
+            name=container_name,
+            image=image,
+            environment=env,
+            network=network,
+            labels=labels,
+        )
+        
+        self._containers[config.adapter_id] = container.id
+        print(f"adapter_manager started {config.adapter_id} as {container.name}", flush=True)
+
+    def stop_adapter(self, adapter_id: str) -> None:
+        """Stop a single adapter by ID."""
+        if adapter_id not in self._containers:
+            return
+        
+        client = self._docker_client()
+        container_id = self._containers[adapter_id]
+        self._stop_container(client, container_id)
+        self._containers.pop(adapter_id, None)
+        print(f"adapter_manager stopped {adapter_id}", flush=True)
 
     def restart(self, adapter_id: str) -> None:
         """Restart a specific adapter by ID."""

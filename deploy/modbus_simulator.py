@@ -1,4 +1,4 @@
-"""Modbus simulator skeleton (Phase 1)."""
+"""Modbus simulator skeleton."""
 
 
 def main() -> None:

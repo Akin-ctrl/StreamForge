@@ -1,6 +1,30 @@
 version: "3.9"
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: streamforge
+      POSTGRES_USER: streamforge
+      POSTGRES_PASSWORD: streamforge
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  control_plane:
+    image: streamforge/control-plane:dev
+    build:
+      context: ../control-plane
+      dockerfile: Dockerfile
+    depends_on:
+      - postgres
+    environment:
+      SF_DATABASE_URL: postgresql+psycopg://streamforge:streamforge@postgres:5432/streamforge
+      SF_JWT_SECRET: streamforge-dev-secret
+    ports:
+      - "8001:8000"
+
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     environment:
@@ -31,11 +55,28 @@ services:
     depends_on:
       - kafka
       - modbus-simulator
+      - control_plane
     volumes:
       - ./gateway_config.sample.json:/config/gateway_config.json:ro
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      GATEWAY_CONFIG: /config/gateway_config.json
+      # Static config (uncomment to use instead of control-plane polling)
+      # GATEWAY_CONFIG: /config/gateway_config.json
+      
+      # Control-plane polling configuration (used for dynamic config)
+      CONTROL_PLANE_URL: http://control_plane:8000
+      CONTROL_PLANE_GATEWAY_ID: gateway-demo-01
+      CONTROL_PLANE_TOKEN: <gateway-jwt-token>
+      
+      # Polling behavior tuning
+      # GATEWAY_POLL_INTERVAL: Poll control-plane every N seconds (default: 30)
+      GATEWAY_POLL_INTERVAL: "30"
+      # GATEWAY_POLL_BACKOFF_MULTIPLIER: Exponential backoff multiplier on errors (default: 2.0)
+      GATEWAY_POLL_BACKOFF_MULTIPLIER: "2.0"
+      # GATEWAY_POLL_MAX_BACKOFF: Maximum backoff time in seconds (default: 300)
+      GATEWAY_POLL_MAX_BACKOFF: "300"
+      
+      # Kafka and runtime configuration
       KAFKA_BOOTSTRAP: kafka:9092
       HEALTH_HOST: 0.0.0.0
       HEALTH_PORT: "8088"
@@ -64,3 +105,4 @@ services:
 
 volumes:
   kafka-data:
+  postgres-data:

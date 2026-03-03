@@ -8,8 +8,6 @@ from gateway_runtime.errors import AdapterStartError
 class AdapterFactory:
     """
     Factory for creating adapters from config.
-
-    Phase 1 supports only Modbus TCP.
     """
 
     def create(self, config: AdapterConfig):

@@ -12,10 +12,6 @@ from gateway_runtime.errors import KafkaError
 class KafkaManager:
     """
     Manages local Kafka lifecycle (embedded single-node KRaft).
-
-    Phase 1 behavior:
-    - Start/stop Kafka container
-    - Provide bootstrap address
     """
 
     def __init__(self, bootstrap: str) -> None:

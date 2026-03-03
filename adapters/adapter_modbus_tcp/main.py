@@ -1,4 +1,4 @@
-"""Modbus TCP adapter entrypoint (Phase 1)."""
+"""Modbus TCP adapter entrypoint."""
 
 from __future__ import annotations
 
