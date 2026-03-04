@@ -1,0 +1,48 @@
+{
+  "type": "record",
+  "name": "AlarmMessage",
+  "namespace": "streamforge.alarm",
+  "fields": [
+    {"name": "alarm_id", "type": "string"},
+    {"name": "asset_id", "type": "string"},
+    {"name": "type", "type": "string"},
+    {
+      "name": "severity",
+      "type": {
+        "type": "enum",
+        "name": "Severity",
+        "symbols": ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
+      }
+    },
+    {
+      "name": "state",
+      "type": {
+        "type": "enum",
+        "name": "AlarmState",
+        "symbols": ["ACTIVE", "ACKNOWLEDGED", "CLEARED", "SUPPRESSED"]
+      }
+    },
+    {"name": "classification", "type": {"type": "enum", "name": "AlarmClassification", "symbols": ["ALARM"]}, "default": "ALARM"},
+    {"name": "raised_at", "type": "string"},
+    {"name": "acked_at", "type": ["null", "string"], "default": null},
+    {"name": "acked_by", "type": ["null", "string"], "default": null},
+    {"name": "cleared_at", "type": ["null", "string"], "default": null},
+    {"name": "suppressed_at", "type": ["null", "string"], "default": null},
+    {"name": "suppressed_by", "type": ["null", "string"], "default": null},
+    {"name": "value", "type": ["null", "int", "long", "double"], "default": null},
+    {"name": "threshold", "type": ["null", "int", "long", "double"], "default": null},
+    {"name": "unit", "type": ["null", "string"], "default": null},
+    {"name": "message", "type": "string"},
+    {
+      "name": "metadata",
+      "type": {
+        "type": "record",
+        "name": "AlarmMetadata",
+        "fields": [
+          {"name": "adapter_id", "type": "string"},
+          {"name": "pipeline_id", "type": "string"}
+        ]
+      }
+    }
+  ]
+}

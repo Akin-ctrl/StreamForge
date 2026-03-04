@@ -1,0 +1,34 @@
+{
+  "type": "record",
+  "name": "EventMessage",
+  "namespace": "streamforge.event",
+  "fields": [
+    {"name": "asset_id", "type": "string"},
+    {"name": "event_type", "type": "string"},
+    {"name": "classification", "type": {"type": "enum", "name": "Classification", "symbols": ["EVENT"]}, "default": "EVENT"},
+    {"name": "previous_state", "type": {"type": "map", "values": ["null", "string", "int", "long", "double", "boolean"]}},
+    {"name": "new_state", "type": {"type": "map", "values": ["null", "string", "int", "long", "double", "boolean"]}},
+    {
+      "name": "timestamps",
+      "type": {
+        "type": "record",
+        "name": "EventTimestamps",
+        "fields": [
+          {"name": "device_time", "type": ["null", "string"], "default": null},
+          {"name": "gateway_time", "type": "string"}
+        ]
+      }
+    },
+    {
+      "name": "metadata",
+      "type": {
+        "type": "record",
+        "name": "EventMetadata",
+        "fields": [
+          {"name": "adapter_id", "type": "string"},
+          {"name": "pipeline_id", "type": "string"}
+        ]
+      }
+    }
+  ]
+}
