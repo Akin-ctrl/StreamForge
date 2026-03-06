@@ -19,5 +19,37 @@
         }
       }
     }
+  ],
+  "validation": {
+    "enabled": true,
+    "raw_topic": "telemetry.raw",
+    "clean_topic": "telemetry.clean",
+    "dlq_topic": "dlq.telemetry",
+    "ranges": {
+      "temperature": {
+        "min": -50,
+        "max": 500
+      }
+    },
+    "rate_of_change": {
+      "temperature": 20
+    },
+    "gap_detection": {
+      "temperature": 5
+    }
+  },
+  "sinks": [
+    {
+      "sink_id": "timescaledb-primary",
+      "sink_type": "timescaledb",
+      "status": "active",
+      "config": {
+        "kafka_bootstrap": "kafka:9092",
+        "topic": "telemetry.clean",
+        "group_id": "sf-sink-timescaledb",
+        "db_dsn": "postgresql://streamforge:streamforge@timescaledb:5432/streamforge",
+        "table": "telemetry_clean"
+      }
+    }
   ]
 }

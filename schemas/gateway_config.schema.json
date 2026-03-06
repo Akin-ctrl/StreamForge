@@ -16,6 +16,22 @@
           "config": {"type": "object"}
         }
       }
+    },
+    "validation": {
+      "type": "object"
+    },
+    "sinks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["sink_type", "config"],
+        "properties": {
+          "sink_id": {"type": "string"},
+          "sink_type": {"type": "string"},
+          "status": {"type": "string"},
+          "config": {"type": "object"}
+        }
+      }
     }
   }
 }

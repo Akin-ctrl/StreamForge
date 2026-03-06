@@ -7,10 +7,12 @@ import time
 from typing import Dict
 
 from gateway_runtime.adapter_manager import AdapterManager
-from gateway_runtime.config import ConfigRepository, GatewayConfig
+from gateway_runtime.config import ConfigRepository, ControlPlaneConfigRepository, GatewayConfig
 from gateway_runtime.errors import ConfigError
 from gateway_runtime.health import HealthReporter
 from gateway_runtime.kafka_manager import KafkaManager
+from gateway_runtime.sink_manager import SinkManager
+from gateway_runtime.validator import ValidatorModule
 
 
 logger = logging.getLogger(__name__)
@@ -32,16 +34,19 @@ class GatewayRuntime:
         config_repo: ConfigRepository,
         kafka: KafkaManager,
         adapters: AdapterManager,
+        sinks: SinkManager,
         health: HealthReporter,
     ) -> None:
         """Initialize runtime with required managers."""
         self._config_repo = config_repo
         self._kafka = kafka
         self._adapters = adapters
+        self._sinks = sinks
         self._health = health
         self._current_config: GatewayConfig | None = None
         self._polling_task: asyncio.Task[None] | None = None
         self._polling_stop_event: asyncio.Event | None = None
+        self._validator: ValidatorModule | None = None
         
         # Polling parameters
         self._poll_interval = int(os.getenv("GATEWAY_POLL_INTERVAL", "30"))  # seconds
@@ -58,9 +63,21 @@ class GatewayRuntime:
         print("gateway_runtime kafka ready", flush=True)
         self._adapters.start_all(config.adapters)
         print("gateway_runtime adapters started", flush=True)
+
+        validation_rules = config.validation if isinstance(config.validation, dict) else {}
+        if validation_rules.get("enabled", True):
+            self._validator = ValidatorModule(
+                bootstrap=self._kafka.bootstrap,
+                gateway_id=config.gateway_id,
+                rules=validation_rules,
+            )
+            self._validator.start()
+
+        self._sinks.start_all(config.sinks)
+        print("gateway_runtime sinks started", flush=True)
         
-        # Start polling loop if using ControlPlaneConfigRepository
-        if hasattr(self._config_repo, 'gateway_id'):  # ControlPlaneConfigRepository has gateway_id
+        # Start polling loop when using Control Plane-backed config repository
+        if isinstance(self._config_repo, ControlPlaneConfigRepository):
             self._polling_stop_event = asyncio.Event()
             self._polling_task = asyncio.create_task(self._polling_loop())
             print("gateway_runtime polling loop started", flush=True)
@@ -73,13 +90,14 @@ class GatewayRuntime:
         if self._polling_stop_event:
             self._polling_stop_event.set()
         if self._polling_task:
-            try:
-                asyncio.run(asyncio.wait_for(self._polling_task, timeout=5))
-            except asyncio.TimeoutError:
-                print("gateway_runtime polling loop timeout during shutdown", flush=True)
+            if not self._polling_task.done():
                 self._polling_task.cancel()
+
+        if self._validator:
+            self._validator.stop()
         
         self._adapters.stop_all()
+        self._sinks.stop_all()
         self._kafka.stop()
         print("gateway_runtime stopped", flush=True)
 
@@ -121,6 +139,12 @@ class GatewayRuntime:
         
         if len(old.adapters) != len(new.adapters):
             return True
+
+        if len(old.sinks) != len(new.sinks):
+            return True
+
+        if old.validation != new.validation:
+            return True
         
         old_by_id = {a.adapter_id: a for a in old.adapters}
         for new_adapter in new.adapters:
@@ -128,6 +152,14 @@ class GatewayRuntime:
             if old_adapter is None:
                 return True
             if old_adapter.adapter_type != new_adapter.adapter_type or old_adapter.config != new_adapter.config:
+                return True
+
+        old_sinks_by_id = {s.sink_id: s for s in old.sinks}
+        for new_sink in new.sinks:
+            old_sink = old_sinks_by_id.get(new_sink.sink_id)
+            if old_sink is None:
+                return True
+            if old_sink.sink_type != new_sink.sink_type or old_sink.config != new_sink.config:
                 return True
         
         return False
@@ -139,6 +171,8 @@ class GatewayRuntime:
         # Build old adapter set for comparison
         old_by_id = {a.adapter_id: a for a in (old_config.adapters if old_config else [])}
         new_by_id = {a.adapter_id: a for a in new_config.adapters}
+        old_sinks_by_id = {s.sink_id: s for s in (old_config.sinks if old_config else [])}
+        new_sinks_by_id = {s.sink_id: s for s in new_config.sinks}
         
         # Stop adapters that were removed or changed
         for adapter_id in old_by_id:
@@ -156,10 +190,42 @@ class GatewayRuntime:
             if old_adapter is None or old_adapter.adapter_type != new_adapter.adapter_type or old_adapter.config != new_adapter.config:
                 self._adapters.start_adapter(new_adapter)
 
+        # Stop removed or changed sinks
+        for sink_id in old_sinks_by_id:
+            if sink_id not in new_sinks_by_id:
+                self._sinks.stop_sink(sink_id)
+            else:
+                old_sink = old_sinks_by_id[sink_id]
+                new_sink = new_sinks_by_id[sink_id]
+                if old_sink.sink_type != new_sink.sink_type or old_sink.config != new_sink.config or old_sink.status != new_sink.status:
+                    self._sinks.stop_sink(sink_id)
+
+        # Start new or updated sinks
+        for new_sink in new_config.sinks:
+            old_sink = old_sinks_by_id.get(new_sink.sink_id)
+            if old_sink is None or old_sink.sink_type != new_sink.sink_type or old_sink.config != new_sink.config or old_sink.status != new_sink.status:
+                if new_sink.status == "active":
+                    self._sinks.start_sink(new_sink)
+
+        # Reconfigure validator rules on change
+        if old_config is None or old_config.validation != new_config.validation:
+            if self._validator:
+                self._validator.stop()
+                self._validator = None
+            if new_config.validation.get("enabled", True):
+                self._validator = ValidatorModule(
+                    bootstrap=self._kafka.bootstrap,
+                    gateway_id=new_config.gateway_id,
+                    rules=new_config.validation,
+                )
+                self._validator.start()
+
 
     def health_snapshot(self) -> Dict[str, object]:
         """Return aggregated health snapshot for the gateway."""
         return {
             "kafka": self._kafka.health(),
             "adapters": self._adapters.health(),
+            "sinks": self._sinks.health(),
+            "validator": self._validator.health() if self._validator else {"status": "disabled"},
         }

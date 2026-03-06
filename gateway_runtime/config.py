@@ -20,11 +20,23 @@ class AdapterConfig:
 
 
 @dataclass(frozen=True)
+class SinkConfig:
+    """Configuration for a single sink instance."""
+
+    sink_id: str
+    sink_type: str
+    config: dict
+    status: str = "active"
+
+
+@dataclass(frozen=True)
 class GatewayConfig:
     """Top-level configuration for the gateway runtime."""
 
     gateway_id: str
     adapters: List[AdapterConfig]
+    sinks: List[SinkConfig]
+    validation: dict
 
 
 class ConfigRepository:
@@ -65,7 +77,22 @@ class ConfigRepository:
             for item in raw["adapters"]
         ]
 
-        return GatewayConfig(gateway_id=raw["gateway_id"], adapters=adapters)
+        sinks = [
+            SinkConfig(
+                sink_id=item.get("sink_id") or f"sink-{index}",
+                sink_type=item["sink_type"],
+                config=item["config"],
+                status=item.get("status", "active"),
+            )
+            for index, item in enumerate(raw.get("sinks", []), start=1)
+        ]
+
+        return GatewayConfig(
+            gateway_id=raw["gateway_id"],
+            adapters=adapters,
+            sinks=sinks,
+            validation=raw.get("validation", {}),
+        )
 
     def _validate(self, raw: dict) -> None:
         """Validate config against JSON Schema if available; fallback to basic checks."""
@@ -91,11 +118,21 @@ class ConfigRepository:
             if not all(key in item for key in ("adapter_id", "adapter_type", "config")):
                 raise ConfigError("Each adapter must include 'adapter_id', 'adapter_type', and 'config'")
 
+        if "sinks" in raw:
+            if not isinstance(raw["sinks"], list):
+                raise ConfigError("'sinks' must be a list")
+            for item in raw["sinks"]:
+                if not all(key in item for key in ("sink_type", "config")):
+                    raise ConfigError("Each sink must include 'sink_type' and 'config'")
+
+        if "validation" in raw and not isinstance(raw["validation"], dict):
+            raise ConfigError("'validation' must be an object")
+
 
 class ControlPlaneConfigRepository(ConfigRepository):
     """Repository that loads gateway configuration from Control Plane API."""
 
-    def __init__(self, base_url: str, gateway_id: str, token: str, schema_path: str | None = None) -> None:
+    def __init__(self, base_url: str, gateway_id: str, token: str | None = None, schema_path: str | None = None) -> None:
         self._base_url = base_url.rstrip("/")
         self._gateway_id = gateway_id
         self._token = token
@@ -108,6 +145,9 @@ class ControlPlaneConfigRepository(ConfigRepository):
 
     def load(self) -> GatewayConfig:
         """Load and validate gateway configuration from control plane."""
+        if not self._token:
+            self._request_gateway_token()
+
         # Refresh token if it's been > 24 hours since last refresh
         if time.time() - self._token_refreshed_at > 86400:
             self._refresh_token()
@@ -144,15 +184,37 @@ class ControlPlaneConfigRepository(ConfigRepository):
             for item in raw["adapters"]
         ]
 
-        return GatewayConfig(gateway_id=raw["gateway_id"], adapters=adapters)
+        sinks = [
+            SinkConfig(
+                sink_id=item.get("sink_id") or f"sink-{index}",
+                sink_type=item["sink_type"],
+                config=item["config"],
+                status=item.get("status", "active"),
+            )
+            for index, item in enumerate(raw.get("sinks", []), start=1)
+        ]
+
+        return GatewayConfig(
+            gateway_id=raw["gateway_id"],
+            adapters=adapters,
+            sinks=sinks,
+            validation=raw.get("validation", {}),
+        )
 
     def _refresh_token(self) -> None:
         """Refresh the gateway token from the control plane."""
-        url = f"{self._base_url}/api/v1/gateways/{self._gateway_id}/token"
+        self._request_gateway_token()
+
+    def _request_gateway_token(self) -> None:
+        """Request a gateway token from control plane using gateway_id."""
+        url = f"{self._base_url}/api/v1/gateways/token"
+        payload = json.dumps({"gateway_id": self._gateway_id}).encode("utf-8")
         req = request.Request(
             url,
+            data=payload,
+            method="POST",
             headers={
-                "Authorization": f"Bearer {self._token}",
+                "Content-Type": "application/json",
                 "Accept": "application/json",
             },
         )
@@ -160,15 +222,23 @@ class ControlPlaneConfigRepository(ConfigRepository):
             with request.urlopen(req, timeout=10) as response:
                 payload = response.read().decode("utf-8")
         except error.HTTPError as exc:
-            raise ConfigError(f"Token refresh failed: HTTP {exc.code}") from exc
+            if exc.code == 403:
+                raise ConfigError(
+                    "Gateway token request denied: gateway is pending approval"
+                ) from exc
+            if exc.code == 404:
+                raise ConfigError(
+                    "Gateway token request failed: gateway not registered"
+                ) from exc
+            raise ConfigError(f"Gateway token request failed: HTTP {exc.code}") from exc
         except error.URLError as exc:
-            raise ConfigError(f"Token refresh failed: {exc.reason}") from exc
+            raise ConfigError(f"Gateway token request failed: {exc.reason}") from exc
         
         try:
             data = json.loads(payload)
             self._token = data.get("token")
             if not self._token:
-                raise ConfigError("Token refresh returned empty token")
+                raise ConfigError("Gateway token request returned empty token")
             self._token_refreshed_at = time.time()
         except json.JSONDecodeError as exc:
-            raise ConfigError(f"Token refresh returned invalid JSON: {exc}") from exc
+            raise ConfigError(f"Gateway token request returned invalid JSON: {exc}") from exc

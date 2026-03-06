@@ -37,6 +37,11 @@ class KafkaManager:
             "reachable": reachable,
         }
 
+    @property
+    def bootstrap(self) -> str:
+        """Return bootstrap server address."""
+        return self._bootstrap
+
     def _parse_bootstrap(self, bootstrap: str) -> tuple[str, int]:
         """Parse host and port from bootstrap string (host:port)."""
         if ":" not in bootstrap:

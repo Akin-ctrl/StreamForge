@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import AuthError, create_gateway_token, decode_gateway_token, require_admin
 from app.db.deps import get_db
-from app.db.models import Gateway, Pipeline
+from app.db.models import Gateway, Pipeline, Sink
 from app.schemas.gateways import (
     GatewayApproveResponse,
     GatewayItem,
@@ -174,13 +174,37 @@ def get_gateway_config(gateway_id: str, token: str = Depends(oauth2_scheme), db:
         return {
             "gateway_id": gateway.gateway_id,
             "adapters": [],
+            "sinks": [],
+            "validation": {},
             "version": "1",
         }
 
     config = pipeline.config if isinstance(pipeline.config, dict) else {}
+    sink_rows = (
+        db.execute(
+            select(Sink)
+            .where(Sink.pipeline_id == pipeline.id)
+            .order_by(Sink.created_at.asc())
+        )
+        .scalars()
+        .all()
+    )
+
+    sinks = [
+        {
+            "sink_id": f"sink-{row.id}",
+            "sink_type": row.sink_type,
+            "config": row.config if isinstance(row.config, dict) else {},
+            "status": row.status,
+        }
+        for row in sink_rows
+    ]
+
     return {
         "gateway_id": gateway.gateway_id,
         "adapters": config.get("adapters", []),
+        "validation": config.get("validation", {}),
+        "sinks": sinks,
         "version": str(pipeline.id),
     }
 

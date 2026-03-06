@@ -14,6 +14,7 @@ from gateway_runtime.kafka_manager import KafkaManager
 from gateway_runtime.runtime import GatewayRuntime
 from gateway_runtime.errors import ConfigError
 from gateway_runtime.health_server import HealthServer
+from gateway_runtime.sink_manager import SinkManager
 
 
 async def _run(runtime: GatewayRuntime) -> None:
@@ -50,8 +51,6 @@ def main() -> None:
     if control_plane_url:
         if not control_plane_gateway_id:
             raise ConfigError("CONTROL_PLANE_GATEWAY_ID is required when CONTROL_PLANE_URL is set")
-        if not control_plane_token:
-            raise ConfigError("CONTROL_PLANE_TOKEN is required when CONTROL_PLANE_URL is set")
 
         config_repo = ControlPlaneConfigRepository(
             base_url=control_plane_url,
@@ -62,12 +61,14 @@ def main() -> None:
         config_repo = ConfigRepository(config_path)
     kafka = KafkaManager(kafka_bootstrap)
     adapters = AdapterManager(AdapterFactory())
+    sinks = SinkManager()
     health = HealthReporter()
 
     runtime = GatewayRuntime(
         config_repo=config_repo,
         kafka=kafka,
         adapters=adapters,
+        sinks=sinks,
         health=health,
     )
 
