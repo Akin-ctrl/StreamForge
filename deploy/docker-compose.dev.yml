@@ -118,6 +118,17 @@ services:
       KAFKA_CLUSTERS_0_NAME: "local"
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:9092"
 
+  ui:
+    build:
+      context: ../ui
+      dockerfile: Dockerfile
+    environment:
+      VITE_CONTROL_PLANE_URL: http://localhost:8001
+    depends_on:
+      - control_plane
+    ports:
+      - "3000:80"
+
 volumes:
   kafka-data:
   postgres-data:
