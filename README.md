@@ -117,17 +117,17 @@ python -m gateway_runtime.main
 ## Use Cases
 
 ### Smart Manufacturing
-- PLCs → Edge Gateway → Local Kafka → Central Kafka → Analytics
+- PLCs → modbus → Edge Gateway → mqtt → Analytics
 - Real-time production monitoring with zero data loss
 - Predictive maintenance via ML pipelines
 
 ### Offshore Oil & Gas
-- Sensors → LoRa/XBee → Edge Gateway → Local Kafka (buffered during outages)
-- Automatic sync to cloud when satellite link restored
+- Sensors → LoRa/XBee → Edge Gateway(buffered during outages) → Local DB 
+- Automatic sync to cloud when satellite link is restored
 - Critical alarm routing to PagerDuty
 
 ### Utilities & Power Plants
-- SCADA systems → OPC UA → Kafka → TimescaleDB + Cloud Analytics
+- SCADA systems → OPC UA → Gateway → TimescaleDB + Cloud Analytics
 - Digital twin synchronization
 - Regulatory compliance audit trails
 
