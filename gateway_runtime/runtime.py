@@ -3,7 +3,6 @@
 import asyncio
 import logging
 import os
-import time
 from typing import Dict
 
 from gateway_runtime.adapter_manager import AdapterManager
@@ -46,12 +45,15 @@ class GatewayRuntime:
         self._current_config: GatewayConfig | None = None
         self._polling_task: asyncio.Task[None] | None = None
         self._polling_stop_event: asyncio.Event | None = None
+        self._kafka_watchdog_task: asyncio.Task[None] | None = None
+        self._kafka_watchdog_stop_event: asyncio.Event | None = None
         self._validator: ValidatorModule | None = None
         
         # Polling parameters
         self._poll_interval = int(os.getenv("GATEWAY_POLL_INTERVAL", "30"))  # seconds
         self._poll_max_backoff = int(os.getenv("GATEWAY_POLL_MAX_BACKOFF", "300"))  # 5 min
         self._poll_backoff_multiplier = float(os.getenv("GATEWAY_POLL_BACKOFF_MULTIPLIER", "2.0"))
+        self._kafka_watchdog_interval = int(os.getenv("KAFKA_WATCHDOG_INTERVAL", "10"))
 
     def start(self) -> None:
         """Start all runtime components in correct order."""
@@ -61,15 +63,20 @@ class GatewayRuntime:
         print("gateway_runtime config loaded", flush=True)
         self._kafka.start()
         print("gateway_runtime kafka ready", flush=True)
+        self._kafka_watchdog_stop_event = asyncio.Event()
+        self._kafka_watchdog_task = asyncio.create_task(self._kafka_watchdog_loop())
+        print("gateway_runtime kafka watchdog started", flush=True)
         self._adapters.start_all(config.adapters)
         print("gateway_runtime adapters started", flush=True)
 
         validation_rules = config.validation if isinstance(config.validation, dict) else {}
         if validation_rules.get("enabled", True):
+            control_plane_repo = self._config_repo if isinstance(self._config_repo, ControlPlaneConfigRepository) else None
             self._validator = ValidatorModule(
                 bootstrap=self._kafka.bootstrap,
                 gateway_id=config.gateway_id,
                 rules=validation_rules,
+                control_plane=control_plane_repo,
             )
             self._validator.start()
 
@@ -92,6 +99,11 @@ class GatewayRuntime:
         if self._polling_task:
             if not self._polling_task.done():
                 self._polling_task.cancel()
+        if self._kafka_watchdog_stop_event:
+            self._kafka_watchdog_stop_event.set()
+        if self._kafka_watchdog_task:
+            if not self._kafka_watchdog_task.done():
+                self._kafka_watchdog_task.cancel()
 
         if self._validator:
             self._validator.stop()
@@ -100,6 +112,17 @@ class GatewayRuntime:
         self._sinks.stop_all()
         self._kafka.stop()
         print("gateway_runtime stopped", flush=True)
+
+    async def _kafka_watchdog_loop(self) -> None:
+        """Keep managed local Kafka available during runtime execution."""
+        while not self._kafka_watchdog_stop_event.is_set():
+            try:
+                await asyncio.sleep(self._kafka_watchdog_interval)
+                self._kafka.ensure_running()
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                print(f"gateway_runtime kafka watchdog detected issue: {exc}", flush=True)
 
     async def _polling_loop(self) -> None:
         """Periodically fetch config from Control Plane and apply updates."""
@@ -213,10 +236,12 @@ class GatewayRuntime:
                 self._validator.stop()
                 self._validator = None
             if new_config.validation.get("enabled", True):
+                control_plane_repo = self._config_repo if isinstance(self._config_repo, ControlPlaneConfigRepository) else None
                 self._validator = ValidatorModule(
                     bootstrap=self._kafka.bootstrap,
                     gateway_id=new_config.gateway_id,
                     rules=new_config.validation,
+                    control_plane=control_plane_repo,
                 )
                 self._validator.start()
 

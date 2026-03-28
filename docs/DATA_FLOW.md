@@ -7,7 +7,7 @@
 ## Table of Contents
 
 1. [Core Data Flow Pattern](#core-data-flow-pattern)
-2. [Example 1: Offshore Oil Well (XBee → Kafka → Cloud)](#example-1-offshore-oil-well-xbee--kafka--cloud)
+2. [Example 1: Offshore Oil Well (XBee → Kafka → Optional Cloud Sink)](#example-1-offshore-oil-well-xbee--kafka--optional-cloud-sink)
 3. [Example 2: Smart Factory (Modbus PLC → TimescaleDB)](#example-2-smart-factory-modbus-plc--timescaledb)
 4. [Example 3: OPC UA → Real-time Dashboard](#example-3-opc-ua--real-time-dashboard)
 5. [Example 4: Network Outage Recovery](#example-4-network-outage-recovery)
@@ -26,18 +26,16 @@ Physical Device
 Protocol Adapter (Container)
     ↓ (Normalized message)
 Edge Kafka (Local buffering)
-    ↓ (MirrorMaker replication)
-Central Kafka (System of record)
-    ↓ (Multi-path consumption)
+    ↓ (Gateway-local consumption)
     ├─→ Quality Validator → telemetry.clean
     ├─→ Aggregator → telemetry.1s, telemetry.1min
-    ├─→ Sink Services → Databases, Cloud, APIs
+    ├─→ Sink Services → Databases, customer-owned Kafka, Cloud APIs
     └─→ Alert Router → PagerDuty, Slack, Email
 ```
 
 ---
 
-## Example 1: Offshore Oil Well (XBee → Kafka → Cloud)
+## Example 1: Offshore Oil Well (XBee → Kafka → Optional Cloud Sink)
 
 ### Scenario
 - **Location**: Offshore oil rig, 50km from shore
@@ -153,25 +151,9 @@ Message: [JSON above]
 Acks: all (written to disk before acknowledge)
 ```
 
-**Time: 12:01:04.050 - MirrorMaker replication**
-```
-Source: Edge Kafka (localhost:9092)
-Target: Central Kafka (central.example.com:9093)
-Lag: ~35ms
-Status: ✓ Replicated
-```
-
-**Time: 12:01:04.100 - Central Kafka**
-```
-Topic: telemetry.raw
-Partition: 12
-Offset: 9834521
-Replication factor: 3 (3 brokers)
-```
-
-**Time: 12:01:04.200 - Quality Validation**
+**Time: 12:01:04.050 - Local validation**
 ```python
-# Kafka Streams app
+# Gateway-local validator
 input: telemetry.raw
 validation:
   ✓ 0 < pressure < 500 PSI
@@ -210,6 +192,10 @@ SQL: INSERT INTO telemetry_timeseries (time, asset_id, parameter, value, unit, q
 Sink: S3 Parquet (batched every 5 min)
 Buffer: In-memory, will flush at 12:05:00
 
+Sink: Kafka (optional, customer-owned cluster)
+Target: customer.example.com:9092
+Behavior: Drain from local telemetry.clean when WAN is available
+
 Sink: Cloud ML API
 HTTP POST to https://ml.example.com/predict
 Body: {"timestamp": "...", "pressure": 185.4, "temperature": 34.2}
@@ -220,7 +206,7 @@ Body: {"timestamp": "...", "pressure": 185.4, "temperature": 34.2}
 **Time: 14:30:00 - Network fails**
 ```
 4G link down
-MirrorMaker: Connection failed, retrying...
+External sinks unavailable
 Edge Kafka: Continues accepting writes (local disk)
 ```
 
@@ -235,17 +221,18 @@ Edge Kafka: Buffering locally
 
 **Time: 17:00:00 - Network restored**
 ```
-MirrorMaker: Connection re-established
-Replication lag: 2.5 hours (9,000 messages)
+Sink connectivity restored
+Backlog drain begins from local Kafka
 Catch-up speed: ~1000 msg/sec
 ```
 
 **Time: 17:02:30 - Fully synced**
 ```
-All buffered data replicated to central Kafka
-Central sinks catch up:
+All buffered data drained from local Kafka to configured sinks
+External sinks catch up:
   - TimescaleDB: Writes 9,000 rows (backfill)
   - S3: Creates Parquet files for offline period
+  - Customer Kafka: Receives delayed replay
   - ML API: Skips (real-time only)
 ```
 
@@ -471,14 +458,14 @@ Dashboard consumes telemetry.1s (sufficient resolution)
 **Day 1, 10:00 - Normal operation**
 ```
 Edge gateway online
-Replication lag: 50ms
+Optional cloud sink lag: 50ms
 Disk usage: 20GB / 100GB
 ```
 
 **Day 1, 14:30 - Network failure**
 ```
 Satellite link down (storm)
-MirrorMaker: Retrying connection...
+Kafka/HTTP sinks retrying external connections...
 Edge Kafka: Buffering locally
 Adapters: Continue operating normally
 ```
@@ -496,8 +483,8 @@ Topics buffered:
 
 **Day 3, 08:00 - Network restored**
 ```
-MirrorMaker: Connection re-established
-Replication begins:
+External sink connectivity re-established
+Replay begins:
   Offset lag: 149,400 messages
   Throughput: 2,000 msg/sec
   ETA: ~75 seconds to catch up
@@ -505,9 +492,10 @@ Replication begins:
 
 **Day 3, 08:01:15 - Fully synced**
 ```
-All data replicated to central Kafka
-Central sinks processing backlog:
+All data drained from local Kafka to external destinations
+Sinks processing backlog:
   - TimescaleDB: Bulk insert 120,000 rows (30 seconds)
+  - Customer Kafka: Receives 120,000 delayed records
   - S3 Parquet: Creates files for 41.5-hour gap (10 seconds)
   - Alerting: Processes 1,200 alarms (checks if still active)
 ```

@@ -1,26 +1,40 @@
 """Control Plane API entrypoint."""
 
 from fastapi import FastAPI
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.security import hash_password
 from app.core.settings import settings
-from app.db.base import Base, engine
 from app.db.deps import SessionLocal
 from app.db import models  # noqa: F401
 from app.db.models import User
-from app.routers import gateways, pipelines, health, sinks, auth
+from app.db.schema import ensure_schema_ready
+from app.routers import alarms, auth, dlq, gateways, health, pipelines, sinks
 
 
 app = FastAPI(title="StreamForge Control Plane", version="0.1.0")
 
 
+def _has_users() -> bool:
+    db = SessionLocal()
+    try:
+        return bool(db.execute(select(func.count(User.id))).scalar_one())
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 def on_startup() -> None:
-    # Create database tables
-    Base.metadata.create_all(bind=engine)
+    ensure_schema_ready()
 
-    # Seed admin user if not exists
+    if settings.allow_dev_admin_bootstrap and not settings.is_dev_environment:
+        raise RuntimeError(
+            "SF_ALLOW_DEV_ADMIN_BOOTSTRAP can only be enabled in dev/local/test environments",
+        )
+
+    if not settings.allow_dev_admin_bootstrap or _has_users():
+        return
+
     db = SessionLocal()
     try:
         existing = db.execute(select(User).where(User.username == settings.admin_username)).scalar_one_or_none()
@@ -41,3 +55,5 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(gateways.router, prefix="/api/v1/gateways", tags=["gateways"])
 app.include_router(pipelines.router, prefix="/api/v1/pipelines", tags=["pipelines"])
 app.include_router(sinks.router, prefix="/api/v1/sinks", tags=["sinks"])
+app.include_router(alarms.router, prefix="/api/v1/alarms", tags=["alarms"])
+app.include_router(dlq.router, prefix="/api/v1/dlq", tags=["dlq"])

@@ -11,8 +11,13 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     admin_username: str = "admin"
     admin_password: str = "admin123"
+    allow_dev_admin_bootstrap: bool = False
 
     model_config = SettingsConfigDict(env_prefix="SF_", env_file=".env", extra="ignore")
+
+    @property
+    def is_dev_environment(self) -> bool:
+        return self.environment.lower() in {"dev", "development", "local", "test"}
 
 
 settings = Settings()

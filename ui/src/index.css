@@ -66,10 +66,71 @@ body {
   justify-content: space-between;
 }
 
+.page-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
 .section-grid {
   display: grid;
   gap: 1rem;
   margin-top: 0.8rem;
+}
+
+.alarm-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: 1rem;
+}
+
+.alarm-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.alarm-detail {
+  align-self: start;
+}
+
+.alarm-row-selected {
+  background: #eff6ff;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.badge-critical {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.badge-high {
+  background: #ffedd5;
+  color: #9a3412;
+}
+
+.badge-medium {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.badge-low {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badge-info {
+  background: #dbeafe;
+  color: #1d4ed8;
 }
 
 .builder-section {
@@ -161,6 +222,7 @@ body {
   text-align: left;
   padding: 0.65rem;
   border-bottom: 1px solid #e2e8f0;
+  vertical-align: top;
 }
 
 .card {
@@ -186,6 +248,10 @@ body {
 
 .btn-secondary {
   background: #374151;
+}
+
+.table td .btn + .btn {
+  margin-left: 0.5rem;
 }
 
 .login-page {
@@ -220,4 +286,14 @@ textarea {
 
 .error {
   color: #b91c1c;
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .alarm-layout {
+    grid-template-columns: 1fr;
+  }
 }

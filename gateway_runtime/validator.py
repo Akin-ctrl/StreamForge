@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import threading
 import time
-from typing import Dict, Tuple
+from typing import TYPE_CHECKING, Dict, Tuple
+from uuid import uuid4
+
+from gateway_runtime.errors import ConfigError
+
+if TYPE_CHECKING:
+    from gateway_runtime.config import ControlPlaneConfigRepository
 
 
 logger = logging.getLogger(__name__)
@@ -15,15 +22,26 @@ logger = logging.getLogger(__name__)
 class ValidatorModule:
     """Consumes raw telemetry, applies validation rules, emits clean/DLQ topics."""
 
-    def __init__(self, bootstrap: str, gateway_id: str, rules: dict | None = None) -> None:
+    def __init__(
+        self,
+        bootstrap: str,
+        gateway_id: str,
+        rules: dict | None = None,
+        control_plane: "ControlPlaneConfigRepository | None" = None,
+    ) -> None:
         self._bootstrap = bootstrap
         self._gateway_id = gateway_id
         self._rules = rules or {}
+        self._control_plane = control_plane
         self._consumer = None
         self._producer = None
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._last_samples: dict[Tuple[str, str], dict] = {}
+        self._decision_poll_interval = int(self._rules.get("dlq_decision_poll_interval_s", 5))
+        self._last_decision_poll_at = 0.0
+        self._completed_decisions: dict[str, dict[str, str | None]] = {}
+        self._pending_dlq_syncs: dict[str, dict[str, object]] = {}
 
     def start(self) -> None:
         """Start validator loop in background thread."""
@@ -122,6 +140,7 @@ class ValidatorModule:
                     print(f"validator_module: poll_attempt_{poll_count} returned {len(batch) if batch else 0} partitions", flush=True)
                     
                     if not batch:
+                        self._maybe_process_dlq_actions()
                         continue
 
                     for _, records in batch.items():
@@ -141,6 +160,7 @@ class ValidatorModule:
                                 logger.exception("validator record processing failed")
 
                     self._producer.flush()
+                    self._maybe_process_dlq_actions()
                 except Exception as poll_exc:
                     print(f"validator_module poll error: {poll_exc}", flush=True)
                     logger.exception("validator poll failed")
@@ -215,7 +235,7 @@ class ValidatorModule:
         return overall, reason
 
     def _apply_quality(self, message: dict, quality: str, reason: str | None) -> dict:
-        enriched = dict(message)
+        enriched = copy.deepcopy(message)
         readings = enriched.get("readings", [])
         for reading in readings:
             reading["quality"] = quality
@@ -225,13 +245,110 @@ class ValidatorModule:
 
     def _emit_dlq(self, message: dict, reason: str | None) -> None:
         assert self._producer is not None
+        message_id = str(uuid4())
+        preview_payload = self._build_reprocess_payload(message)
         payload = {
+            "message_id": message_id,
             "gateway_id": self._gateway_id,
             "reason": reason or "validation_failed",
             "failed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "original": message,
         }
         self._producer.send(self._dlq_topic, payload)
+        self._pending_dlq_syncs[message_id] = {
+            "message_id": message_id,
+            "source_topic": self._dlq_topic,
+            "clean_topic": self._clean_topic,
+            "reason": payload["reason"],
+            "failed_at": payload["failed_at"],
+            "original_payload": copy.deepcopy(message),
+            "preview_payload": preview_payload,
+        }
+        self._flush_pending_dlq_syncs()
+
+    def _build_reprocess_payload(self, message: dict) -> dict:
+        payload = self._apply_quality(message, "GOOD", None)
+        payload["dlq_resolution"] = {
+            "mode": "operator_reprocess_preview",
+            "gateway_id": self._gateway_id,
+        }
+        return payload
+
+    def _maybe_process_dlq_actions(self) -> None:
+        if self._control_plane is None:
+            return
+
+        now = time.time()
+        if now - self._last_decision_poll_at < self._decision_poll_interval:
+            return
+
+        self._last_decision_poll_at = now
+        self._flush_pending_dlq_syncs()
+        self._flush_completed_decisions()
+
+        try:
+            actions = self._control_plane.get_json_list("/api/v1/dlq/gateway-actions/pending")
+        except ConfigError as exc:
+            logger.warning("failed to fetch dlq actions from control plane: %s", exc)
+            return
+
+        assert self._producer is not None
+        for action in actions:
+            message_id = str(action.get("message_id", ""))
+            if not message_id or message_id in self._completed_decisions:
+                continue
+
+            action_type = str(action.get("action", ""))
+            try:
+                if action_type == "REPROCESS":
+                    clean_topic = str(action.get("clean_topic", self._clean_topic))
+                    preview_payload = action.get("preview_payload")
+                    if not isinstance(preview_payload, dict):
+                        raise RuntimeError("preview_payload is missing from DLQ action")
+                    self._producer.send(clean_topic, preview_payload)
+                    self._producer.flush()
+                    self._completed_decisions[message_id] = {"result": "REPROCESSED", "error": None}
+                elif action_type == "DISCARD":
+                    self._completed_decisions[message_id] = {"result": "DISCARDED", "error": None}
+                else:
+                    logger.warning("unknown dlq action type for %s: %s", message_id, action_type)
+            except Exception as exc:
+                logger.exception("failed to execute dlq action %s", message_id)
+                self._completed_decisions[message_id] = {"result": "REPROCESS_FAILED", "error": str(exc)[:1024]}
+
+        self._flush_completed_decisions()
+
+    def _flush_pending_dlq_syncs(self) -> None:
+        if self._control_plane is None or not self._pending_dlq_syncs:
+            return
+
+        for message_id, payload in list(self._pending_dlq_syncs.items()):
+            try:
+                self._control_plane.post_json("/api/v1/dlq", payload)
+            except ConfigError as exc:
+                logger.warning("failed to mirror dlq message %s to control plane: %s", message_id, exc)
+                continue
+
+            self._pending_dlq_syncs.pop(message_id, None)
+
+    def _flush_completed_decisions(self) -> None:
+        if self._control_plane is None or not self._completed_decisions:
+            return
+
+        for message_id, payload in list(self._completed_decisions.items()):
+            try:
+                self._control_plane.post_json(
+                    f"/api/v1/dlq/messages/{message_id}/complete",
+                    {
+                        "result": payload["result"],
+                        "error": payload["error"],
+                    },
+                )
+            except ConfigError as exc:
+                logger.warning("failed to confirm dlq action %s to control plane: %s", message_id, exc)
+                continue
+
+            self._completed_decisions.pop(message_id, None)
 
     @staticmethod
     def _to_epoch(timestamp: str) -> float:

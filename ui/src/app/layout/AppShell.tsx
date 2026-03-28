@@ -5,6 +5,8 @@ import { clearAccessToken } from '../../shared/auth/session'
 // Primary navigation for MVP operator screens.
 const links = [
   { to: '/gateways', label: 'Gateways' },
+  { to: '/alarms', label: 'Alarms' },
+  { to: '/dlq', label: 'DLQ' },
   { to: '/create-pipeline', label: 'Create Pipeline' },
   { to: '/health', label: 'Health' },
 ]

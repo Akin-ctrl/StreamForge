@@ -373,7 +373,7 @@ PersistentKeepalive = 25
 |------------|--------|--------------|
 | UI ↔ Control API | HTTPS/TLS 1.3 | RSA 2048 / ECDSA P-256 |
 | Gateway ↔ Control API | HTTPS/TLS 1.3 | RSA 2048 |
-| Edge Kafka ↔ Central Kafka | Kafka over TLS (SASL_SSL) | AES-256 |
+| Edge Kafka ↔ External Kafka sink destination | Kafka over TLS (SASL_SSL) | AES-256 |
 | Adapter ↔ Local Kafka | TLS | AES-256 |
 
 **TLS configuration** (Control API):
