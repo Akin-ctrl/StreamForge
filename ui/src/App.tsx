@@ -1,6 +1,8 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 
 import { AppShell } from './app/layout/AppShell'
+import { AlarmsPage } from './features/alarms/AlarmsPage'
+import { DlqPage } from './features/dlq/DlqPage'
 import { LoginPage } from './features/auth/LoginPage'
 import { GatewaysPage } from './features/gateways/GatewaysPage'
 import { HealthPage } from './features/health/HealthPage'
@@ -26,6 +28,8 @@ function App() {
       >
         <Route index element={<Navigate to="/gateways" replace />} />
         <Route path="gateways" element={<GatewaysPage />} />
+        <Route path="alarms" element={<AlarmsPage />} />
+        <Route path="dlq" element={<DlqPage />} />
         <Route path="create-pipeline" element={<PipelineBuilderPage />} />
         <Route path="health" element={<HealthPage />} />
       </Route>

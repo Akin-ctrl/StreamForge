@@ -1,2 +1,13 @@
 PROJECT_PHASES.md
 reference.py
+.codex
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.env
+.git
+.venv/
+gateway_runtime/__pycache__/

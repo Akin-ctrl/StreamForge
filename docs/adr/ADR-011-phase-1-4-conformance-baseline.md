@@ -40,7 +40,7 @@ This ADR records what is currently aligned vs omitted for Phases 1-4 and defines
 - Dev compose stack exists for local demo/development.
 
 #### Omitted / Partial
-- Runtime does not manage embedded Kafka lifecycle; it only waits for reachability.
+- Runtime can now provision/supervise local embedded Kafka when it is not already reachable, but broader lifecycle hardening still applies elsewhere.
 - Adapter runtime support is effectively single-protocol (`modbus_tcp`) while architecture describes broader protocol set.
 
 ---
@@ -120,12 +120,15 @@ This ADR records what is currently aligned vs omitted for Phases 1-4 and defines
 
 ## Architecture Documentation Drift
 
-There is a documentation inconsistency around central Kafka language:
+There was a documentation inconsistency around central Kafka language:
 
 - Some architecture text states StreamForge manages only local gateway Kafka.
 - Some data-flow/deployment sections still describe central Kafka patterns in a way that can be interpreted as platform-managed.
 
-This must be reconciled to avoid conflicting implementation direction.
+Resolved direction:
+
+- StreamForge owns only gateway-local Kafka on the edge device.
+- Any cloud Kafka mentioned in deployment patterns is an optional customer-owned sink target, not a StreamForge-managed central backbone.
 
 ---
 
@@ -153,6 +156,49 @@ These are not replacements for phase-level findings above; they are implementati
 
 ---
 
+## Remediation To-Do List (Execution Order)
+
+The checklist below converts the findings in this ADR into a practical fix sequence. Items are grouped by suggested priority and ordered so foundational blockers are addressed before broader architecture-compliance work.
+
+### P1: Immediate Scope, Security, and Operator Readiness
+
+- [x] Implement backend alarm endpoints required to support Phase 4 alarm workflows.
+- [x] Implement Alarm UI view required by milestone scope.
+- [x] Implement operator DLQ workflow in control-plane API: list, inspect, approve/reprocess, discard.
+- [x] Implement DLQ UI view for operators.
+- [x] Add first-user self-registration/bootstrap flow in API/UI.
+- [x] Harden bootstrap/admin credentials so weak defaults are blocked outside explicit dev-only profiles.
+- [x] Add targeted token refresh and immediate retry behavior when runtime config fetch fails due to auth expiry/invalid token.
+- [x] Replace startup-only table creation assumptions with a migration-managed schema evolution path.
+- [x] Reconcile architecture docs describing local-vs-central Kafka ownership to eliminate conflicting platform direction.
+
+### P2: Runtime Reliability and Contract Enforcement
+
+- [ ] Enforce `BaseAdapter` lifecycle structurally with a concrete template run loop/shared contract instead of documentation-only hooks.
+- [ ] Centralize Kafka publishing behavior so delivery semantics, error handling, and observability are consistent across adapters.
+- [ ] Improve Modbus adapter polling efficiency with contiguous register batching where possible.
+- [ ] Add explicit Modbus reconnect/retry/backoff handling for connection and read failures.
+- [x] Implement runtime-managed embedded Kafka lifecycle rather than reachability wait-only behavior.
+- [ ] Implement full runtime auto-registration/bootstrap path when the gateway is not yet registered.
+- [ ] Implement deterministic cached control-plane config semantics for offline startup/fallback autonomy.
+- [ ] Expand failure-mode implementation to include explicit circuit-breaker strategy described by ADR-008.
+
+### P3: Architecture Conformance Expansion
+
+- [ ] Decide and codify final schema strategy: align implementation/docs on Avro + Schema Registry or formally revise ADR/docs around the current JSON path.
+- [ ] Implement the chosen schema path consistently, including offline schema-cache behavior if Avro/Registry remains the target architecture.
+- [ ] Expand adapter support beyond effectively single-protocol `modbus_tcp`, or narrow architecture claims if multi-protocol support is deferred.
+- [ ] Expand sink portfolio to match documented architecture/ADR scope, or narrow architecture claims if limited sink support is the intentional near-term scope.
+- [ ] Implement tiered overflow handling from ADR-009: compress, downsample, priority eviction, and blocking behavior.
+- [ ] Complete authentication roadmap gaps for richer RBAC and/or OAuth/OIDC if ADR-007 remains in scope for this phase set.
+- [ ] Implement MCP/Copilot tool surface only if ADR-010 remains part of the committed architecture roadmap; otherwise explicitly defer/re-scope it.
+
+### Tracking Rule
+
+- [ ] Each completed item must land with code, docs updates, and an explicit reference back to this ADR in the PR/commit trail.
+
+---
+
 ## Consequences
 
 ### Positive
@@ -172,7 +218,7 @@ These are not replacements for phase-level findings above; they are implementati
    - schema strategy (Avro+Registry vs current JSON path),
    - gateway autonomy cache semantics,
    - overflow handling implementation.
-4. Reconcile architecture docs for local-vs-central Kafka ownership language.
+4. Keep architecture docs aligned on Kafka ownership: gateway-local Kafka only; external Kafka only as an optional sink destination.
 5. Track and close the "Additional Implementation Hardening Gaps" section with explicit linked PRs.
 
 ---

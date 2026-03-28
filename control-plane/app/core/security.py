@@ -13,15 +13,30 @@ from sqlalchemy.orm import Session
 
 from app.core.settings import settings
 from app.db.deps import get_db
-from app.db.models import User
+from app.db.models import Gateway, User
 
 
 class AuthError(Exception):
     """Raised for authentication/token errors."""
 
 
+INSECURE_DEFAULT_ADMIN_USERNAME = "admin"
+INSECURE_DEFAULT_ADMIN_PASSWORD = "admin123"
+COMMON_WEAK_PASSWORDS = {
+    "password",
+    "password123",
+    "admin",
+    "admin123",
+    "changeme",
+    "letmein",
+    "qwerty123",
+    "streamforge",
+}
+
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 user_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
+gateway_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/gateways/token")
 
 
 def create_gateway_token(gateway_id: str, expires_days: int = 365) -> tuple[str, datetime]:
@@ -56,6 +71,23 @@ def hash_password(password: str) -> str:
 def verify_password(plain_password: str, password_hash: str) -> bool:
     """Verify plaintext password against its hash."""
     return pwd_context.verify(plain_password, password_hash)
+
+
+def validate_password_strength(password: str, username: str | None = None) -> None:
+    """Enforce a baseline password policy for built-in user bootstrap."""
+    if len(password) < 12:
+        raise ValueError("Password must be at least 12 characters long")
+    if not any(char.isalpha() for char in password) or not any(char.isdigit() for char in password):
+        raise ValueError("Password must include at least one letter and one number")
+
+    password_folded = password.casefold()
+    if password_folded in COMMON_WEAK_PASSWORDS:
+        raise ValueError("Password is too common or weak")
+
+    if username:
+        username_folded = username.casefold()
+        if password_folded == username_folded or username_folded in password_folded:
+            raise ValueError("Password must not match or contain the username")
 
 
 def create_user_token(username: str, expires_hours: int = 12) -> tuple[str, datetime]:
@@ -97,6 +129,25 @@ def get_current_user(token: str = Depends(user_oauth2_scheme), db: Session = Dep
     if user is None:
         raise HTTPException(status_code=401, detail="User not found")
     return user
+
+
+def get_current_gateway(token: str = Depends(gateway_oauth2_scheme), db: Session = Depends(get_db)) -> Gateway:
+    """Resolve authenticated gateway from bearer token."""
+    try:
+        claims = decode_gateway_token(token)
+    except AuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    gateway_id = claims.get("sub")
+    if not gateway_id:
+        raise HTTPException(status_code=401, detail="Invalid token subject")
+
+    gateway = db.execute(select(Gateway).where(Gateway.gateway_id == gateway_id)).scalar_one_or_none()
+    if gateway is None:
+        raise HTTPException(status_code=401, detail="Gateway not found")
+    if not gateway.approved:
+        raise HTTPException(status_code=403, detail="Gateway is pending approval")
+    return gateway
 
 
 def require_admin(user: User = Depends(get_current_user)) -> User:

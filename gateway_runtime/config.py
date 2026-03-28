@@ -143,35 +143,13 @@ class ControlPlaneConfigRepository(ConfigRepository):
         else:
             self._schema_path = Path(schema_path)
 
+    @property
+    def gateway_id(self) -> str:
+        return self._gateway_id
+
     def load(self) -> GatewayConfig:
         """Load and validate gateway configuration from control plane."""
-        if not self._token:
-            self._request_gateway_token()
-
-        # Refresh token if it's been > 24 hours since last refresh
-        if time.time() - self._token_refreshed_at > 86400:
-            self._refresh_token()
-        
-        url = f"{self._base_url}/api/v1/gateways/{self._gateway_id}/config"
-        req = request.Request(
-            url,
-            headers={
-                "Authorization": f"Bearer {self._token}",
-                "Accept": "application/json",
-            },
-        )
-        try:
-            with request.urlopen(req, timeout=10) as response:
-                payload = response.read().decode("utf-8")
-        except error.HTTPError as exc:
-            raise ConfigError(f"Control Plane config request failed: HTTP {exc.code}") from exc
-        except error.URLError as exc:
-            raise ConfigError(f"Control Plane config request failed: {exc.reason}") from exc
-
-        try:
-            raw = json.loads(payload)
-        except json.JSONDecodeError as exc:
-            raise ConfigError(f"Control Plane returned invalid JSON: {exc}") from exc
+        raw = self.get_json(f"/api/v1/gateways/{self._gateway_id}/config")
 
         self._validate(raw)
 
@@ -200,6 +178,81 @@ class ControlPlaneConfigRepository(ConfigRepository):
             sinks=sinks,
             validation=raw.get("validation", {}),
         )
+
+    def get_json(self, path: str, authenticated: bool = True) -> dict:
+        """GET a JSON resource from the control plane."""
+        data = self._request_json(path=path, method="GET", payload=None, authenticated=authenticated)
+        if not isinstance(data, dict):
+            raise ConfigError("Control Plane returned an unexpected JSON payload")
+        return data
+
+    def get_json_list(self, path: str, authenticated: bool = True) -> list[dict]:
+        """GET a JSON list resource from the control plane."""
+        data = self._request_json(path=path, method="GET", payload=None, authenticated=authenticated)
+        if not isinstance(data, list):
+            raise ConfigError("Control Plane returned an unexpected JSON payload")
+        return data
+
+    def post_json(self, path: str, payload: dict, authenticated: bool = True) -> dict:
+        """POST JSON to the control plane and return the JSON response."""
+        data = self._request_json(path=path, method="POST", payload=payload, authenticated=authenticated)
+        if not isinstance(data, dict):
+            raise ConfigError("Control Plane returned an unexpected JSON payload")
+        return data
+
+    def _request_json(
+        self,
+        path: str,
+        method: str,
+        payload: dict | None,
+        authenticated: bool,
+        retried_after_refresh: bool = False,
+    ) -> dict | list:
+        request_payload = None
+        headers = {"Accept": "application/json"}
+
+        if payload is not None:
+            request_payload = json.dumps(payload).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+
+        if authenticated:
+            self._ensure_token()
+            headers["Authorization"] = f"Bearer {self._token}"
+
+        req = request.Request(
+            f"{self._base_url}{path}",
+            data=request_payload,
+            method=method,
+            headers=headers,
+        )
+        try:
+            with request.urlopen(req, timeout=10) as response:
+                response_payload = response.read().decode("utf-8")
+        except error.HTTPError as exc:
+            if authenticated and exc.code == 401 and not retried_after_refresh:
+                self._refresh_token()
+                return self._request_json(
+                    path=path,
+                    method=method,
+                    payload=payload,
+                    authenticated=authenticated,
+                    retried_after_refresh=True,
+                )
+            raise ConfigError(f"Control Plane request failed: HTTP {exc.code}") from exc
+        except error.URLError as exc:
+            raise ConfigError(f"Control Plane request failed: {exc.reason}") from exc
+
+        try:
+            return json.loads(response_payload)
+        except json.JSONDecodeError as exc:
+            raise ConfigError(f"Control Plane returned invalid JSON: {exc}") from exc
+
+    def _ensure_token(self) -> None:
+        if not self._token:
+            self._request_gateway_token()
+
+        if time.time() - self._token_refreshed_at > 86400:
+            self._refresh_token()
 
     def _refresh_token(self) -> None:
         """Refresh the gateway token from the control plane."""

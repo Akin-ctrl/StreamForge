@@ -23,9 +23,9 @@
 
 | Pattern | Use Case | Components Location | Network Dependency |
 |---------|----------|-------------------|-------------------|
-| **Edge + Cloud** | Offshore, remote sites | Edge: Gateway + Local Kafka<br>Cloud: Control + Central Kafka + Sinks | Intermittent OK |
+| **Edge + Cloud** | Offshore, remote sites | Edge: Gateway + Local Kafka<br>Cloud: Control + Optional user-owned destinations | Intermittent OK |
 | **On-Premise** | Air-gapped factories, regulatory | All on-prem | LAN only |
-| **Hybrid** | Large enterprises | Edge: Gateway<br>DC: Control + Kafka<br>Cloud: Analytics | Tiered |
+| **Hybrid** | Large enterprises | Edge: Gateway + Local Kafka<br>DC/Cloud: Control + Optional destination systems | Tiered |
 
 ---
 
@@ -57,8 +57,8 @@
 │                                 │
 │  Network: 4G/Satellite          │
 └─────────────┬───────────────────┘
-              │ MirrorMaker
-              │ (replication)
+              │ Optional sink egress
+              │ (customer-owned destination)
               ▼
 ┌─────────────────────────────────┐
 │  Cloud (AWS/Azure/GCP)          │
@@ -68,14 +68,10 @@
 │  │ - API + UI + Copilot│        │
 │  └─────────────────────┘        │
 │  ┌─────────────────────┐        │
-│  │ Central Kafka       │        │
-│  │ (3-broker cluster)  │        │
-│  └─────────────────────┘        │
-│  ┌─────────────────────┐        │
-│  │ Sink Services       │        │
-│  │ - TimescaleDB       │        │
-│  │ - S3 Parquet        │        │
-│  │ - ML APIs           │        │
+│  │ Customer Destinations│       │
+│  │ - Kafka (optional)  │        │
+│  │ - S3 / object store │        │
+│  │ - ML / HTTP APIs    │        │
 │  └─────────────────────┘        │
 └─────────────────────────────────┘
 ```
@@ -118,7 +114,8 @@ services:
       CONTROL_API_URL: https://control.streamforge.cloud
       GATEWAY_ID: ${GATEWAY_ID}  # Unique ID
       GATEWAY_TOKEN: ${GATEWAY_TOKEN}  # From registration
-      LOCAL_KAFKA: kafka:9092
+      KAFKA_BOOTSTRAP: kafka:9092
+      KAFKA_AUTO_MANAGE: "true"
       LOG_LEVEL: INFO
     volumes:
       - /data/gateway:/data
@@ -128,27 +125,21 @@ services:
     restart: unless-stopped
     network_mode: host  # Access to USB/serial devices
 
-  # MirrorMaker 2.0 (replication to cloud)
-  mirrormaker:
-    image: confluentinc/cp-kafka:7.5.0
-    container_name: mirrormaker
-    command: >
-      /bin/bash -c "
-      echo 'clusters=edge,central' > /tmp/mm2.properties &&
-      echo 'edge.bootstrap.servers=kafka:9092' >> /tmp/mm2.properties &&
-      echo 'central.bootstrap.servers=${CENTRAL_KAFKA_URL}' >> /tmp/mm2.properties &&
-      echo 'central.security.protocol=SASL_SSL' >> /tmp/mm2.properties &&
-      echo 'central.sasl.mechanism=PLAIN' >> /tmp/mm2.properties &&
-      echo 'central.sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username=\"${KAFKA_USER}\" password=\"${KAFKA_PASSWORD}\";' >> /tmp/mm2.properties &&
-      echo 'edge->central.enabled=true' >> /tmp/mm2.properties &&
-      echo 'edge->central.topics=telemetry.*,events.*,alarms.*,logs.*' >> /tmp/mm2.properties &&
-      echo 'replication.factor=3' >> /tmp/mm2.properties &&
-      /usr/bin/connect-mirror-maker /tmp/mm2.properties
-      "
+  # Optional outbound Kafka sink
+  sink_kafka:
+    image: streamforge/sink-kafka:1.0.0
+    container_name: sink-kafka
     environment:
-      CENTRAL_KAFKA_URL: ${CENTRAL_KAFKA_URL}
-      KAFKA_USER: ${KAFKA_USER}
-      KAFKA_PASSWORD: ${KAFKA_PASSWORD}
+      SINK_CONFIG: >
+        {
+          "source_topics": ["telemetry.clean", "events.raw", "alarms.raw"],
+          "destination": {
+            "kafka_bootstrap": "${CUSTOMER_KAFKA_URL}",
+            "security_protocol": "SASL_SSL",
+            "sasl_username": "${CUSTOMER_KAFKA_USER}",
+            "sasl_password": "${CUSTOMER_KAFKA_PASSWORD}"
+          }
+        }
     depends_on:
       - kafka
     restart: unless-stopped
@@ -181,9 +172,9 @@ ssh root@edge-gateway
 cat > /opt/streamforge/.env <<EOF
 GATEWAY_ID=gateway-rig-alpha-001
 GATEWAY_TOKEN=<token-from-registration>
-CENTRAL_KAFKA_URL=pkc-xxxx.region.provider.confluent.cloud:9092
-KAFKA_USER=<api-key>
-KAFKA_PASSWORD=<api-secret>
+CUSTOMER_KAFKA_URL=pkc-xxxx.region.provider.confluent.cloud:9092
+CUSTOMER_KAFKA_USER=<api-key>
+CUSTOMER_KAFKA_PASSWORD=<api-secret>
 EOF
 
 # 4. Start services
@@ -193,6 +184,8 @@ docker-compose -f docker-compose.edge.yml up -d
 # 5. Verify
 docker-compose logs -f gateway_runtime
 ```
+
+`KAFKA_AUTO_MANAGE=true` lets `gateway_runtime` provision and supervise the embedded single-node Kafka broker when it is not already reachable. If you prefer to run Kafka separately, leave the broker reachable at `KAFKA_BOOTSTRAP` and the runtime will treat it as an already-available local dependency instead of taking ownership.
 
 ### Cloud Deployment (Kubernetes)
 
@@ -321,8 +314,8 @@ spec:
 │  On-Premise Data Center                   │
 │                                           │
 │  ┌──────────────┐    ┌─────────────────┐ │
-│  │ Control Plane│    │ Central Kafka   │ │
-│  │ API + UI     │    │ (3-broker)      │ │
+│  │ Control Plane│    │ Optional Sink   │ │
+│  │ API + UI     │    │ Destinations    │ │
 │  └──────────────┘    └─────────────────┘ │
 │                                           │
 │  ┌──────────────┐    ┌─────────────────┐ │
@@ -486,8 +479,8 @@ Edge (Factory Floor)
   ↓ (LAN, low latency)
 On-Prem Data Center
   ├─ Control Plane
-  ├─ Central Kafka
-  └─ Critical Sinks (real-time)
+  ├─ Critical Sinks (real-time)
+  └─ Optional customer destination systems
   ↓ (WAN, batch)
 Cloud
   ├─ S3 (long-term storage)
@@ -810,20 +803,17 @@ kafka-mirror-maker \
 # 3. Gateway re-registers with Control Plane
 # 4. Control Plane pushes last known config
 # 5. Adapters restart automatically
-# 6. Data collection resumes (no historical data lost, still in central Kafka)
+# 6. Data collection resumes (no historical data lost; local Kafka retained buffered data)
 ```
 
-**Scenario 2: Central Kafka failure**
+**Scenario 2: External Kafka sink destination failure**
 
 ```bash
-# With replication factor 3, losing 1 broker:
-# → Automatic failover, no data loss
-
-# Losing all brokers (catastrophic):
-# 1. Edge gateways buffer locally (up to disk limit)
-# 2. Restore Kafka cluster from backups
-# 3. Restart MirrorMaker on edge gateways
-# 4. Data syncs automatically
+# If a customer-owned Kafka endpoint is unavailable:
+# 1. Edge gateways continue buffering locally
+# 2. Restore customer Kafka connectivity
+# 3. Restart or allow sink-kafka to reconnect
+# 4. Buffered records drain from local Kafka to the external destination
 ```
 
 **Scenario 3: Control Plane failure**

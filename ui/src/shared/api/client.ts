@@ -60,6 +60,67 @@ export type SinkItem = {
   created_at: string
 }
 
+export type AlarmSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO'
+export type AlarmState = 'ACTIVE' | 'ACKNOWLEDGED' | 'CLEARED' | 'SUPPRESSED'
+
+export type AlarmItem = {
+  alarm_id: string
+  gateway_id: string
+  asset_id: string
+  type: string
+  severity: AlarmSeverity
+  state: AlarmState
+  classification: string
+  message: string
+  value: number | null
+  threshold: number | null
+  unit: string | null
+  raised_at: string
+  acked_at: string | null
+  acked_by: string | null
+  cleared_at: string | null
+  suppressed_at: string | null
+  suppressed_by: string | null
+  duration_seconds: number | null
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export type AlarmListItem = AlarmItem & {
+  is_active: boolean
+}
+
+export type DlqStatus =
+  | 'PENDING'
+  | 'REPROCESS_REQUESTED'
+  | 'REPROCESSED'
+  | 'DISCARD_REQUESTED'
+  | 'DISCARDED'
+  | 'REPROCESS_FAILED'
+
+export type DlqAction = 'REPROCESS' | 'DISCARD'
+
+export type DlqItem = {
+  message_id: string
+  gateway_id: string
+  asset_id: string | null
+  source_topic: string
+  clean_topic: string
+  reason: string
+  status: DlqStatus
+  requested_action: DlqAction | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+  action_completed_at: string | null
+  last_error: string | null
+  failed_at: string
+  original_payload: Record<string, unknown>
+  preview_payload: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
 export type HealthResponse = {
   status: string
   service: string
@@ -68,6 +129,24 @@ export type HealthResponse = {
 export type UserTokenResponse = {
   access_token: string
   expires_at: string
+}
+
+export type BootstrapStatusResponse = {
+  bootstrap_required: boolean
+}
+
+async function readError(response: Response, fallbackMessage: string): Promise<string> {
+  const text = await response.text()
+  if (!text) {
+    return fallbackMessage
+  }
+
+  try {
+    const parsed = JSON.parse(text) as { detail?: string }
+    return parsed.detail || fallbackMessage
+  } catch {
+    return text
+  }
 }
 
 /** Exchanges username/password for a JWT access token. */
@@ -85,7 +164,31 @@ export async function login(username: string, password: string): Promise<UserTok
   })
 
   if (!response.ok) {
-    throw new Error('Invalid credentials')
+    throw new Error(await readError(response, 'Invalid credentials'))
+  }
+
+  return (await response.json()) as UserTokenResponse
+}
+
+export async function getBootstrapStatus(): Promise<BootstrapStatusResponse> {
+  const response = await fetch(`${CONTROL_PLANE_URL}/api/v1/auth/bootstrap/status`)
+  if (!response.ok) {
+    throw new Error(await readError(response, 'Unable to determine bootstrap status'))
+  }
+  return (await response.json()) as BootstrapStatusResponse
+}
+
+export async function bootstrapFirstUser(username: string, password: string): Promise<UserTokenResponse> {
+  const response = await fetch(`${CONTROL_PLANE_URL}/api/v1/auth/bootstrap/first-user`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ username, password }),
+  })
+
+  if (!response.ok) {
+    throw new Error(await readError(response, 'Unable to create the first admin user'))
   }
 
   return (await response.json()) as UserTokenResponse
@@ -148,4 +251,100 @@ export function deleteSink(sinkId: number) {
 
 export function getHealth() {
   return request<HealthResponse>('/api/v1/health')
+}
+
+export function listAlarms(filters?: {
+  state?: AlarmState
+  severity?: AlarmSeverity
+  gateway_id?: string
+  asset_id?: string
+  active_only?: boolean
+  limit?: number
+}) {
+  const params = new URLSearchParams()
+
+  if (filters?.state) {
+    params.set('state', filters.state)
+  }
+  if (filters?.severity) {
+    params.set('severity', filters.severity)
+  }
+  if (filters?.gateway_id) {
+    params.set('gateway_id', filters.gateway_id)
+  }
+  if (filters?.asset_id) {
+    params.set('asset_id', filters.asset_id)
+  }
+  if (filters?.active_only) {
+    params.set('active_only', 'true')
+  }
+  if (filters?.limit) {
+    params.set('limit', String(filters.limit))
+  }
+
+  const suffix = params.toString()
+  return request<AlarmListItem[]>(`/api/v1/alarms${suffix ? `?${suffix}` : ''}`)
+}
+
+export function acknowledgeAlarm(alarmId: string, ackedBy?: string) {
+  return request<AlarmItem>(`/api/v1/alarms/${alarmId}/acknowledge`, {
+    method: 'POST',
+    body: ackedBy ? JSON.stringify({ acked_by: ackedBy }) : undefined,
+  })
+}
+
+export function suppressAlarm(alarmId: string, suppressedBy?: string) {
+  return request<AlarmItem>(`/api/v1/alarms/${alarmId}/suppress`, {
+    method: 'POST',
+    body: suppressedBy ? JSON.stringify({ suppressed_by: suppressedBy }) : undefined,
+  })
+}
+
+export function listDlq(filters?: {
+  status?: DlqStatus
+  gateway_id?: string
+  reason?: string
+  limit?: number
+}) {
+  const params = new URLSearchParams()
+
+  if (filters?.status) {
+    params.set('status', filters.status)
+  }
+  if (filters?.gateway_id) {
+    params.set('gateway_id', filters.gateway_id)
+  }
+  if (filters?.reason) {
+    params.set('reason', filters.reason)
+  }
+  if (filters?.limit) {
+    params.set('limit', String(filters.limit))
+  }
+
+  const suffix = params.toString()
+  return request<DlqItem[]>(`/api/v1/dlq${suffix ? `?${suffix}` : ''}`)
+}
+
+export function approveDlqMessage(messageId: string, reviewedBy?: string) {
+  return request<DlqItem>(`/api/v1/dlq/messages/${messageId}/approve`, {
+    method: 'POST',
+    body: reviewedBy ? JSON.stringify({ reviewed_by: reviewedBy }) : undefined,
+  })
+}
+
+export function bulkApproveDlqMessages(messageIds: string[], reviewedBy?: string) {
+  return request<DlqItem[]>('/api/v1/dlq/bulk/approve', {
+    method: 'POST',
+    body: JSON.stringify({
+      message_ids: messageIds,
+      reviewed_by: reviewedBy,
+    }),
+  })
+}
+
+export function discardDlqMessage(messageId: string, reviewedBy?: string) {
+  return request<DlqItem>(`/api/v1/dlq/messages/${messageId}/discard`, {
+    method: 'POST',
+    body: reviewedBy ? JSON.stringify({ reviewed_by: reviewedBy }) : undefined,
+  })
 }

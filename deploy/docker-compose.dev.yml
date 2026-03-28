@@ -92,6 +92,9 @@ services:
       
       # Kafka and runtime configuration
       KAFKA_BOOTSTRAP: kafka:9092
+      # When the local broker is not already reachable, gateway_runtime can provision and supervise
+      # its own single-node Kafka container through the Docker socket.
+      KAFKA_AUTO_MANAGE: "true"
       HEALTH_HOST: 0.0.0.0
       HEALTH_PORT: "8088"
       DOCKER_NETWORK: deploy_default
