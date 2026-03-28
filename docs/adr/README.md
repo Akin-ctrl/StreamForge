@@ -44,6 +44,10 @@ An ADR documents a significant architectural decision, including:
 - **AI Copilot**: MCP tools-first, built-in Copilot optional
 - **Conformance Baseline**: Phase 1-4 audit baseline for remediation tracking
 
+Current implementation progress and issue movement are tracked in:
+- [ADR-011](ADR-011-phase-1-4-conformance-baseline.md) for open conformance gaps and active checklist items.
+- [Resolved Issues Ledger](../ISSUES_SOLVED.md) for items moved out of active queues after completion.
+
 ## Creating New ADRs
 
 When making a significant architectural decision:

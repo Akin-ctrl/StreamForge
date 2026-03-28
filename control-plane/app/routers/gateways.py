@@ -14,6 +14,7 @@ from app.db.deps import get_db
 from app.db.models import Gateway, Pipeline, Sink
 from app.schemas.gateways import (
     GatewayApproveResponse,
+    GatewayCreateRequest,
     GatewayItem,
     GatewayRegisterRequest,
     GatewayRegisterResponse,
@@ -44,6 +45,37 @@ def list_gateways(
     ]
 
 
+@router.post("", response_model=GatewayItem)
+def create_gateway(
+    payload: GatewayCreateRequest,
+    db: Session = Depends(get_db),
+    _: object = Depends(require_admin),
+) -> GatewayItem:
+    existing = db.execute(select(Gateway).where(Gateway.gateway_id == payload.gateway_id)).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Gateway already exists")
+
+    approved = bool(payload.approved)
+    gateway = Gateway(
+        gateway_id=payload.gateway_id,
+        hostname=payload.hostname,
+        hardware_info=payload.hardware_info,
+        status="approved" if approved else "pending",
+        approved=approved,
+    )
+    db.add(gateway)
+    db.commit()
+    db.refresh(gateway)
+
+    return GatewayItem(
+        gateway_id=gateway.gateway_id,
+        hostname=gateway.hostname,
+        status=gateway.status,
+        approved=gateway.approved,
+        created_at=gateway.created_at,
+    )
+
+
 @router.get("/{gateway_id}", response_model=GatewayItem)
 def get_gateway(
     gateway_id: str,
@@ -65,35 +97,9 @@ def get_gateway(
 
 @router.post("/register", response_model=GatewayRegisterResponse)
 def register_gateway(payload: GatewayRegisterRequest, db: Session = Depends(get_db)) -> GatewayRegisterResponse:
-    existing = db.execute(select(Gateway).where(Gateway.gateway_id == payload.gateway_id)).scalar_one_or_none()
-    if existing:
-        existing.hostname = payload.hostname
-        existing.hardware_info = payload.hardware_info
-        existing.updated_at = datetime.now(timezone.utc)
-        db.add(existing)
-        db.commit()
-        db.refresh(existing)
-        return GatewayRegisterResponse(
-            gateway_id=existing.gateway_id,
-            status=existing.status,
-            approved=existing.approved,
-        )
-
-    gateway = Gateway(
-        gateway_id=payload.gateway_id,
-        hostname=payload.hostname,
-        hardware_info=payload.hardware_info,
-        status="pending",
-        approved=False,
-    )
-    db.add(gateway)
-    db.commit()
-    db.refresh(gateway)
-
-    return GatewayRegisterResponse(
-        gateway_id=gateway.gateway_id,
-        status=gateway.status,
-        approved=gateway.approved,
+    raise HTTPException(
+        status_code=410,
+        detail="Gateway self-registration is not enabled. Create the gateway record from the control-plane UI or admin API first.",
     )
 
 

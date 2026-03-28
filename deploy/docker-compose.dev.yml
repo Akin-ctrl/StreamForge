@@ -5,6 +5,11 @@ services:
       POSTGRES_DB: streamforge
       POSTGRES_USER: streamforge
       POSTGRES_PASSWORD: streamforge
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U streamforge -d streamforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     ports:
       - "5432:5432"
     volumes:
@@ -16,6 +21,11 @@ services:
       POSTGRES_DB: streamforge
       POSTGRES_USER: streamforge
       POSTGRES_PASSWORD: streamforge
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U streamforge -d streamforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     ports:
       - "5434:5432"
     volumes:
@@ -27,7 +37,8 @@ services:
       context: ../control-plane
       dockerfile: Dockerfile
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     environment:
       SF_DATABASE_URL: postgresql+psycopg://streamforge:streamforge@postgres:5432/streamforge
       SF_JWT_SECRET: streamforge-dev-secret
@@ -65,10 +76,14 @@ services:
       context: ..
       dockerfile: gateway_runtime/Dockerfile
     depends_on:
-      - kafka
-      - modbus-simulator
-      - control_plane
-      - timescaledb
+      kafka:
+        condition: service_started
+      modbus-simulator:
+        condition: service_started
+      control_plane:
+        condition: service_started
+      timescaledb:
+        condition: service_healthy
     volumes:
       - ./gateway_config.sample.json:/config/gateway_config.json:ro
       - /var/run/docker.sock:/var/run/docker.sock
@@ -81,14 +96,20 @@ services:
       CONTROL_PLANE_GATEWAY_ID: gateway-demo-01
       # Optional: preset gateway JWT token. If unset, gateway_runtime will request one automatically.
       # CONTROL_PLANE_TOKEN: <gateway-jwt-token>
+      # GATEWAY_CONFIG_CACHE: Local cache path for control-plane config used for offline restarts
+      # GATEWAY_CONFIG_CACHE: /data/config/gateway.json
+      # CONTROL_PLANE_CIRCUIT_BREAKER_FAILURE_THRESHOLD: Failures before control-plane requests pause (default: 5)
+      # CONTROL_PLANE_CIRCUIT_BREAKER_OPEN_SECONDS: Cooldown before half-open retry (default: 30)
       
       # Polling behavior tuning
-      # GATEWAY_POLL_INTERVAL: Poll control-plane every N seconds (default: 30)
+      # GATEWAY_POLL_INTERVAL: Poll control-plane every N seconds (default: 30). Cached startups refresh immediately once.
       GATEWAY_POLL_INTERVAL: "30"
       # GATEWAY_POLL_BACKOFF_MULTIPLIER: Exponential backoff multiplier on errors (default: 2.0)
       GATEWAY_POLL_BACKOFF_MULTIPLIER: "2.0"
       # GATEWAY_POLL_MAX_BACKOFF: Maximum backoff time in seconds (default: 300)
       GATEWAY_POLL_MAX_BACKOFF: "300"
+      # SINK_CIRCUIT_BREAKER_FAILURE_THRESHOLD: Failures before sink downstream writes pause (default: 5)
+      # SINK_CIRCUIT_BREAKER_OPEN_SECONDS: Cooldown before sink retries resume (default: 30)
       
       # Kafka and runtime configuration
       KAFKA_BOOTSTRAP: kafka:9092
@@ -128,7 +149,8 @@ services:
     environment:
       VITE_CONTROL_PLANE_URL: http://localhost:8001
     depends_on:
-      - control_plane
+      control_plane:
+        condition: service_started
     ports:
       - "3000:80"
 

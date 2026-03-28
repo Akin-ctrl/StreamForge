@@ -16,6 +16,26 @@ During Phase 4 implementation work, architecture drift concerns were raised. A f
 
 This ADR records what is currently aligned vs omitted for Phases 1-4 and defines a baseline for closing gaps.
 
+Status interpretation note:
+- **Baseline Findings** capture the historical audit snapshot from this ADR's adoption moment.
+- **Current Status Update** reflects implementation state as of the latest documentation refresh.
+
+---
+
+## Current Status Update (2026-03-28)
+
+### Phase Status
+
+- **Phase 1 (Core Foundation): Completed** for original minimal scope.
+- **Phase 2 (Control Plane API): Partial** (operator-driven gateway creation model in place; broader roadmap items remain).
+- **Phase 3 (Validation & Sinks): Completed** for original minimal scope.
+- **Phase 4 (UI): Completed** for original milestone scope (Gateways, Pipeline Builder, Health, Alarms, DLQ).
+
+### Open Work Anchors
+
+- Remaining open implementation items are tracked in P2/P3 checkboxes below.
+- Completed issue items are moved to [docs/ISSUES_SOLVED.md](../ISSUES_SOLVED.md).
+
 ---
 
 ## Decision
@@ -66,7 +86,6 @@ This ADR records what is currently aligned vs omitted for Phases 1-4 and defines
 - TimescaleDB sink implementation exists and writes validated telemetry.
 
 #### Omitted / Partial
-- Operator DLQ workflow (view, approve/reprocess, discard) is not implemented in control-plane API/UI.
 - Sink portfolio in architecture/ADR is broader than current implementation.
 
 ---
@@ -79,8 +98,7 @@ This ADR records what is currently aligned vs omitted for Phases 1-4 and defines
 - Pipeline Builder flow exists and compiles backend payload.
 
 #### Omitted / Partial
-- Alarm view and DLQ view required by milestone scope are not implemented.
-- Backend alarm endpoints are also missing, blocking corresponding UI completion.
+- Wider post-milestone UI roadmap items remain open beyond original Phase 4 scope.
 
 ---
 
@@ -102,13 +120,13 @@ This ADR records what is currently aligned vs omitted for Phases 1-4 and defines
 - **Partial**: Containerized sink pattern implemented; sink catalog scope remains limited in practice.
 
 ### ADR-006 (Gateway Autonomy)
-- **Partial**: Polling/backoff behavior exists; deterministic cached config behavior for offline continuity remains incomplete.
+- **Aligned**: Cached config semantics now support deterministic startup, offline reuse, and background refresh consistent with the autonomy decision.
 
 ### ADR-007 (Authentication)
 - **Partial**: Gateway/user JWT implemented; broader enterprise path (OAuth/OIDC, richer RBAC model) is not complete.
 
 ### ADR-008 (Failure Modes)
-- **Partial**: Basic restart/degradation behavior present; explicit circuit breaker strategy is not fully implemented.
+- **Aligned**: Explicit circuit breaker behavior now protects control-plane requests and sink downstream writes, with health visibility and cooldown semantics matching ADR-008.
 
 ### ADR-009 (Overflow Handling)
 - **Not aligned**: Tiered overflow controls (compress/downsample/priority eviction/block) are not implemented.
@@ -134,25 +152,16 @@ Resolved direction:
 
 ## Additional Implementation Hardening Gaps (Cross-Review Addendum)
 
-The following implementation-level gaps were identified during cross-review and are now attached to this baseline for remediation tracking:
+The following open implementation-level gaps remain attached to this baseline for remediation tracking:
 
-1. **BaseAdapter lifecycle is not structurally enforced**
-   - `BaseAdapter` currently documents lifecycle hooks but does not implement a concrete template run loop.
-2. **Publishing path is adapter-local instead of centralized**
-   - Kafka producer/publish behavior is implemented per adapter, risking drift in delivery semantics and observability.
-3. **Modbus adapter resilience/performance gaps**
-   - Polling is register-by-register (no contiguous batching optimization).
-   - Connection/read failures lack explicit retry with backoff and reconnect strategy.
-4. **Runtime token refresh robustness**
-   - Control-plane config fetch path does not perform targeted immediate refresh/retry on auth failures.
-5. **Control-plane bootstrap security posture**
-   - Default admin credentials are weak and should be hardened/blocked outside dev profiles.
-6. **Schema migration maturity**
-   - Startup table creation is still used; migration-managed schema evolution path is not yet adopted.
-7. **User onboarding gap**
-   - First-user self-registration/bootstrap flow is not yet exposed in API/UI.
+1. **Validator at-least-once gap**
+   - Validator consumer currently auto-commits offsets before publish confirmation, which can acknowledge data before clean-topic/DLQ durability on process failure.
+2. **Sink SQL identifier safety gap**
+   - TimescaleDB sink interpolates table identifiers directly from config into SQL statements and needs strict identifier validation/quoting.
+3. **Gateway status/approval consistency gap**
+   - Gateway update path allows `status` and `approved` to drift into contradictory combinations without server-side reconciliation.
 
-These are not replacements for phase-level findings above; they are implementation hardening details required for production readiness.
+Completed hardening issues were moved to [docs/ISSUES_SOLVED.md](../ISSUES_SOLVED.md).
 
 ---
 
@@ -174,14 +183,17 @@ The checklist below converts the findings in this ADR into a practical fix seque
 
 ### P2: Runtime Reliability and Contract Enforcement
 
-- [ ] Enforce `BaseAdapter` lifecycle structurally with a concrete template run loop/shared contract instead of documentation-only hooks.
-- [ ] Centralize Kafka publishing behavior so delivery semantics, error handling, and observability are consistent across adapters.
-- [ ] Improve Modbus adapter polling efficiency with contiguous register batching where possible.
-- [ ] Add explicit Modbus reconnect/retry/backoff handling for connection and read failures.
+- [x] Enforce `BaseAdapter` lifecycle structurally with a concrete template run loop/shared contract instead of documentation-only hooks.
+- [x] Centralize Kafka publishing behavior so delivery semantics, error handling, and observability are consistent across adapters.
+- [x] Improve Modbus adapter polling efficiency with contiguous register batching where possible.
+- [x] Add explicit Modbus reconnect/retry/backoff handling for connection and read failures.
 - [x] Implement runtime-managed embedded Kafka lifecycle rather than reachability wait-only behavior.
-- [ ] Implement full runtime auto-registration/bootstrap path when the gateway is not yet registered.
-- [ ] Implement deterministic cached control-plane config semantics for offline startup/fallback autonomy.
-- [ ] Expand failure-mode implementation to include explicit circuit-breaker strategy described by ADR-008.
+- [x] Defer zero-touch gateway auto-registration/bootstrap. Current architecture keeps gateway creation and pipeline/sink composition operator-driven in the UI until multi-adapter/multi-sink onboarding is explicitly designed.
+- [x] Implement deterministic cached control-plane config semantics for offline startup/fallback autonomy.
+- [x] Expand failure-mode implementation to include explicit circuit-breaker strategy described by ADR-008.
+- [ ] Enforce manual offset commit semantics in validator so Kafka offsets are committed only after clean-topic or DLQ publish durability is confirmed.
+- [ ] Harden sink SQL identifier handling by validating/quoting configured table names before executing DDL/DML.
+- [ ] Enforce gateway state invariants by reconciling or rejecting conflicting `status`/`approved` updates server-side.
 
 ### P3: Architecture Conformance Expansion
 
@@ -213,13 +225,14 @@ The checklist below converts the findings in this ADR into a practical fix seque
 ## Required Follow-up
 
 1. Create a remediation backlog mapped to this ADR (P1/P2/P3 priorities).
-2. Close Phase 4 scope gaps first (Alarms + DLQ APIs/UI).
+2. Keep active backlog aligned with current reality (Phase 4 baseline scope already completed).
 3. Decide and codify final direction for:
    - schema strategy (Avro+Registry vs current JSON path),
    - gateway autonomy cache semantics,
    - overflow handling implementation.
 4. Keep architecture docs aligned on Kafka ownership: gateway-local Kafka only; external Kafka only as an optional sink destination.
-5. Track and close the "Additional Implementation Hardening Gaps" section with explicit linked PRs.
+5. Keep gateway onboarding aligned with the current operator-driven model: the UI/control plane remains the source of truth for gateway records and pipeline composition until richer multi-adapter/multi-sink onboarding is designed.
+6. Track and close the "Additional Implementation Hardening Gaps" section with explicit linked PRs.
 
 ---
 

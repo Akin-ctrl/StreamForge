@@ -303,6 +303,9 @@ Passed via environment variable `ADAPTER_CONFIG` (JSON):
 ```
 
 #### Output: Kafka Messages
+
+Adapter containers publish through the shared adapter Kafka publisher, which targets gateway-local Kafka, keys records by `asset_id` when present, and waits for broker acknowledgement with `acks=all`.
+
 ```json
 {
   "asset_id": "line_1_sensor_01",
@@ -321,6 +324,8 @@ Passed via environment variable `ADAPTER_CONFIG` (JSON):
   }
 }
 ```
+
+For Modbus adapters, contiguous or overlapping holding-register definitions are batched into shared reads before decoding so the gateway minimizes round trips to the device while preserving the same normalized message contract. Connection and read failures are handled with bounded retry/backoff and reconnect attempts inside the adapter before control falls back to container restart supervision.
 
 #### Required Endpoints
 ```
@@ -408,10 +413,10 @@ Gateway ──(poll every 30s)──> Control Plane API
 
 ### Offline Behavior
 
-- Gateway caches config to local file
-- First boot requires Control Plane (one-time)
-- Subsequent boots use cached config
-- Gateway runs **indefinitely offline**
+- Gateway caches control-plane config to a local file (`/data/config/gateway.json` by default)
+- First boot requires Control Plane if no valid cached config exists yet
+- Subsequent boots start from cached config immediately, then refresh in the background
+- Gateway runs **indefinitely offline** once a valid cache has been established
 
 ---
 
@@ -529,7 +534,7 @@ All alarms visible in Control Plane UI regardless of alert routing.
 #### Gateway Authentication
 - JWT tokens (1-year validity)
 - Auto-renew before expiry
-- First registration requires approval
+- Gateway record is created in the control plane/UI before first token issuance
 
 #### User Authentication
 - Built-in username/password
@@ -574,7 +579,7 @@ Roles can be scoped to specific gateways:
 |-----------|---------|----------|
 | Adapter | Crash | Auto-restart (max 5 in 5 min) |
 | Adapter | Protocol timeout | Retry with backoff, mark DEGRADED |
-| Sink | Downstream unreachable | Backpressure, Kafka retains, retry |
+| Sink | Downstream unreachable | Circuit breaker opens, Kafka retains uncommitted records, retry after cooldown |
 | Validator | Crash | Auto-restart, messages queue |
 | Local Kafka | Crash | Auto-restart, data preserved |
 | Gateway Runtime | Crash | Systemd restarts, children restart |
@@ -592,6 +597,7 @@ For sinks and Control Plane communication:
 - **Closed**: Normal operation
 - **Open**: After 5 consecutive failures, pause 30s
 - **Half-open**: Try one request, success → Closed, fail → Open
+- Sink consumers commit Kafka offsets only after successful downstream writes so buffered records remain retryable while the breaker is open
 
 ### Recovery States
 

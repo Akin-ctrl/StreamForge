@@ -40,7 +40,7 @@ AUTH="-H \"Authorization: Bearer $TOKEN\""
 _get()  { curl -sf -H "Authorization: Bearer $TOKEN" "$BASE_URL$1"; }
 _post() { curl -sf -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$2" "$BASE_URL$1"; }
 
-# ── 2. Verify gateway is registered ──────────────────────────────────────────
+# ── 2. Ensure gateway exists ─────────────────────────────────────────────────
 info "Checking gateway '$GATEWAY_ID' ..."
 GW_LIST=$(_get "/api/v1/gateways")
 GW_EXISTS=$(echo "$GW_LIST" | python3 -c "
@@ -50,8 +50,17 @@ print('yes' if any(g['gateway_id'] == '$GATEWAY_ID' for g in gws) else 'no')
 ")
 
 if [[ "$GW_EXISTS" != "yes" ]]; then
-  err "Gateway '$GATEWAY_ID' is not registered. Start gateway_runtime first, then re-run this script."
-  exit 1
+  warn "Gateway '$GATEWAY_ID' is missing. Creating it via admin API ..."
+  GATEWAY_PAYLOAD=$(python3 -c "
+import json
+payload = {
+    'gateway_id': '$GATEWAY_ID',
+    'hostname': 'gateway-demo-01.local',
+    'approved': True,
+}
+print(json.dumps(payload))
+")
+  _post "/api/v1/gateways" "$GATEWAY_PAYLOAD" >/dev/null
 fi
 info "Gateway '$GATEWAY_ID' found."
 

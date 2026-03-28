@@ -15,10 +15,17 @@ from contextlib import suppress
 from fastapi import FastAPI
 import uvicorn
 
+from gateway_runtime.circuit_breaker import CircuitBreaker
+
 
 APP = FastAPI(title="sink-timescaledb", version="0.1.0")
 
 _STOP = threading.Event()
+_DB_BREAKER = CircuitBreaker(
+    name="timescaledb_sink",
+    failure_threshold=int(os.getenv("SINK_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "5")),
+    open_duration_seconds=float(os.getenv("SINK_CIRCUIT_BREAKER_OPEN_SECONDS", "30")),
+)
 _STATS = {
     "consumed": 0,
     "written": 0,
@@ -79,13 +86,18 @@ def _writer_loop() -> None:
         return
 
     while not _STOP.is_set():
+        if not _DB_BREAKER.allow_request():
+            _STOP.wait(timeout=max(_DB_BREAKER.remaining_open_seconds(), 1.0))
+            continue
+
+        consumer = None
         try:
             consumer = KafkaConsumer(
                 cfg["topic"],
                 bootstrap_servers=cfg["kafka_bootstrap"],
                 group_id=cfg["group_id"],
                 auto_offset_reset="latest",
-                enable_auto_commit=True,
+                enable_auto_commit=False,
                 value_deserializer=lambda value: json.loads(value.decode("utf-8")),
             )
 
@@ -97,8 +109,8 @@ def _writer_loop() -> None:
                     if _STOP.is_set():
                         break
 
-                    _STATS["consumed"] += 1
                     payload = record.value
+                    written_rows = 0
                     with conn.cursor() as cursor:
                         for reading in payload.get("readings", []):
                             cursor.execute(
@@ -118,20 +130,47 @@ def _writer_loop() -> None:
                                     json.dumps(payload),
                                 ),
                             )
-                            _STATS["written"] += 1
+                            written_rows += 1
+                    consumer.commit()
+                    _STATS["consumed"] += 1
+                    _STATS["written"] += written_rows
+                    _STATS["last_error"] = None
+                    _DB_BREAKER.record_success()
         except Exception as exc:
             _STATS["errors"] += 1
             _STATS["last_error"] = str(exc)
-            time.sleep(3)
+            _DB_BREAKER.record_failure(exc)
+            _STOP.wait(timeout=max(_DB_BREAKER.remaining_open_seconds(), 3.0))
+        finally:
+            with suppress(Exception):
+                if consumer is not None:
+                    consumer.close()
+
+
+def _health_payload() -> dict:
+    breaker = _DB_BREAKER.snapshot()
+    status = "healthy"
+    if breaker.state == "open":
+        status = "failed"
+    elif breaker.state == "half_open" or _STATS["last_error"] is not None:
+        status = "degraded"
+    return {
+        "status": status,
+        "stats": _STATS,
+        "circuit_breaker": {
+            "name": breaker.name,
+            "state": breaker.state,
+            "consecutive_failures": breaker.consecutive_failures,
+            "failure_threshold": breaker.failure_threshold,
+            "open_remaining_seconds": breaker.open_remaining_seconds,
+            "last_error": breaker.last_error,
+        },
+    }
 
 
 @APP.get("/health")
 def health() -> dict:
-    status = "healthy" if _STATS["last_error"] is None else "degraded"
-    return {
-        "status": status,
-        "stats": _STATS,
-    }
+    return _health_payload()
 
 
 @APP.get("/metrics")

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import time
-
 from adapters.adapter_modbus_tcp.modbus_tcp_adapter import ModbusTcpAdapter
 
 
@@ -21,19 +19,10 @@ def main() -> None:
     elif config_path and config_path.strip().startswith("{"):
         raw = json.loads(config_path)
     else:
-        raw = json.loads(open(config_path, "r", encoding="utf-8").read())
+        with open(config_path, "r", encoding="utf-8") as handle:
+            raw = json.load(handle)
     adapter = ModbusTcpAdapter(raw)
-    adapter.connect()
-    print("modbus_tcp_adapter connected", flush=True)
-
-    poll_interval_ms = int(raw.get("poll_interval_ms", 1000))
-
-    while True:
-        reading = adapter.poll()
-        message = adapter.transform(reading)
-        adapter.publish(message)
-        print("modbus_tcp_adapter published reading", flush=True)
-        time.sleep(poll_interval_ms / 1000)
+    adapter.run()
 
 
 if __name__ == "__main__":
