@@ -48,6 +48,7 @@ class GatewayRuntime:
         self._kafka_watchdog_task: asyncio.Task[None] | None = None
         self._kafka_watchdog_stop_event: asyncio.Event | None = None
         self._validator: ValidatorModule | None = None
+        self._poll_initial_delay = 0
         
         # Polling parameters
         self._poll_interval = int(os.getenv("GATEWAY_POLL_INTERVAL", "30"))  # seconds
@@ -85,6 +86,7 @@ class GatewayRuntime:
         
         # Start polling loop when using Control Plane-backed config repository
         if isinstance(self._config_repo, ControlPlaneConfigRepository):
+            self._poll_initial_delay = 0 if self._config_repo.last_load_source == "cache" else self._poll_interval
             self._polling_stop_event = asyncio.Event()
             self._polling_task = asyncio.create_task(self._polling_loop())
             print("gateway_runtime polling loop started", flush=True)
@@ -126,14 +128,15 @@ class GatewayRuntime:
 
     async def _polling_loop(self) -> None:
         """Periodically fetch config from Control Plane and apply updates."""
-        backoff_delay = self._poll_interval
+        backoff_delay = self._poll_initial_delay
         
         while not self._polling_stop_event.is_set():
             try:
-                await asyncio.sleep(backoff_delay)
+                if backoff_delay > 0:
+                    await asyncio.sleep(backoff_delay)
                 
                 # Fetch new config
-                new_config = self._config_repo.load()
+                new_config = self._config_repo.refresh()
                 
                 # Apply config if different
                 if self._has_config_changed(self._current_config, new_config):
@@ -146,14 +149,20 @@ class GatewayRuntime:
                 
             except ConfigError as exc:
                 # Control plane unreachable or error; exponential backoff
-                backoff_delay = min(backoff_delay * self._poll_backoff_multiplier, self._poll_max_backoff)
+                backoff_delay = self._next_poll_backoff(backoff_delay)
                 print(f"gateway_runtime config poll failed: {exc}, backing off {backoff_delay:.0f}s", flush=True)
             except asyncio.CancelledError:
                 break
             except Exception as exc:
                 # Unexpected error; log and continue
                 print(f"gateway_runtime polling loop error: {exc}", flush=True)
-                backoff_delay = min(backoff_delay * self._poll_backoff_multiplier, self._poll_max_backoff)
+                backoff_delay = self._next_poll_backoff(backoff_delay)
+
+    def _next_poll_backoff(self, current_delay: float) -> float:
+        """Calculate the next poll delay without allowing zero-delay retry loops."""
+        if current_delay <= 0:
+            return float(self._poll_interval)
+        return min(current_delay * self._poll_backoff_multiplier, self._poll_max_backoff)
 
     def _has_config_changed(self, old: GatewayConfig | None, new: GatewayConfig) -> bool:
         """Check if adapter configuration has changed."""
@@ -253,4 +262,9 @@ class GatewayRuntime:
             "adapters": self._adapters.health(),
             "sinks": self._sinks.health(),
             "validator": self._validator.health() if self._validator else {"status": "disabled"},
+            "control_plane": (
+                self._config_repo.health()
+                if isinstance(self._config_repo, ControlPlaneConfigRepository)
+                else {"status": "disabled", "mode": "file"}
+            ),
         }

@@ -10,6 +10,8 @@ __all__ = [
     "HealthReporter",
     "ConfigRepository",
     "ControlPlaneConfigRepository",
+    "CircuitBreaker",
+    "CircuitBreakerOpenError",
     "SchemaManager",
     "AdapterConfig",
     "GatewayConfig",
@@ -28,5 +30,6 @@ from gateway_runtime.sink_manager import SinkManager
 from gateway_runtime.validator import ValidatorModule
 from gateway_runtime.health import HealthReporter, HealthEvent, AdapterState
 from gateway_runtime.config import ConfigRepository, ControlPlaneConfigRepository, GatewayConfig, AdapterConfig
+from gateway_runtime.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
 from gateway_runtime.schema import SchemaManager
 from gateway_runtime.errors import ConfigError, AdapterStartError, KafkaError

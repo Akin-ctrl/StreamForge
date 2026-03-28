@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react'
 
-import { GatewayItem, approveGateway, listGateways } from '../../shared/api/client'
+import { GatewayItem, approveGateway, createGateway, listGateways } from '../../shared/api/client'
 
 /**
  * Gateway operations page.
- * Shows discovered gateways and allows approve actions.
+ * Supports operator-managed gateway creation and approve actions.
  */
 export function GatewaysPage() {
   const [items, setItems] = useState<GatewayItem[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [gatewayId, setGatewayId] = useState('gateway-demo-01')
+  const [hostname, setHostname] = useState('gateway-demo-01.local')
 
   // Refresh list from backend and keep loading/error states consistent.
   const refresh = async () => {
@@ -39,12 +41,41 @@ export function GatewaysPage() {
     }
   }
 
+  const onCreate = async () => {
+    setError(null)
+    try {
+      await createGateway({
+        gateway_id: gatewayId,
+        hostname,
+        approved: true,
+      })
+      await refresh()
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : 'Failed to create gateway')
+    }
+  }
+
   return (
     <section>
       <div className="page-header">
         <h2>Gateways</h2>
         <button className="btn" onClick={() => void refresh()}>
           Refresh
+        </button>
+      </div>
+
+      <div className="card">
+        <h3>Create Gateway</h3>
+        <label>
+          Gateway ID
+          <input value={gatewayId} onChange={(event) => setGatewayId(event.target.value)} />
+        </label>
+        <label>
+          Hostname
+          <input value={hostname} onChange={(event) => setHostname(event.target.value)} />
+        </label>
+        <button className="btn" onClick={() => void onCreate()}>
+          Create Gateway
         </button>
       </div>
 

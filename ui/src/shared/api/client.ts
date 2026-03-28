@@ -198,6 +198,18 @@ export function listGateways() {
   return request<GatewayItem[]>('/api/v1/gateways')
 }
 
+export function createGateway(payload: {
+  gateway_id: string
+  hostname: string
+  hardware_info?: Record<string, unknown>
+  approved?: boolean
+}) {
+  return request<GatewayItem>('/api/v1/gateways', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
 /** Approves a discovered gateway for runtime orchestration. */
 export function approveGateway(gatewayId: string) {
   return request<{ gateway_id: string; status: string; approved: boolean }>(

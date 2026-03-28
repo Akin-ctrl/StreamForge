@@ -85,25 +85,21 @@ Each has different requirements for credential lifecycle and management.
 ## Gateway Registration Flow
 
 ```
-1. Gateway boots (first time)
-2. Gateway generates unique ID (or uses hardware ID)
-3. Gateway calls POST /api/v1/gateways/register
+1. Operator creates gateway record in UI / control-plane API
    {
      "gateway_id": "gw-factory-north",
-     "hostname": "gateway-01.local",
-     "hardware_info": {...}
+     "hostname": "gateway-01.local"
    }
-4. Control Plane creates pending registration
-5. Operator approves in UI
-6. Gateway calls POST /api/v1/gateways/token
-7. Control Plane returns JWT:
+2. Gateway boots (first time)
+3. Gateway calls POST /api/v1/gateways/token
+4. Control Plane returns JWT:
    {
      "token": "eyJhbGc...",
      "expires_at": "2027-01-29T00:00:00Z",
      "gateway_id": "gw-factory-north"
    }
-8. Gateway stores token securely
-9. All subsequent API calls include: Authorization: Bearer <token>
+5. Gateway stores token securely
+6. All subsequent API calls include: Authorization: Bearer <token>
 ```
 
 ## Token Renewal

@@ -81,11 +81,15 @@ We needed to decide how to package and deploy protocol adapters.
 
 Every adapter must:
 1. Accept config via `ADAPTER_CONFIG` environment variable (JSON)
-2. Publish to Kafka topics specified in config
-3. Expose `GET /health` endpoint
-4. Expose `GET /metrics` endpoint (Prometheus format)
-5. Log structured JSON to stdout
-6. Handle SIGTERM for graceful shutdown
+2. Implement protocol-specific `connect`, `poll`, `transform`, and `disconnect` hooks via the shared `BaseAdapter` lifecycle template
+3. Use the shared adapter Kafka publisher for local edge-topic writes so delivery semantics, asset-based partition keys, and publish health reporting stay consistent
+4. Publish to Kafka topics specified in config
+5. Support graceful shutdown on `SIGTERM` so the container can stop cleanly without data corruption
+6. Expose `GET /health` endpoint
+7. Expose `GET /metrics` endpoint (Prometheus format)
+8. Log structured JSON to stdout
+
+The shared lifecycle and publisher keep adapter behavior consistent while preserving ADR-002's container isolation model: `gateway_runtime` owns adapter containers, and `BaseAdapter` plus the shared adapter Kafka publisher own the in-container execution contract.
 
 ## Related Decisions
 - [ADR-005: Sink Architecture](ADR-005-sink-architecture.md)

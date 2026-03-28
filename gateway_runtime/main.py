@@ -33,6 +33,7 @@ def main() -> None:
     control_plane_url = os.getenv("CONTROL_PLANE_URL")
     control_plane_gateway_id = os.getenv("CONTROL_PLANE_GATEWAY_ID")
     control_plane_token = os.getenv("CONTROL_PLANE_TOKEN")
+    control_plane_cache_path = os.getenv("GATEWAY_CONFIG_CACHE", "/data/config/gateway.json")
     kafka_bootstrap = os.getenv("KAFKA_BOOTSTRAP")
     health_host = os.getenv("HEALTH_HOST")
     health_port = os.getenv("HEALTH_PORT")
@@ -56,6 +57,7 @@ def main() -> None:
             base_url=control_plane_url,
             gateway_id=control_plane_gateway_id,
             token=control_plane_token,
+            cache_path=control_plane_cache_path,
         )
     else:
         config_repo = ConfigRepository(config_path)

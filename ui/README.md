@@ -1,27 +1,39 @@
-# React + TypeScript + Vite
+# StreamForge UI
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React + TypeScript + Vite frontend for control-plane operator workflows.
 
-Currently, two official plugins are available:
+## Implemented Views
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- Login + first-user bootstrap flow
+- Gateways (list, create, approve)
+- Create Pipeline (guided pipeline builder)
+- Health
+- Alarms (list/filter, acknowledge, suppress)
+- DLQ (list/filter, detail, approve/discard, bulk approve)
 
-## Expanding the ESLint configuration
+## Run Locally
 
-If you are developing a production application, we recommend updating the configuration to enable type aware lint rules:
-
-- Configure the top-level `parserOptions` property like this:
-
-```js
-   parserOptions: {
-    ecmaVersion: 'latest',
-    sourceType: 'module',
-    project: ['./tsconfig.json', './tsconfig.node.json'],
-    tsconfigRootDir: __dirname,
-   },
+```bash
+cd ui
+npm install
+npm run dev
 ```
 
-- Replace `plugin:@typescript-eslint/recommended` to `plugin:@typescript-eslint/recommended-type-checked` or `plugin:@typescript-eslint/strict-type-checked`
-- Optionally add `plugin:@typescript-eslint/stylistic-type-checked`
-- Install [eslint-plugin-react](https://github.com/jsx-eslint/eslint-plugin-react) and add `plugin:react/recommended` & `plugin:react/jsx-runtime` to the `extends` list
+By default, API requests use same-origin (`/api/...`) so local production-like runs should use the nginx reverse proxy setup.
+
+## Build
+
+```bash
+npm run build
+```
+
+## Environment
+
+- `VITE_CONTROL_PLANE_URL` (optional)
+   - If unset, UI uses same-origin API calls.
+   - Set explicitly only for cross-origin local dev cases.
+
+## Status Notes
+
+- UI baseline milestone scope is completed for Phases 1-4 tracking.
+- Future UI work should follow `PROJECT_PHASES.md` active queue and ADR-011 open P2/P3 items.
