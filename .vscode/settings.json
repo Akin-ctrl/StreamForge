@@ -1,0 +1,20 @@
+{
+    "python.testing.unittestArgs": [
+        "-v",
+        "-s",
+        "./adapters",
+        "-p",
+        "*test.py"
+    ],
+    "python.testing.pytestEnabled": false,
+    "python.testing.unittestEnabled": true,
+    "chat.agentSkillsLocations": {
+        ".github/skills": true,
+        ".agents/skills": true,
+        ".claude/skills": true,
+        "~/.copilot/skills": true,
+        "~/.agents/skills": true,
+        "~/.claude/skills": true,
+        "~/.vscode-server/extensions/synapsevscode.synapse-1.21.0/copilot/skills": true
+    }
+}
