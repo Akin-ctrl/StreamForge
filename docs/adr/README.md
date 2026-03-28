@@ -24,6 +24,7 @@ An ADR documents a significant architectural decision, including:
 | [ADR-008](ADR-008-failure-modes.md) | Failure Modes and Recovery | Accepted |
 | [ADR-009](ADR-009-overflow-handling.md) | Overflow Handling | Accepted |
 | [ADR-010](ADR-010-copilot-mcp.md) | Copilot Tools-First Approach | Accepted |
+| [ADR-011](ADR-011-phase-1-4-conformance-baseline.md) | Phase 1-4 Architecture Conformance Baseline | Accepted |
 
 ## Key Decisions Summary
 
@@ -41,6 +42,7 @@ An ADR documents a significant architectural decision, including:
 ### Operations
 - **Authentication**: JWT for gateways, built-in + OAuth for users
 - **AI Copilot**: MCP tools-first, built-in Copilot optional
+- **Conformance Baseline**: Phase 1-4 audit baseline for remediation tracking
 
 ## Creating New ADRs
 
