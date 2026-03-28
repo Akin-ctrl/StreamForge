@@ -129,6 +129,30 @@ This must be reconciled to avoid conflicting implementation direction.
 
 ---
 
+## Additional Implementation Hardening Gaps (Cross-Review Addendum)
+
+The following implementation-level gaps were identified during cross-review and are now attached to this baseline for remediation tracking:
+
+1. **BaseAdapter lifecycle is not structurally enforced**
+   - `BaseAdapter` currently documents lifecycle hooks but does not implement a concrete template run loop.
+2. **Publishing path is adapter-local instead of centralized**
+   - Kafka producer/publish behavior is implemented per adapter, risking drift in delivery semantics and observability.
+3. **Modbus adapter resilience/performance gaps**
+   - Polling is register-by-register (no contiguous batching optimization).
+   - Connection/read failures lack explicit retry with backoff and reconnect strategy.
+4. **Runtime token refresh robustness**
+   - Control-plane config fetch path does not perform targeted immediate refresh/retry on auth failures.
+5. **Control-plane bootstrap security posture**
+   - Default admin credentials are weak and should be hardened/blocked outside dev profiles.
+6. **Schema migration maturity**
+   - Startup table creation is still used; migration-managed schema evolution path is not yet adopted.
+7. **User onboarding gap**
+   - First-user self-registration/bootstrap flow is not yet exposed in API/UI.
+
+These are not replacements for phase-level findings above; they are implementation hardening details required for production readiness.
+
+---
+
 ## Consequences
 
 ### Positive
@@ -149,6 +173,7 @@ This must be reconciled to avoid conflicting implementation direction.
    - gateway autonomy cache semantics,
    - overflow handling implementation.
 4. Reconcile architecture docs for local-vs-central Kafka ownership language.
+5. Track and close the "Additional Implementation Hardening Gaps" section with explicit linked PRs.
 
 ---
 
