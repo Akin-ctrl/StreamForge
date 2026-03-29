@@ -6,6 +6,7 @@ import { DlqPage } from './features/dlq/DlqPage'
 import { LoginPage } from './features/auth/LoginPage'
 import { GatewaysPage } from './features/gateways/GatewaysPage'
 import { HealthPage } from './features/health/HealthPage'
+import { OverviewPage } from './features/overview/OverviewPage'
 import { PipelineBuilderPage } from './features/pipelines/PipelineBuilderPage'
 import { ProtectedRoute } from './shared/auth/ProtectedRoute'
 
@@ -26,7 +27,8 @@ function App() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Navigate to="/gateways" replace />} />
+        <Route index element={<Navigate to="/overview" replace />} />
+        <Route path="overview" element={<OverviewPage />} />
         <Route path="gateways" element={<GatewaysPage />} />
         <Route path="alarms" element={<AlarmsPage />} />
         <Route path="dlq" element={<DlqPage />} />
