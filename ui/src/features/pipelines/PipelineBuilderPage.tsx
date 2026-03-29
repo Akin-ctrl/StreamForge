@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useFieldArray, useForm } from 'react-hook-form'
+import { useNavigate } from 'react-router-dom'
 
 import {
   GatewayItem,
   PipelineItem,
   SinkItem,
+  createPipeline,
   listGateways,
   listPipelines,
   listSinks,
@@ -40,14 +42,19 @@ type ValidationPerParam = {
 type BuilderFormValues = {
   pipelineName: string
   gatewayId: string
-  adapterId: string
-  adapterType: string
-  adapterConfigValues: Record<string, string | number>
-  registers: RegisterInput[]
-  sinkId: string
-  outputKafkaBootstrap: string
-  outputTopic: string
-  assetId: string
+  adapter: {
+    adapter_id: string
+    adapter_type: string
+    config_values: Record<string, string | number>
+    registers: RegisterInput[]
+  }
+  output: {
+    sink_id: string
+    sink_type: string
+    kafka_bootstrap: string
+    topic: string
+    asset_id: string
+  }
   validationEnabled: boolean
   rawTopic: string
   cleanTopic: string
@@ -132,12 +139,15 @@ function normalizeAdapterOptions(rows: PipelineItem[]): AdapterOption[] {
  * Step 1: Adapter, Step 2: Sink, Step 3: Validation, Step 4: Review.
  */
 export function PipelineBuilderPage({ availableAdapters, availableSinks }: PipelineBuilderProps = {}) {
+  const navigate = useNavigate()
   const [step, setStep] = useState(1)
   const [gateways, setGateways] = useState<GatewayItem[]>([])
   const [fetchedAdapters, setFetchedAdapters] = useState<AdapterOption[]>([])
   const [fetchedSinks, setFetchedSinks] = useState<SinkItem[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
   const [stepError, setStepError] = useState<string | null>(null)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const {
     register,
@@ -150,14 +160,19 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
     defaultValues: {
       pipelineName: 'demo-pipeline-ui',
       gatewayId: '',
-      adapterId: 'adapter-01',
-      adapterType: '',
-      adapterConfigValues: {},
-      registers: [{ address: 40001, param: 'temperature', type: 'float32', unit: 'celsius' }],
-      sinkId: '',
-      outputKafkaBootstrap: '',
-      outputTopic: '',
-      assetId: 'asset-01',
+      adapter: {
+        adapter_id: 'adapter-01',
+        adapter_type: '',
+        config_values: {},
+        registers: [{ address: 40001, param: 'temperature', type: 'float32', unit: 'celsius' }],
+      },
+      output: {
+        sink_id: '',
+        sink_type: '',
+        kafka_bootstrap: 'kafka:9092',
+        topic: 'telemetry.raw',
+        asset_id: 'asset-01',
+      },
       validationEnabled: true,
       rawTopic: 'telemetry.raw',
       cleanTopic: 'telemetry.clean',
@@ -168,16 +183,17 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
 
   const { fields, append, remove } = useFieldArray({
     control,
-    name: 'registers',
+    name: 'adapter.registers',
   })
 
   const adapters = availableAdapters || fetchedAdapters
   const sinks = availableSinks || fetchedSinks
 
-  const selectedAdapterType = watch('adapterType')
-  const selectedSinkId = watch('sinkId')
-  const selectedRegisters = watch('registers')
-  const selectedValidation = watch('validationByParam')
+  const selectedAdapterType = watch('adapter.adapter_type')
+  const selectedSinkId = watch('output.sink_id')
+  const selectedSinkType = watch('output.sink_type')
+  const selectedRegisters = watch('adapter.registers')
+  const formSnapshot = watch()
 
   const selectedAdapter = useMemo(
     () => adapters.find((item) => item.adapter_type === selectedAdapterType) || null,
@@ -187,6 +203,11 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
   const selectedSink = useMemo(
     () => sinks.find((item) => String(item.id) === selectedSinkId) || null,
     [sinks, selectedSinkId],
+  )
+
+  const sinkTypeOptions = useMemo(
+    () => Array.from(new Set(sinks.map((item) => item.sink_type).filter((value) => value.trim()))),
+    [sinks],
   )
 
   const parameterNames = useMemo(
@@ -233,9 +254,10 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
     const topic = typeof sinkConfig.topic === 'string' ? sinkConfig.topic : ''
     const assetId = typeof sinkConfig.asset_id === 'string' ? sinkConfig.asset_id : `sink-${selectedSink.id}`
 
-    setValue('outputKafkaBootstrap', kafkaBootstrap)
-    setValue('outputTopic', topic)
-    setValue('assetId', assetId)
+    setValue('output.kafka_bootstrap', kafkaBootstrap)
+    setValue('output.topic', topic)
+    setValue('output.asset_id', assetId)
+    setValue('output.sink_type', selectedSink.sink_type)
   }, [selectedSink, setValue])
 
   useEffect(() => {
@@ -254,7 +276,7 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
       return
     }
 
-    const current = getValues('adapterConfigValues') || {}
+    const current = getValues('adapter.config_values') || {}
     const next: Record<string, string | number> = {}
 
     for (const field of selectedAdapter.fields) {
@@ -265,22 +287,24 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
       }
     }
 
-    setValue('adapterConfigValues', next)
+    setValue('adapter.config_values', next)
   }, [getValues, selectedAdapter, setValue])
 
   const buildPayload = () => {
     const values = getValues()
     const output = {
-      kafka_bootstrap: values.outputKafkaBootstrap,
-      topic: values.outputTopic,
-      asset_id: values.assetId,
+      sink_type: values.output.sink_type,
+      kafka_bootstrap: values.output.kafka_bootstrap,
+      topic: values.output.topic,
+      asset_id: values.output.asset_id,
+      sink_id: values.output.sink_id || undefined,
     }
 
-    const dynamicAdapterConfig = { ...values.adapterConfigValues }
+    const dynamicAdapterConfig = { ...values.adapter.config_values }
     const adapterConfig = selectedAdapter?.supports_registers
       ? {
           ...dynamicAdapterConfig,
-          registers: values.registers.map((row) => ({
+          registers: values.adapter.registers.map((row) => ({
             address: Number(row.address),
             param: row.param,
             type: row.type,
@@ -310,8 +334,8 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
       config: {
         adapters: [
           {
-            adapter_id: values.adapterId,
-            adapter_type: values.adapterType,
+            adapter_id: values.adapter.adapter_id,
+            adapter_type: values.adapter.adapter_type,
             config: adapterConfig,
           },
         ],
@@ -333,11 +357,15 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
 
     if (step === 1) {
       const values = getValues()
-      if (!values.adapterType) {
+      if (adapters.length === 0) {
+        setStepError('No registered adapters found yet. Create at least one pipeline/adapter first.')
+        return
+      }
+      if (!values.adapter.adapter_type) {
         setStepError('Select an adapter type to continue.')
         return
       }
-      if (!values.adapterId.trim()) {
+      if (!values.adapter.adapter_id.trim()) {
         setStepError('Adapter ID is required.')
         return
       }
@@ -346,7 +374,7 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
         return
       }
 
-      if (selectedAdapter?.supports_registers && values.registers.length === 0) {
+      if (selectedAdapter?.supports_registers && values.adapter.registers.length === 0) {
         setStepError('Add at least one register to continue.')
         return
       }
@@ -354,8 +382,8 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
 
     if (step === 2) {
       const values = getValues()
-      if (!values.sinkId) {
-        setStepError('Select a destination sink to continue.')
+      if (!values.output.sink_type) {
+        setStepError('Select a sink type to continue.')
         return
       }
     }
@@ -375,19 +403,21 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
     setStep((current) => Math.max(current - 1, 1))
   }
 
-  const onConfirm = () => {
-    const payload = buildPayload()
-    console.log('Generated Pipeline Payload', payload)
+  const onConfirm = async () => {
+    setSubmitError(null)
+    setIsSubmitting(true)
+    try {
+      const payload = buildPayload()
+      await createPipeline(payload)
+      navigate('/overview', { replace: true })
+    } catch (createError) {
+      setSubmitError(createError instanceof Error ? createError.message : 'Failed to create pipeline')
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
-  const reviewPayload = useMemo(() => buildPayload(), [
-    getValues,
-    parameterNames,
-    selectedAdapter,
-    selectedRegisters,
-    selectedSink,
-    selectedValidation,
-  ])
+  const reviewPayload = useMemo(() => buildPayload(), [formSnapshot, selectedAdapter])
 
   return (
     <section>
@@ -405,6 +435,7 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
 
       {loadError && <p className="error">{loadError}</p>}
       {stepError && <p className="error">{stepError}</p>}
+      {submitError && <p className="error">{submitError}</p>}
 
       {step === 1 && (
         <article className="card builder-section">
@@ -428,11 +459,11 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
             </label>
             <label>
               Adapter ID
-              <input {...register('adapterId', { required: true })} />
+              <input {...register('adapter.adapter_id', { required: true })} />
             </label>
             <label>
               Adapter Type
-              <select {...register('adapterType')}>
+              <select {...register('adapter.adapter_type')}>
                 <option value="">Select adapter</option>
                 {adapters.map((adapter) => (
                   <option key={adapter.adapter_type} value={adapter.adapter_type}>
@@ -443,6 +474,10 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
             </label>
           </div>
 
+          {adapters.length === 0 && (
+            <p className="error">No adapter types are registered yet. Add one from an existing pipeline first.</p>
+          )}
+
           {selectedAdapter && (
             <>
               <h4>Adapter Configuration</h4>
@@ -452,7 +487,7 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
                     {field.label}
                     <input
                       type={field.type === 'number' ? 'number' : 'text'}
-                      {...register(`adapterConfigValues.${field.key}`)}
+                      {...register(`adapter.config_values.${field.key}` as const)}
                     />
                   </label>
                 ))}
@@ -467,19 +502,22 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
                 <div className="inline-grid" key={field.id}>
                   <label>
                     Address
-                    <input type="number" {...register(`registers.${index}.address`, { valueAsNumber: true })} />
+                    <input
+                      type="number"
+                      {...register(`adapter.registers.${index}.address` as const, { valueAsNumber: true })}
+                    />
                   </label>
                   <label>
                     Parameter
-                    <input {...register(`registers.${index}.param`)} />
+                    <input {...register(`adapter.registers.${index}.param` as const)} />
                   </label>
                   <label>
                     Type
-                    <input {...register(`registers.${index}.type`)} />
+                    <input {...register(`adapter.registers.${index}.type` as const)} />
                   </label>
                   <label>
                     Unit
-                    <input {...register(`registers.${index}.unit`)} />
+                    <input {...register(`adapter.registers.${index}.unit` as const)} />
                   </label>
                   <button className="btn btn-secondary" onClick={() => remove(index)} type="button">
                     Remove
@@ -491,7 +529,7 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
                 onClick={() =>
                   append({
                     address: 40001,
-                    param: 'new_param',
+                    param: '',
                     type: 'float32',
                     unit: 'unit',
                   })
@@ -508,32 +546,46 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
       {step === 2 && (
         <article className="card builder-section">
           <h3>Step 2: Destination Sink</h3>
-          <p className="muted">Sink options are sourced dynamically. No local hardcoded sink list is used.</p>
+          <p className="muted">Select a sink type from the runtime registry, then tune output routing.</p>
 
-          <label>
-            Available Sinks
-            <select {...register('sinkId')}>
-              <option value="">Select sink</option>
-              {sinks.map((sink) => (
-                <option key={sink.id} value={sink.id}>
-                  {sink.id} - {sink.sink_type} ({sink.status})
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="inline-grid">
+            <label>
+              Sink Type
+              <input list="sink-type-options" placeholder="e.g. timescaledb" {...register('output.sink_type')} />
+              <datalist id="sink-type-options">
+                {sinkTypeOptions.map((sinkType) => (
+                  <option key={sinkType} value={sinkType} />
+                ))}
+              </datalist>
+            </label>
+
+            <label>
+              Existing Sink Instance (optional)
+              <select {...register('output.sink_id')}>
+                <option value="">None</option>
+                {sinks.map((sink) => (
+                  <option key={sink.id} value={sink.id}>
+                    {sink.id} - {sink.sink_type} ({sink.status})
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {sinkTypeOptions.length === 0 && <p className="muted">No sink types discovered yet.</p>}
 
           <div className="inline-grid">
             <label>
               Kafka Bootstrap
-              <input {...register('outputKafkaBootstrap')} readOnly />
+              <input {...register('output.kafka_bootstrap')} />
             </label>
             <label>
               Topic
-              <input {...register('outputTopic')} readOnly />
+              <input {...register('output.topic')} />
             </label>
             <label>
               Asset ID
-              <input {...register('assetId')} />
+              <input {...register('output.asset_id')} />
             </label>
           </div>
         </article>
@@ -571,24 +623,30 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
               <div className="inline-grid">
                 <label>
                   Min
-                  <input type="number" {...register(`validationByParam.${param}.min`, { valueAsNumber: true })} />
+                  <input
+                    type="number"
+                    {...register(`validationByParam.${param}.min` as const, { valueAsNumber: true })}
+                  />
                 </label>
                 <label>
                   Max
-                  <input type="number" {...register(`validationByParam.${param}.max`, { valueAsNumber: true })} />
+                  <input
+                    type="number"
+                    {...register(`validationByParam.${param}.max` as const, { valueAsNumber: true })}
+                  />
                 </label>
                 <label>
                   Rate of Change
                   <input
                     type="number"
-                    {...register(`validationByParam.${param}.rate_of_change`, { valueAsNumber: true })}
+                    {...register(`validationByParam.${param}.rate_of_change` as const, { valueAsNumber: true })}
                   />
                 </label>
                 <label>
                   Gap Detection
                   <input
                     type="number"
-                    {...register(`validationByParam.${param}.gap_detection`, { valueAsNumber: true })}
+                    {...register(`validationByParam.${param}.gap_detection` as const, { valueAsNumber: true })}
                   />
                 </label>
               </div>
@@ -609,10 +667,10 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
               <strong>Gateway:</strong> {getValues('gatewayId')}
             </p>
             <p>
-              <strong>Adapter:</strong> {selectedAdapter?.label || getValues('adapterType')}
+              <strong>Adapter:</strong> {selectedAdapter?.label || getValues('adapter.adapter_type')}
             </p>
             <p>
-              <strong>Sink:</strong> {selectedSink ? `${selectedSink.id} - ${selectedSink.sink_type}` : 'None'}
+              <strong>Sink:</strong> {selectedSinkType || 'None'}
             </p>
             <p>
               <strong>Validation Parameters:</strong> {parameterNames.join(', ') || 'None'}
@@ -622,8 +680,8 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
           <h4>Compiled Payload (Read-only)</h4>
           <pre className="json-preview">{JSON.stringify(reviewPayload, null, 2)}</pre>
 
-          <button className="btn" onClick={onConfirm} type="button">
-            Confirm and Generate JSON
+          <button className="btn" onClick={() => void onConfirm()} type="button" disabled={isSubmitting}>
+            {isSubmitting ? 'Creating...' : 'Create Pipeline'}
           </button>
         </article>
       )}
