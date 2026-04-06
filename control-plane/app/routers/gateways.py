@@ -15,6 +15,7 @@ from app.db.models import Gateway, Pipeline, Sink
 from app.schemas.gateways import (
     GatewayApproveResponse,
     GatewayCreateRequest,
+    GatewayHeartbeatRequest,
     GatewayItem,
     GatewayRegisterRequest,
     GatewayRegisterResponse,
@@ -25,6 +26,35 @@ from app.schemas.gateways import (
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/gateways/token")
+_APPROVED_STATUSES = {"approved", "offline", "failed"}
+_PENDING_STATUSES = {"pending", "rejected"}
+
+
+def _reconcile_gateway_state(
+    current_status: str,
+    current_approved: bool,
+    status: str | None,
+    approved: bool | None,
+) -> tuple[str, bool]:
+    next_status = status if status is not None else current_status
+    next_approved = approved if approved is not None else current_approved
+
+    if status is None and approved is not None:
+        next_status = "approved" if approved else "pending"
+    elif approved is None and status is not None:
+        if status in _APPROVED_STATUSES:
+            next_approved = True
+        elif status in _PENDING_STATUSES:
+            next_approved = False
+
+    if next_status in _APPROVED_STATUSES and not next_approved:
+        raise HTTPException(status_code=409, detail=f"Status '{next_status}' requires approved=true")
+    if next_status in _PENDING_STATUSES and next_approved:
+        raise HTTPException(status_code=409, detail=f"Status '{next_status}' requires approved=false")
+    if next_status not in _APPROVED_STATUSES | _PENDING_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Unsupported gateway status '{next_status}'")
+
+    return next_status, next_approved
 
 
 @router.get("", response_model=list[GatewayItem])
@@ -39,6 +69,11 @@ def list_gateways(
             hostname=row.hostname,
             status=row.status,
             approved=row.approved,
+            last_config_sync_at=row.last_config_sync_at,
+            last_config_version=row.last_config_version,
+            last_seen_at=row.last_seen_at,
+            runtime_health=row.runtime_health,
+            system_metrics=row.system_metrics,
             created_at=row.created_at,
         )
         for row in rows
@@ -72,6 +107,11 @@ def create_gateway(
         hostname=gateway.hostname,
         status=gateway.status,
         approved=gateway.approved,
+        last_config_sync_at=gateway.last_config_sync_at,
+        last_config_version=gateway.last_config_version,
+        last_seen_at=gateway.last_seen_at,
+        runtime_health=gateway.runtime_health,
+        system_metrics=gateway.system_metrics,
         created_at=gateway.created_at,
     )
 
@@ -91,6 +131,11 @@ def get_gateway(
         hostname=gateway.hostname,
         status=gateway.status,
         approved=gateway.approved,
+        last_config_sync_at=gateway.last_config_sync_at,
+        last_config_version=gateway.last_config_version,
+        last_seen_at=gateway.last_seen_at,
+        runtime_health=gateway.runtime_health,
+        system_metrics=gateway.system_metrics,
         created_at=gateway.created_at,
     )
 
@@ -206,6 +251,12 @@ def get_gateway_config(gateway_id: str, token: str = Depends(oauth2_scheme), db:
         for row in sink_rows
     ]
 
+    gateway.last_config_sync_at = datetime.now(timezone.utc)
+    gateway.last_config_version = str(pipeline.id)
+    gateway.last_seen_at = datetime.now(timezone.utc)
+    db.add(gateway)
+    db.commit()
+
     return {
         "gateway_id": gateway.gateway_id,
         "adapters": config.get("adapters", []),
@@ -213,6 +264,49 @@ def get_gateway_config(gateway_id: str, token: str = Depends(oauth2_scheme), db:
         "sinks": sinks,
         "version": str(pipeline.id),
     }
+
+
+@router.post("/{gateway_id}/heartbeat", response_model=GatewayItem)
+def gateway_heartbeat(
+    gateway_id: str,
+    payload: GatewayHeartbeatRequest,
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> GatewayItem:
+    try:
+        claims = decode_gateway_token(token)
+    except AuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    token_gateway_id = claims.get("sub")
+    if token_gateway_id != gateway_id:
+        raise HTTPException(status_code=403, detail="Token does not match gateway_id")
+
+    gateway = db.execute(select(Gateway).where(Gateway.gateway_id == gateway_id)).scalar_one_or_none()
+    if gateway is None:
+        raise HTTPException(status_code=404, detail="Gateway not found")
+    if not gateway.approved:
+        raise HTTPException(status_code=403, detail="Gateway is pending approval")
+
+    gateway.last_seen_at = datetime.now(timezone.utc)
+    gateway.runtime_health = payload.health
+    gateway.system_metrics = payload.metrics
+    db.add(gateway)
+    db.commit()
+    db.refresh(gateway)
+
+    return GatewayItem(
+        gateway_id=gateway.gateway_id,
+        hostname=gateway.hostname,
+        status=gateway.status,
+        approved=gateway.approved,
+        last_config_sync_at=gateway.last_config_sync_at,
+        last_config_version=gateway.last_config_version,
+        last_seen_at=gateway.last_seen_at,
+        runtime_health=gateway.runtime_health,
+        system_metrics=gateway.system_metrics,
+        created_at=gateway.created_at,
+    )
 
 
 @router.put("/{gateway_id}", response_model=GatewayItem)
@@ -230,10 +324,12 @@ def update_gateway(
         gateway.hostname = payload.hostname
     if payload.hardware_info is not None:
         gateway.hardware_info = payload.hardware_info
-    if payload.status is not None:
-        gateway.status = payload.status
-    if payload.approved is not None:
-        gateway.approved = payload.approved
+    gateway.status, gateway.approved = _reconcile_gateway_state(
+        current_status=gateway.status,
+        current_approved=gateway.approved,
+        status=payload.status,
+        approved=payload.approved,
+    )
 
     gateway.updated_at = datetime.now(timezone.utc)
     db.add(gateway)
@@ -245,6 +341,11 @@ def update_gateway(
         hostname=gateway.hostname,
         status=gateway.status,
         approved=gateway.approved,
+        last_config_sync_at=gateway.last_config_sync_at,
+        last_config_version=gateway.last_config_version,
+        last_seen_at=gateway.last_seen_at,
+        runtime_health=gateway.runtime_health,
+        system_metrics=gateway.system_metrics,
         created_at=gateway.created_at,
     )
 

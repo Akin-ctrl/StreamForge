@@ -8,17 +8,11 @@ import {
   listAlarms,
   suppressAlarm,
 } from '../../shared/api/client'
+import { formatDateTime as formatDateTimeValue } from '../../shared/format/datetime'
+import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 
 const severityOptions: Array<AlarmSeverity | 'ALL'> = ['ALL', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO']
 const stateOptions: Array<AlarmState | 'ALL'> = ['ALL', 'ACTIVE', 'ACKNOWLEDGED', 'SUPPRESSED', 'CLEARED']
-
-function formatDateTime(value: string | null) {
-  if (!value) {
-    return 'Not set'
-  }
-
-  return new Date(value).toLocaleString()
-}
 
 function formatValue(value: number | null, unit: string | null) {
   if (value === null || value === undefined) {
@@ -33,6 +27,7 @@ function formatValue(value: number | null, unit: string | null) {
  * Supports filtering plus acknowledge/suppress lifecycle actions.
  */
 export function AlarmsPage() {
+  const { timezone } = useOperatorPreferences()
   const [items, setItems] = useState<AlarmListItem[]>([])
   const [selectedAlarmId, setSelectedAlarmId] = useState<string | null>(null)
   const [stateFilter, setStateFilter] = useState<AlarmState | 'ALL'>('ALL')
@@ -181,7 +176,7 @@ export function AlarmsPage() {
                       </td>
                       <td>{alarm.state}</td>
                       <td>{alarm.asset_id}</td>
-                      <td>{formatDateTime(alarm.raised_at)}</td>
+                      <td>{formatDateTimeValue(alarm.raised_at, timezone, { includeTimezone: true })}</td>
                       <td>
                         {alarm.state === 'ACTIVE' && (
                           <button
@@ -241,22 +236,22 @@ export function AlarmsPage() {
                   <strong>Threshold:</strong> {formatValue(selectedAlarm.threshold, selectedAlarm.unit)}
                 </p>
                 <p>
-                  <strong>Raised:</strong> {formatDateTime(selectedAlarm.raised_at)}
+                  <strong>Raised:</strong> {formatDateTimeValue(selectedAlarm.raised_at, timezone, { includeTimezone: true })}
                 </p>
                 <p>
-                  <strong>Acknowledged:</strong> {formatDateTime(selectedAlarm.acked_at)}
+                  <strong>Acknowledged:</strong> {formatDateTimeValue(selectedAlarm.acked_at, timezone, { includeTimezone: true })}
                 </p>
                 <p>
                   <strong>Acknowledged by:</strong> {selectedAlarm.acked_by ?? 'Not set'}
                 </p>
                 <p>
-                  <strong>Suppressed:</strong> {formatDateTime(selectedAlarm.suppressed_at)}
+                  <strong>Suppressed:</strong> {formatDateTimeValue(selectedAlarm.suppressed_at, timezone, { includeTimezone: true })}
                 </p>
                 <p>
                   <strong>Suppressed by:</strong> {selectedAlarm.suppressed_by ?? 'Not set'}
                 </p>
                 <p>
-                  <strong>Cleared:</strong> {formatDateTime(selectedAlarm.cleared_at)}
+                  <strong>Cleared:</strong> {formatDateTimeValue(selectedAlarm.cleared_at, timezone, { includeTimezone: true })}
                 </p>
                 <p>
                   <strong>Duration:</strong>{' '}

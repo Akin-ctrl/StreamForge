@@ -25,6 +25,11 @@ class GatewayItem(BaseModel):
     hostname: str
     status: str
     approved: bool
+    last_config_sync_at: datetime | None = None
+    last_config_version: str | None = None
+    last_seen_at: datetime | None = None
+    runtime_health: dict | None = None
+    system_metrics: dict | None = None
     created_at: datetime
 
 
@@ -55,3 +60,8 @@ class GatewayApproveResponse(BaseModel):
     gateway_id: str
     status: str
     approved: bool
+
+
+class GatewayHeartbeatRequest(BaseModel):
+    health: dict
+    metrics: dict | None = None

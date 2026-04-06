@@ -24,11 +24,9 @@ export function LoginPage() {
   const state = location.state as LocationState | null
 
   const [mode, setMode] = useState<AuthMode>('loading')
-  const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const nextRoute = state?.from && state.from !== '/' ? state.from : '/overview'
 
   useEffect(() => {
     let active = true
@@ -58,6 +56,11 @@ export function LoginPage() {
     setError(null)
     setIsLoading(true)
     try {
+      const form = new FormData(event.currentTarget)
+      const username = String(form.get('username') || '').trim()
+      const password = String(form.get('password') || '')
+      const confirmPassword = String(form.get('confirm_password') || '')
+
       if (mode === 'bootstrap' && password !== confirmPassword) {
         throw new Error('Passwords do not match')
       }
@@ -67,7 +70,7 @@ export function LoginPage() {
           ? await bootstrapFirstUser(username, password)
           : await login(username, password)
       setAccessToken(token.access_token)
-      navigate(state?.from || '/gateways', { replace: true })
+      navigate(nextRoute, { replace: true })
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Login failed')
     } finally {
@@ -106,24 +109,16 @@ export function LoginPage() {
         <p className="muted">{description}</p>
         <label>
           Username
-          <input value={username} onChange={(event) => setUsername(event.target.value)} />
+          <input autoComplete="username" name="username" />
         </label>
         <label>
           Password
-          <input
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
+          <input autoComplete={mode === 'bootstrap' ? 'new-password' : 'current-password'} name="password" type="password" />
         </label>
         {mode === 'bootstrap' && (
           <label>
             Confirm Password
-            <input
-              type="password"
-              value={confirmPassword}
-              onChange={(event) => setConfirmPassword(event.target.value)}
-            />
+            <input autoComplete="new-password" name="confirm_password" type="password" />
           </label>
         )}
         {error && <p className="error">{error}</p>}

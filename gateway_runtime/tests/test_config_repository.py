@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import io
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from urllib import error
+from unittest.mock import patch
 
 from gateway_runtime.config import ControlPlaneConfigRepository
 from gateway_runtime.errors import ConfigError
@@ -126,6 +129,38 @@ class ControlPlaneConfigRepositoryTests(unittest.TestCase):
             self.assertEqual(repo.last_load_source, "control_plane")
             updated = json.loads(cache_path.read_text(encoding="utf-8"))
             self.assertEqual(updated["version"], "2")
+
+    def test_onboarding_token_responses_do_not_open_circuit_breaker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "gateway.json"
+            repo = ControlPlaneConfigRepository(
+                base_url="http://control-plane.test",
+                gateway_id="gw-edge-01",
+                token=None,
+                cache_path=str(cache_path),
+            )
+
+            scenarios = (
+                (403, "Gateway token request denied: gateway is pending approval"),
+                (404, "Gateway token request failed: gateway not registered"),
+            )
+
+            for status_code, expected_message in scenarios:
+                with self.subTest(status_code=status_code):
+                    http_error = error.HTTPError(
+                        url="http://control-plane.test/api/v1/gateways/token",
+                        code=status_code,
+                        msg="error",
+                        hdrs=None,
+                        fp=io.BytesIO(b"{}"),
+                    )
+                    with patch("gateway_runtime.config.request.urlopen", side_effect=http_error):
+                        with self.assertRaisesRegex(ConfigError, expected_message):
+                            repo._request_gateway_token()
+
+                    breaker = repo._breaker.snapshot()
+                    self.assertEqual(breaker.state, "closed")
+                    self.assertEqual(breaker.consecutive_failures, 0)
 
 
 if __name__ == "__main__":

@@ -95,6 +95,14 @@ class BaseAdapterLifecycleTests(unittest.TestCase):
         self.assertEqual(health["last_signal"], "SIGTERM")
         self.assertFalse(health["running"])
 
+    def test_blank_poll_interval_falls_back_to_default(self) -> None:
+        adapter = RecordingAdapter()
+
+        adapter.config["poll_interval_ms"] = ""
+        adapter._poll_interval_s = adapter._parse_poll_interval_ms(adapter.config["poll_interval_ms"]) / 1000.0
+
+        self.assertEqual(adapter._poll_interval_s, 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

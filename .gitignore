@@ -11,3 +11,17 @@ __pycache__/
 .git
 .venv/
 gateway_runtime/__pycache__/
+.pytest_cache/
+*.log
+
+# Python
+**/__pycache__/
+*.pytest_cache
+
+# Frontend / Playwright artifacts
+ui/test-results/
+playwright-report/
+
+# Build artifacts
+dist/
+build/

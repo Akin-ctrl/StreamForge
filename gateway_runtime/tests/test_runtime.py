@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from gateway_runtime.config import ControlPlaneConfigRepository, GatewayConfig
+from gateway_runtime.config import ConfigError, ControlPlaneConfigRepository, GatewayConfig
 from gateway_runtime.runtime import GatewayRuntime
 
 
@@ -45,6 +46,31 @@ class PollingControlPlaneRepo(ControlPlaneConfigRepository):
 
     def cleanup(self) -> None:
         self._temp_dir.cleanup()
+
+
+class HeartbeatControlPlaneRepo(PollingControlPlaneRepo):
+    def __init__(self) -> None:
+        super().__init__()
+        self.heartbeats: list[dict] = []
+
+    def post_json(self, path: str, payload: dict, authenticated: bool = True) -> dict:
+        self.heartbeats.append({"path": path, "payload": payload, "authenticated": authenticated})
+        return {}
+
+
+class ProvisioningRetryRepo(PollingControlPlaneRepo):
+    def __init__(self, responses: list[GatewayConfig | Exception]) -> None:
+        super().__init__()
+        self._responses = list(responses)
+
+    def load(self) -> GatewayConfig:
+        if not self._responses:
+            raise AssertionError("Unexpected provisioning load")
+        response = self._responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        self._last_load_source = "control_plane"
+        return response
 
 
 class FakeKafkaManager:
@@ -102,7 +128,11 @@ class FakeSinkManager:
 
 
 class FakeHealthReporter:
-    pass
+    def emit(self, event) -> None:
+        return None
+
+    def snapshot(self) -> dict[str, object]:
+        return {"status": "healthy", "components": {}}
 
 
 class GatewayRuntimePollingTests(unittest.IsolatedAsyncioTestCase):
@@ -146,6 +176,59 @@ class GatewayRuntimePollingTests(unittest.IsolatedAsyncioTestCase):
             repo.cleanup()
 
         self.assertGreaterEqual(repo.refresh_calls, 1)
+
+    async def test_control_plane_runtime_heartbeat_posts_health_and_metrics(self) -> None:
+        repo = HeartbeatControlPlaneRepo()
+        runtime = GatewayRuntime(
+            config_repo=repo,
+            kafka=FakeKafkaManager(),
+            adapters=FakeAdapterManager(),
+            sinks=FakeSinkManager(),
+            health=FakeHealthReporter(),
+        )
+        runtime._poll_interval = 300
+        runtime._kafka_watchdog_interval = 300
+        runtime._heartbeat_interval = 1
+        runtime._metrics_path = tempfile.gettempdir()
+
+        try:
+            runtime.start()
+            await asyncio.sleep(0.05)
+        finally:
+            runtime.stop()
+            await asyncio.sleep(0)
+            repo.cleanup()
+
+        self.assertGreaterEqual(len(repo.heartbeats), 1)
+        heartbeat = repo.heartbeats[0]
+        self.assertEqual(heartbeat["path"], "/api/v1/gateways/gw-edge-01/heartbeat")
+        self.assertIn("health", heartbeat["payload"])
+        self.assertIn("metrics", heartbeat["payload"])
+
+    async def test_initial_start_waits_for_gateway_registration_and_then_recovers(self) -> None:
+        repo = ProvisioningRetryRepo(
+            [
+                ConfigError("Gateway token request failed: gateway not registered"),
+                _gateway_config("provisioned"),
+            ]
+        )
+        runtime = GatewayRuntime(
+            config_repo=repo,
+            kafka=FakeKafkaManager(),
+            adapters=FakeAdapterManager(),
+            sinks=FakeSinkManager(),
+            health=FakeHealthReporter(),
+        )
+
+        try:
+            with patch("gateway_runtime.runtime.time.sleep", return_value=None) as sleep_mock:
+                config = runtime._load_initial_config()
+        finally:
+            repo.cleanup()
+
+        self.assertEqual(config.version, "provisioned")
+        self.assertEqual(runtime._startup_status, "configured")
+        self.assertEqual(sleep_mock.call_count, 1)
 
 
 if __name__ == "__main__":

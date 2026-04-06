@@ -8,6 +8,8 @@ import {
   discardDlqMessage,
   listDlq,
 } from '../../shared/api/client'
+import { formatDateTime as formatDateTimeValue } from '../../shared/format/datetime'
+import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 
 const statusOptions: Array<DlqStatus | 'ALL'> = [
   'ALL',
@@ -18,14 +20,6 @@ const statusOptions: Array<DlqStatus | 'ALL'> = [
   'DISCARDED',
   'REPROCESS_FAILED',
 ]
-
-function formatDateTime(value: string | null) {
-  if (!value) {
-    return 'Not set'
-  }
-
-  return new Date(value).toLocaleString()
-}
 
 function canApprove(item: DlqItem) {
   return item.status === 'PENDING' || item.status === 'REPROCESS_FAILED'
@@ -40,6 +34,7 @@ function canDiscard(item: DlqItem) {
  * Supports filtering, detail inspection, single-message actions, and bulk reprocess requests.
  */
 export function DlqPage() {
+  const { timezone } = useOperatorPreferences()
   const [items, setItems] = useState<DlqItem[]>([])
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -251,7 +246,7 @@ export function DlqPage() {
                       <td>{item.status}</td>
                       <td>{item.gateway_id}</td>
                       <td>{item.asset_id ?? 'Unknown'}</td>
-                      <td>{formatDateTime(item.failed_at)}</td>
+                      <td>{formatDateTimeValue(item.failed_at, timezone, { includeTimezone: true })}</td>
                       <td>
                         {canApprove(item) && (
                           <button
@@ -305,10 +300,10 @@ export function DlqPage() {
                   <strong>Reviewed By:</strong> {selectedItem.reviewed_by ?? 'Not reviewed'}
                 </p>
                 <p>
-                  <strong>Reviewed At:</strong> {formatDateTime(selectedItem.reviewed_at)}
+                  <strong>Reviewed At:</strong> {formatDateTimeValue(selectedItem.reviewed_at, timezone, { includeTimezone: true })}
                 </p>
                 <p>
-                  <strong>Action Completed:</strong> {formatDateTime(selectedItem.action_completed_at)}
+                  <strong>Action Completed:</strong> {formatDateTimeValue(selectedItem.action_completed_at, timezone, { includeTimezone: true })}
                 </p>
                 <p>
                   <strong>Last Error:</strong> {selectedItem.last_error ?? 'None'}

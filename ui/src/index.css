@@ -88,6 +88,12 @@ body {
   gap: 0.45rem;
 }
 
+.sidebar-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
 .nav-link {
   color: var(--nav-text);
   text-decoration: none;
@@ -145,6 +151,15 @@ body {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
   gap: 1rem;
+  align-items: start;
+}
+
+.alarm-layout > .card {
+  min-width: 0;
+}
+
+.alarm-layout > .card:first-child {
+  overflow-x: auto;
 }
 
 .alarm-filters {
@@ -272,6 +287,11 @@ body {
   padding: 0.65rem;
   border-bottom: 1px solid var(--border);
   vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.table td:last-child {
+  white-space: nowrap;
 }
 
 .card {
@@ -357,12 +377,60 @@ textarea:focus {
   color: var(--error);
 }
 
+.success {
+  color: #13795b;
+}
+
+:root[data-theme='dark'] .success {
+  color: #8ff0c5;
+}
+
+.gateway-health-card {
+  display: grid;
+  gap: 1rem;
+}
+
+.component-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+
+.component-pill {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.metric-value {
+  font-size: 1.4rem;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;
   }
 
+  .app-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .app-content {
+    padding: 1rem;
+  }
+
   .alarm-layout {
     grid-template-columns: 1fr;
+  }
+
+  .page-header,
+  .page-actions,
+  .wizard-actions {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

@@ -42,6 +42,17 @@ services:
     environment:
       SF_DATABASE_URL: postgresql+psycopg://streamforge:streamforge@postgres:5432/streamforge
       SF_JWT_SECRET: streamforge-dev-secret
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=5).getcode()==200 else 1)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
     ports:
       - "8001:8000"
 
@@ -56,19 +67,61 @@ services:
       KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"
       KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
       KAFKA_LOG_DIRS: "/var/lib/kafka/data"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+    healthcheck:
+      test: ["CMD", "cub", "kafka-ready", "-b", "localhost:9092", "1", "40"]
+      interval: 10s
+      timeout: 45s
+      start_period: 20s
+      retries: 12
     ports:
       - "9092:9092"
     volumes:
       - kafka-data:/var/lib/kafka/data
 
+  schema_registry:
+    image: confluentinc/cp-schema-registry:7.5.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema_registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
+    healthcheck:
+      test: ["CMD", "cub", "sr-ready", "localhost", "8081", "40"]
+      interval: 10s
+      timeout: 45s
+      start_period: 20s
+      retries: 12
+    restart: unless-stopped
+    ports:
+      - "8082:8081"
+
+  dev_bootstrap:
+    profiles: ["seed"]
+    image: python:3.12-slim
+    depends_on:
+      control_plane:
+        condition: service_healthy
+    volumes:
+      - .:/app/deploy:ro
+    environment:
+      CONTROL_PLANE_URL: http://control_plane:8000
+      CONTROL_PLANE_GATEWAY_ID: gateway-demo-01
+      DEV_ADMIN_USERNAME: streamforge_admin
+      DEV_ADMIN_PASSWORD: StreamForge1234
+      DEV_GATEWAY_CONFIG_PATH: /app/deploy/gateway_config.sample.json
+    command: ["python", "/app/deploy/dev_bootstrap.py"]
+
   modbus-simulator:
     image: oitc/modbus-server:latest
     ports:
-      - "502:502"
+      - "5020:5020"
 
   gateway_runtime:
     image: streamforge/gateway_runtime:dev
@@ -77,27 +130,31 @@ services:
       dockerfile: gateway_runtime/Dockerfile
     depends_on:
       kafka:
-        condition: service_started
+        condition: service_healthy
+      schema_registry:
+        condition: service_healthy
       modbus-simulator:
         condition: service_started
       control_plane:
-        condition: service_started
+        condition: service_healthy
       timescaledb:
         condition: service_healthy
     volumes:
       - ./gateway_config.sample.json:/config/gateway_config.json:ro
       - /var/run/docker.sock:/var/run/docker.sock
+      - gateway-data:/data
     environment:
       # Static config (uncomment to use instead of control-plane polling)
       # GATEWAY_CONFIG: /config/gateway_config.json
-      
+     
       # Control-plane polling configuration (used for dynamic config)
       CONTROL_PLANE_URL: http://control_plane:8000
       CONTROL_PLANE_GATEWAY_ID: gateway-demo-01
       # Optional: preset gateway JWT token. If unset, gateway_runtime will request one automatically.
       # CONTROL_PLANE_TOKEN: <gateway-jwt-token>
       # GATEWAY_CONFIG_CACHE: Local cache path for control-plane config used for offline restarts
-      # GATEWAY_CONFIG_CACHE: /data/config/gateway.json
+      GATEWAY_CONFIG_CACHE: /data/config/gateway.json
+      SCHEMA_CACHE_PATH: /data/schemas.cache.json
       # CONTROL_PLANE_CIRCUIT_BREAKER_FAILURE_THRESHOLD: Failures before control-plane requests pause (default: 5)
       # CONTROL_PLANE_CIRCUIT_BREAKER_OPEN_SECONDS: Cooldown before half-open retry (default: 30)
       
@@ -113,6 +170,7 @@ services:
       
       # Kafka and runtime configuration
       KAFKA_BOOTSTRAP: kafka:9092
+      SCHEMA_REGISTRY_URL: http://schema_registry:8081
       # When the local broker is not already reachable, gateway_runtime can provision and supervise
       # its own single-node Kafka container through the Docker socket.
       KAFKA_AUTO_MANAGE: "true"
@@ -120,8 +178,30 @@ services:
       HEALTH_PORT: "8088"
       DOCKER_NETWORK: deploy_default
       SINK_TIMESCALEDB_IMAGE: streamforge/gateway_runtime:dev
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8088/health/ready', timeout=5).getcode()==200 else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
     ports:
       - "8088:8088"
+
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    depends_on:
+      gateway_runtime:
+        condition: service_healthy
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
 
   kafdrop:
     image: obsidiandynamics/kafdrop:3.30.0
@@ -146,8 +226,6 @@ services:
     build:
       context: ../ui
       dockerfile: Dockerfile
-    environment:
-      VITE_CONTROL_PLANE_URL: http://localhost:8001
     depends_on:
       control_plane:
         condition: service_started
@@ -155,6 +233,7 @@ services:
       - "3000:80"
 
 volumes:
+  gateway-data:
   kafka-data:
   postgres-data:
   timescaledb-data:

@@ -1,15 +1,19 @@
 """Gateway runtime facade."""
 
 import asyncio
+from datetime import datetime, timezone
 import logging
 import os
+import shutil
+import time
 from typing import Dict
 
 from gateway_runtime.adapter_manager import AdapterManager
 from gateway_runtime.config import ConfigRepository, ControlPlaneConfigRepository, GatewayConfig
 from gateway_runtime.errors import ConfigError
-from gateway_runtime.health import HealthReporter
+from gateway_runtime.health import AdapterState, HealthEvent, HealthReporter
 from gateway_runtime.kafka_manager import KafkaManager
+from gateway_runtime.overflow import OverflowManager
 from gateway_runtime.sink_manager import SinkManager
 from gateway_runtime.validator import ValidatorModule
 
@@ -35,6 +39,7 @@ class GatewayRuntime:
         adapters: AdapterManager,
         sinks: SinkManager,
         health: HealthReporter,
+        overflow: OverflowManager | None = None,
     ) -> None:
         """Initialize runtime with required managers."""
         self._config_repo = config_repo
@@ -42,25 +47,40 @@ class GatewayRuntime:
         self._adapters = adapters
         self._sinks = sinks
         self._health = health
+        self._overflow = overflow
         self._current_config: GatewayConfig | None = None
         self._polling_task: asyncio.Task[None] | None = None
         self._polling_stop_event: asyncio.Event | None = None
         self._kafka_watchdog_task: asyncio.Task[None] | None = None
         self._kafka_watchdog_stop_event: asyncio.Event | None = None
+        self._overflow_task: asyncio.Task[None] | None = None
+        self._overflow_stop_event: asyncio.Event | None = None
+        self._heartbeat_task: asyncio.Task[None] | None = None
+        self._heartbeat_stop_event: asyncio.Event | None = None
         self._validator: ValidatorModule | None = None
         self._poll_initial_delay = 0
+        self._last_cpu_sample: tuple[int, int] | None = None
+        self._last_network_sample: tuple[float, int, int] | None = None
         
         # Polling parameters
         self._poll_interval = int(os.getenv("GATEWAY_POLL_INTERVAL", "30"))  # seconds
         self._poll_max_backoff = int(os.getenv("GATEWAY_POLL_MAX_BACKOFF", "300"))  # 5 min
         self._poll_backoff_multiplier = float(os.getenv("GATEWAY_POLL_BACKOFF_MULTIPLIER", "2.0"))
         self._kafka_watchdog_interval = int(os.getenv("KAFKA_WATCHDOG_INTERVAL", "10"))
+        self._overflow_check_interval = int(os.getenv("OVERFLOW_CHECK_INTERVAL", "60"))
+        self._heartbeat_interval = int(os.getenv("GATEWAY_HEARTBEAT_INTERVAL", "30"))
+        self._metrics_path = os.getenv("GATEWAY_METRICS_PATH", "/data")
+        self._provisioning_retry_interval = max(int(os.getenv("GATEWAY_PROVISIONING_RETRY_INTERVAL", "5")), 1)
+        self._startup_status = "initializing"
+        self._startup_error: str | None = None
 
     def start(self) -> None:
         """Start all runtime components in correct order."""
         print("gateway_runtime starting", flush=True)
-        config = self._config_repo.load()
+        config = self._load_initial_config()
         self._current_config = config
+        self._startup_status = "starting"
+        self._startup_error = None
         print("gateway_runtime config loaded", flush=True)
         self._kafka.start()
         print("gateway_runtime kafka ready", flush=True)
@@ -68,6 +88,8 @@ class GatewayRuntime:
         self._kafka_watchdog_task = asyncio.create_task(self._kafka_watchdog_loop())
         print("gateway_runtime kafka watchdog started", flush=True)
         self._adapters.start_all(config.adapters)
+        if self._overflow is not None:
+            self._overflow.set_desired_adapters(config.adapters)
         print("gateway_runtime adapters started", flush=True)
 
         validation_rules = config.validation if isinstance(config.validation, dict) else {}
@@ -83,6 +105,10 @@ class GatewayRuntime:
 
         self._sinks.start_all(config.sinks)
         print("gateway_runtime sinks started", flush=True)
+        if self._overflow is not None:
+            self._overflow_stop_event = asyncio.Event()
+            self._overflow_task = asyncio.create_task(self._overflow_loop())
+            print("gateway_runtime overflow monitor started", flush=True)
         
         # Start polling loop when using Control Plane-backed config repository
         if isinstance(self._config_repo, ControlPlaneConfigRepository):
@@ -90,10 +116,15 @@ class GatewayRuntime:
             self._polling_stop_event = asyncio.Event()
             self._polling_task = asyncio.create_task(self._polling_loop())
             print("gateway_runtime polling loop started", flush=True)
+            self._heartbeat_stop_event = asyncio.Event()
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+            print("gateway_runtime heartbeat loop started", flush=True)
+        self._startup_status = "running"
 
     def stop(self) -> None:
         """Stop all runtime components gracefully."""
         print("gateway_runtime stopping", flush=True)
+        self._startup_status = "stopped"
         
         # Stop polling loop
         if self._polling_stop_event:
@@ -106,9 +137,21 @@ class GatewayRuntime:
         if self._kafka_watchdog_task:
             if not self._kafka_watchdog_task.done():
                 self._kafka_watchdog_task.cancel()
+        if self._overflow_stop_event:
+            self._overflow_stop_event.set()
+        if self._overflow_task:
+            if not self._overflow_task.done():
+                self._overflow_task.cancel()
+        if self._heartbeat_stop_event:
+            self._heartbeat_stop_event.set()
+        if self._heartbeat_task:
+            if not self._heartbeat_task.done():
+                self._heartbeat_task.cancel()
 
         if self._validator:
             self._validator.stop()
+        if self._overflow is not None:
+            self._overflow.stop()
         
         self._adapters.stop_all()
         self._sinks.stop_all()
@@ -150,13 +193,68 @@ class GatewayRuntime:
             except ConfigError as exc:
                 # Control plane unreachable or error; exponential backoff
                 backoff_delay = self._next_poll_backoff(backoff_delay)
-                print(f"gateway_runtime config poll failed: {exc}, backing off {backoff_delay:.0f}s", flush=True)
+
+    def _load_initial_config(self) -> GatewayConfig:
+        """Load initial config, retrying when the gateway is waiting for operator provisioning."""
+        while True:
+            try:
+                config = self._config_repo.load()
+            except ConfigError as exc:
+                if not self._is_retryable_initial_config_error(exc):
+                    self._startup_status = "failed"
+                    self._startup_error = str(exc)
+                    raise
+
+                self._startup_status = "waiting_for_provisioning"
+                self._startup_error = str(exc)
+                logger.warning("gateway runtime waiting for provisioning: %s", exc)
+                time.sleep(self._provisioning_retry_interval)
+                continue
+
+            self._startup_status = "configured"
+            self._startup_error = None
+            return config
+
+    def _is_retryable_initial_config_error(self, exc: ConfigError) -> bool:
+        """Return whether the initial config error is expected during operator-driven onboarding."""
+        if not isinstance(self._config_repo, ControlPlaneConfigRepository):
+            return False
+
+        message = str(exc).casefold()
+        retryable_markers = (
+            "gateway token request failed: gateway not registered",
+            "gateway token request denied: gateway is pending approval",
+        )
+        return any(marker in message for marker in retryable_markers)
+
+    async def _heartbeat_loop(self) -> None:
+        """Push gateway runtime health and system metrics to the control plane."""
+        assert self._heartbeat_stop_event is not None
+        while not self._heartbeat_stop_event.is_set():
+            try:
+                self._send_heartbeat()
+                await asyncio.sleep(self._heartbeat_interval)
+            except asyncio.CancelledError:
+                break
+            except ConfigError as exc:
+                print(f"gateway_runtime heartbeat failed: {exc}", flush=True)
+                await asyncio.sleep(self._heartbeat_interval)
+            except Exception as exc:
+                print(f"gateway_runtime heartbeat error: {exc}", flush=True)
+                await asyncio.sleep(self._heartbeat_interval)
+
+    async def _overflow_loop(self) -> None:
+        """Periodically evaluate local disk pressure and apply overflow controls."""
+        assert self._overflow_stop_event is not None
+        while not self._overflow_stop_event.is_set():
+            try:
+                self._overflow.evaluate() if self._overflow is not None else None
+                await asyncio.sleep(self._overflow_check_interval)
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                # Unexpected error; log and continue
-                print(f"gateway_runtime polling loop error: {exc}", flush=True)
-                backoff_delay = self._next_poll_backoff(backoff_delay)
+                print(f"gateway_runtime overflow monitor error: {exc}", flush=True)
+                await asyncio.sleep(self._overflow_check_interval)
 
     def _next_poll_backoff(self, current_delay: float) -> float:
         """Calculate the next poll delay without allowing zero-delay retry loops."""
@@ -221,6 +319,8 @@ class GatewayRuntime:
             old_adapter = old_by_id.get(new_adapter.adapter_id)
             if old_adapter is None or old_adapter.adapter_type != new_adapter.adapter_type or old_adapter.config != new_adapter.config:
                 self._adapters.start_adapter(new_adapter)
+        if self._overflow is not None:
+            self._overflow.set_desired_adapters(new_config.adapters)
 
         # Stop removed or changed sinks
         for sink_id in old_sinks_by_id:
@@ -257,7 +357,23 @@ class GatewayRuntime:
 
     def health_snapshot(self) -> Dict[str, object]:
         """Return aggregated health snapshot for the gateway."""
-        return {
+        if self._current_config is None:
+            return {
+                "status": "unhealthy",
+                "startup_status": self._startup_status,
+                "startup_error": self._startup_error,
+                "components": {
+                    "runtime": {
+                        "status": "failed" if self._startup_status == "failed" else "degraded",
+                        "details": {
+                            "startup_status": self._startup_status,
+                            "startup_error": self._startup_error,
+                        },
+                    }
+                },
+            }
+
+        snapshot = {
             "kafka": self._kafka.health(),
             "adapters": self._adapters.health(),
             "sinks": self._sinks.health(),
@@ -267,4 +383,177 @@ class GatewayRuntime:
                 if isinstance(self._config_repo, ControlPlaneConfigRepository)
                 else {"status": "disabled", "mode": "file"}
             ),
+            "overflow": self._overflow.snapshot() if self._overflow is not None else {"status": "disabled"},
+        }
+        for component, details in snapshot.items():
+            status = str(details.get("status", "unknown"))
+            mapped_status = AdapterState.HEALTHY
+            if status in {"failed", "unhealthy"}:
+                mapped_status = AdapterState.FAILED
+            elif status in {"degraded", "unknown"}:
+                mapped_status = AdapterState.DEGRADED
+            self._health.emit(HealthEvent(component=component, status=mapped_status, details=dict(details)))
+        aggregate = self._health.snapshot()
+        snapshot["status"] = "healthy"
+        if aggregate["status"] == AdapterState.FAILED.value:
+            snapshot["status"] = "unhealthy"
+        elif aggregate["status"] == AdapterState.DEGRADED.value:
+            snapshot["status"] = "degraded"
+        snapshot["components"] = aggregate["components"]
+        return snapshot
+
+    def metrics_snapshot(self) -> str:
+        """Return Prometheus-formatted gateway metrics."""
+        snapshot = self.health_snapshot()
+        adapters = snapshot.get("adapters", {}).get("adapters", {})
+        sinks = snapshot.get("sinks", {}).get("sinks", {})
+        kafka_reachable = 1 if snapshot.get("kafka", {}).get("reachable") else 0
+        validator_status = 1 if snapshot.get("validator", {}).get("status") not in {"failed", "stopped"} else 0
+        overflow = snapshot.get("overflow", {})
+        lines = [
+            "# TYPE gateway_kafka_reachable gauge",
+            f"gateway_kafka_reachable {kafka_reachable}",
+            "# TYPE gateway_adapters_running gauge",
+            f"gateway_adapters_running {len([state for state in adapters.values() if state == 'running'])}",
+            "# TYPE gateway_sinks_running gauge",
+            f"gateway_sinks_running {len([state for state in sinks.values() if state == 'running'])}",
+            "# TYPE gateway_validator_up gauge",
+            f"gateway_validator_up {validator_status}",
+            "# TYPE gateway_disk_usage_percent gauge",
+            f"gateway_disk_usage_percent {float(overflow.get('disk_usage_percent', 0.0))}",
+            "# TYPE gateway_overflow_blocked gauge",
+            f"gateway_overflow_blocked {1 if overflow.get('blocked') else 0}",
+        ]
+        return "\n".join(lines) + "\n"
+
+    def _send_heartbeat(self) -> None:
+        """Send a health and metrics heartbeat to the control plane."""
+        if not isinstance(self._config_repo, ControlPlaneConfigRepository) or self._current_config is None:
+            return
+
+        self._config_repo.post_json(
+            f"/api/v1/gateways/{self._current_config.gateway_id}/heartbeat",
+            {
+                "health": self.health_snapshot(),
+                "metrics": self._system_metrics_snapshot(),
+            },
+        )
+
+    def _system_metrics_snapshot(self) -> dict[str, object]:
+        """Capture lightweight host-level metrics without extra dependencies."""
+        snapshot: dict[str, object] = {
+            "collected_at": datetime.now(timezone.utc).isoformat(),
+        }
+        snapshot.update(self._cpu_metrics())
+        snapshot.update(self._memory_metrics())
+        snapshot.update(self._network_metrics())
+        snapshot.update(self._disk_metrics())
+        return snapshot
+
+    def _cpu_metrics(self) -> dict[str, float]:
+        try:
+            with open("/proc/stat", "r", encoding="utf-8") as handle:
+                first_line = handle.readline().strip().split()
+        except OSError:
+            return {"cpu_percent": 0.0}
+
+        if len(first_line) < 5 or first_line[0] != "cpu":
+            return {"cpu_percent": 0.0}
+
+        values = [int(part) for part in first_line[1:]]
+        total = sum(values)
+        idle = values[3] + (values[4] if len(values) > 4 else 0)
+
+        if self._last_cpu_sample is None:
+            self._last_cpu_sample = (total, idle)
+            return {"cpu_percent": 0.0}
+
+        previous_total, previous_idle = self._last_cpu_sample
+        total_delta = total - previous_total
+        idle_delta = idle - previous_idle
+        self._last_cpu_sample = (total, idle)
+
+        if total_delta <= 0:
+            return {"cpu_percent": 0.0}
+
+        usage = (1.0 - (idle_delta / total_delta)) * 100.0
+        usage = max(0.0, min(usage, 100.0))
+        return {"cpu_percent": round(usage, 2)}
+
+    def _memory_metrics(self) -> dict[str, float | int]:
+        meminfo: dict[str, int] = {}
+        try:
+            with open("/proc/meminfo", "r", encoding="utf-8") as handle:
+                for line in handle:
+                    key, value = line.split(":", 1)
+                    meminfo[key] = int(value.strip().split()[0]) * 1024
+        except OSError:
+            return {}
+
+        total = meminfo.get("MemTotal", 0)
+        available = meminfo.get("MemAvailable", 0)
+        used = max(total - available, 0)
+        memory_percent = round((used / total) * 100.0, 2) if total else 0.0
+        return {
+            "memory_total_bytes": total,
+            "memory_available_bytes": available,
+            "memory_used_bytes": used,
+            "memory_percent": memory_percent,
+        }
+
+    def _network_metrics(self) -> dict[str, float | int]:
+        try:
+            with open("/proc/net/dev", "r", encoding="utf-8") as handle:
+                lines = handle.readlines()[2:]
+        except OSError:
+            return {}
+
+        rx_bytes = 0
+        tx_bytes = 0
+        for line in lines:
+            name, values = line.split(":", 1)
+            interface = name.strip()
+            if interface == "lo":
+                continue
+            parts = values.split()
+            if len(parts) < 9:
+                continue
+            rx_bytes += int(parts[0])
+            tx_bytes += int(parts[8])
+
+        now = time.time()
+        if self._last_network_sample is None:
+            self._last_network_sample = (now, rx_bytes, tx_bytes)
+            return {
+                "network_rx_bytes_per_sec": 0.0,
+                "network_tx_bytes_per_sec": 0.0,
+                "network_rx_bytes_total": rx_bytes,
+                "network_tx_bytes_total": tx_bytes,
+            }
+
+        previous_time, previous_rx, previous_tx = self._last_network_sample
+        self._last_network_sample = (now, rx_bytes, tx_bytes)
+        elapsed = max(now - previous_time, 1e-6)
+        rx_rate = max(rx_bytes - previous_rx, 0) / elapsed
+        tx_rate = max(tx_bytes - previous_tx, 0) / elapsed
+        return {
+            "network_rx_bytes_per_sec": round(rx_rate, 2),
+            "network_tx_bytes_per_sec": round(tx_rate, 2),
+            "network_rx_bytes_total": rx_bytes,
+            "network_tx_bytes_total": tx_bytes,
+        }
+
+    def _disk_metrics(self) -> dict[str, float | int]:
+        try:
+            usage = shutil.disk_usage(self._metrics_path)
+        except OSError:
+            return {}
+
+        disk_used = usage.total - usage.free
+        disk_percent = round((disk_used / usage.total) * 100.0, 2) if usage.total else 0.0
+        return {
+            "disk_total_bytes": usage.total,
+            "disk_used_bytes": disk_used,
+            "disk_free_bytes": usage.free,
+            "disk_usage_percent": disk_percent,
         }

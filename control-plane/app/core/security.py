@@ -1,8 +1,9 @@
-"""Security helpers for JWT issuance and verification."""
+"""Security helpers for JWT issuance, verification, and permission checks."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 
 from fastapi import Depends, HTTPException
 from jose import JWTError, jwt
@@ -37,6 +38,21 @@ COMMON_WEAK_PASSWORDS = {
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 user_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
 gateway_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/gateways/token")
+
+
+class UserRole(str, Enum):
+    VIEWER = "Viewer"
+    OPERATOR = "Operator"
+    ENGINEER = "Engineer"
+    ADMIN = "Admin"
+
+
+ROLE_PERMISSIONS: dict[UserRole, set[str]] = {
+    UserRole.VIEWER: {"dashboards:read", "configs:read", "metrics:read"},
+    UserRole.OPERATOR: {"alarms:ack", "logs:read", "dlq:approve"},
+    UserRole.ENGINEER: {"pipelines:create", "pipelines:update", "validation:update"},
+    UserRole.ADMIN: {"gateways:manage", "users:manage", "deploy:configs", "pipelines:delete"},
+}
 
 
 def create_gateway_token(gateway_id: str, expires_days: int = 365) -> tuple[str, datetime]:
@@ -90,14 +106,18 @@ def validate_password_strength(password: str, username: str | None = None) -> No
             raise ValueError("Password must not match or contain the username")
 
 
-def create_user_token(username: str, expires_hours: int = 12) -> tuple[str, datetime]:
+def create_user_token(username: str, is_admin: bool, expires_hours: int = 12) -> tuple[str, datetime]:
     """Create a signed JWT for a user identity."""
     expires_at = datetime.now(timezone.utc) + timedelta(hours=expires_hours)
+    user_roles = [role.value for role in roles_for_user(username, is_admin=is_admin)]
     payload = {
         "sub": username,
         "scope": "user",
+        "roles": user_roles,
+        "permissions": sorted(permission_set_for_roles([UserRole(role) for role in user_roles])),
         "exp": int(expires_at.timestamp()),
         "iat": int(datetime.now(timezone.utc).timestamp()),
+        "iss": settings.app_name,
     }
     token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
     return token, expires_at
@@ -112,6 +132,29 @@ def decode_user_token(token: str) -> dict:
         return payload
     except JWTError as exc:
         raise AuthError("Invalid token") from exc
+
+
+def roles_for_user(username: str, is_admin: bool) -> list[UserRole]:
+    """Map the current built-in user model to the documented RBAC ladder."""
+    if is_admin:
+        return [UserRole.ADMIN]
+    return [UserRole.ENGINEER]
+
+
+def permission_set_for_roles(roles: list[UserRole]) -> set[str]:
+    permissions: set[str] = set()
+    for role in roles:
+        permissions.update(ROLE_PERMISSIONS[role])
+        if role == UserRole.ADMIN:
+            permissions.update(ROLE_PERMISSIONS[UserRole.VIEWER])
+            permissions.update(ROLE_PERMISSIONS[UserRole.OPERATOR])
+            permissions.update(ROLE_PERMISSIONS[UserRole.ENGINEER])
+        elif role == UserRole.ENGINEER:
+            permissions.update(ROLE_PERMISSIONS[UserRole.VIEWER])
+            permissions.update(ROLE_PERMISSIONS[UserRole.OPERATOR])
+        elif role == UserRole.OPERATOR:
+            permissions.update(ROLE_PERMISSIONS[UserRole.VIEWER])
+    return permissions
 
 
 def get_current_user(token: str = Depends(user_oauth2_scheme), db: Session = Depends(get_db)) -> User:
@@ -155,3 +198,16 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
     if not user.is_admin:
         raise HTTPException(status_code=403, detail="Admin privileges required")
     return user
+
+
+def require_permission(permission: str):
+    """Ensure the authenticated user has the required permission."""
+
+    def dependency(user: User = Depends(get_current_user)) -> User:
+        roles = roles_for_user(user.username, user.is_admin)
+        permissions = permission_set_for_roles(roles)
+        if permission not in permissions:
+            raise HTTPException(status_code=403, detail=f"Missing permission: {permission}")
+        return user
+
+    return dependency

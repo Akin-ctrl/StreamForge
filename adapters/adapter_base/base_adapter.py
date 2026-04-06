@@ -5,6 +5,7 @@ from __future__ import annotations
 import signal
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
+import os
 from threading import Event
 from typing import Dict
 
@@ -24,14 +25,20 @@ class BaseAdapter(ABC):
         """Initialize adapter with validated config."""
         self.config = config
         self._stop_event = Event()
-        self._poll_interval_s = max(float(config.get("poll_interval_ms", 1000)) / 1000.0, 0.0)
+        self._poll_interval_s = max(self._parse_poll_interval_ms(config.get("poll_interval_ms", 1000)) / 1000.0, 0.0)
         self._publisher: KafkaPublisher | None = None
+        self._adapter_id = str(config.get("adapter_id") or os.getenv("ADAPTER_ID", self.__class__.__name__.lower()))
+        self._adapter_type = str(config.get("adapter_type") or os.getenv("ADAPTER_TYPE", self.__class__.__name__))
+        self._http_host = os.getenv("ADAPTER_HEALTH_HOST", "0.0.0.0")
+        self._http_port = int(os.getenv("ADAPTER_HEALTH_PORT", "8080"))
         initial_topic = None
         output = config.get("output")
         if isinstance(output, dict):
             initial_topic = output.get("topic")
         self._health: Dict[str, object] = {
             "status": "initialized",
+            "adapter_id": self._adapter_id,
+            "adapter_type": self._adapter_type,
             "adapter": self.__class__.__name__,
             "connected": False,
             "running": False,
@@ -46,6 +53,16 @@ class BaseAdapter(ABC):
             "publish_failures": 0,
             "last_error": None,
         }
+
+    @staticmethod
+    def _parse_poll_interval_ms(value: object) -> float:
+        """Parse poll interval config while tolerating blank UI form values."""
+        if value in (None, ""):
+            return 1000.0
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 1000.0
 
     def run(self) -> None:
         """Run adapter lifecycle until a stop signal or a fatal error occurs."""
@@ -123,6 +140,34 @@ class BaseAdapter(ABC):
         if self._publisher is not None:
             snapshot.update(self._publisher.health())
         return snapshot
+
+    def metrics(self) -> str:
+        """Return Prometheus-formatted adapter metrics."""
+        health = self.health()
+        labels = f'adapter_id="{self._adapter_id}",adapter_type="{self._adapter_type}"'
+        lines = [
+            "# TYPE adapter_up gauge",
+            f"adapter_up{{{labels}}} {1 if health.get('status') in {'healthy', 'degraded', 'starting'} else 0}",
+            "# TYPE adapter_connected gauge",
+            f"adapter_connected{{{labels}}} {1 if health.get('connected') else 0}",
+            "# TYPE adapter_published_messages_total counter",
+            f"adapter_published_messages_total{{{labels}}} {int(health.get('published_messages', 0))}",
+            "# TYPE adapter_publish_failures_total counter",
+            f"adapter_publish_failures_total{{{labels}}} {int(health.get('publish_failures', 0))}",
+        ]
+        for metric_name in ("modbus_connect_failures", "modbus_read_failures", "modbus_reconnects"):
+            if metric_name in health:
+                lines.append(f"# TYPE {metric_name} counter")
+                lines.append(f"{metric_name}{{{labels}}} {int(health.get(metric_name, 0))}")
+        return "\n".join(lines) + "\n"
+
+    @property
+    def http_host(self) -> str:
+        return self._http_host
+
+    @property
+    def http_port(self) -> int:
+        return self._http_port
 
     def _handle_shutdown_signal(self, signum, _frame) -> None:
         signal_name = signal.Signals(signum).name

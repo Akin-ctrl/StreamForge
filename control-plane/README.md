@@ -59,6 +59,12 @@ From [deploy/docker-compose.dev.yml](deploy/docker-compose.dev.yml):
 - `postgres` runs on `localhost:5432`
 - `control_plane` runs on `localhost:8000`
 
+The default compose stack keeps first-user bootstrap intact for the UI. If you explicitly want a fully seeded demo topology, start the optional seed helper profile:
+
+```bash
+docker compose -f deploy/docker-compose.dev.yml --profile seed up -d --build
+```
+
 Gateway poller integration env vars (set on `gateway_runtime`):
 
 - `CONTROL_PLANE_URL=http://control_plane:8000`

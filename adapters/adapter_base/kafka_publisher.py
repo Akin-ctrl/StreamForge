@@ -13,7 +13,7 @@ class KafkaPublisher:
 
     def __init__(self, config: dict) -> None:
         self._config = config
-        self._schema = SchemaManager()
+        self._schema = SchemaManager(config)
         self._producer = None
         self._send_timeout_s = float(os.getenv("ADAPTER_KAFKA_SEND_TIMEOUT_S", "10"))
         self._acks = os.getenv("ADAPTER_KAFKA_ACKS", "all")
@@ -26,6 +26,7 @@ class KafkaPublisher:
             "last_publish_partition": None,
             "last_publish_offset": None,
             "last_error": None,
+            "serialization_format": "avro" if os.getenv("SCHEMA_STRICT_AVRO", "false").lower() in {"1", "true", "yes", "on"} else "avro_or_json_fallback",
         }
 
     @property

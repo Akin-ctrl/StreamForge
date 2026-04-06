@@ -3,27 +3,16 @@ import { useFieldArray, useForm } from 'react-hook-form'
 import { useNavigate } from 'react-router-dom'
 
 import {
+  CatalogAdapterType,
+  CatalogSinkType,
   GatewayItem,
-  PipelineItem,
   SinkItem,
   createPipeline,
+  createSink,
+  getCatalog,
   listGateways,
-  listPipelines,
   listSinks,
 } from '../../shared/api/client'
-
-type AdapterField = {
-  key: string
-  label: string
-  type: 'text' | 'number'
-}
-
-type AdapterOption = {
-  adapter_type: string
-  label: string
-  supports_registers: boolean
-  fields: AdapterField[]
-}
 
 type RegisterInput = {
   address: number
@@ -37,6 +26,9 @@ type ValidationPerParam = {
   max: number
   rate_of_change: number
   gap_detection: number
+  alarm_enabled: boolean
+  alarm_threshold: number
+  alarm_severity: string
 }
 
 type BuilderFormValues = {
@@ -49,11 +41,16 @@ type BuilderFormValues = {
     registers: RegisterInput[]
   }
   output: {
+    create_new_sink: boolean
     sink_id: string
     sink_type: string
+    sink_status: string
     kafka_bootstrap: string
     topic: string
     asset_id: string
+    group_id: string
+    db_dsn: string
+    table: string
   }
   validationEnabled: boolean
   rawTopic: string
@@ -63,7 +60,8 @@ type BuilderFormValues = {
 }
 
 type PipelineBuilderProps = {
-  availableAdapters?: AdapterOption[]
+  availableAdapters?: CatalogAdapterType[]
+  availableSinkCatalog?: CatalogSinkType[]
   availableSinks?: SinkItem[]
 }
 
@@ -72,77 +70,95 @@ const DEFAULT_PARAM_RULES: ValidationPerParam = {
   max: 500,
   rate_of_change: 20,
   gap_detection: 5,
+  alarm_enabled: false,
+  alarm_threshold: 100,
+  alarm_severity: 'HIGH',
 }
 
-function formatLabel(value: string) {
-  return value
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (char) => char.toUpperCase())
-}
+const BUILT_IN_ADAPTERS: CatalogAdapterType[] = [
+  {
+    adapter_type: 'modbus_tcp',
+    label: 'Modbus TCP',
+    supports_registers: true,
+    fields: [
+      { key: 'host', label: 'Host', input_type: 'text', required: true, default: 'modbus-simulator' },
+      { key: 'port', label: 'Port', input_type: 'number', required: true, default: 5020 },
+      { key: 'unit_id', label: 'Unit ID', input_type: 'number', required: true, default: 1 },
+      { key: 'poll_interval_ms', label: 'Poll Interval (ms)', input_type: 'number', required: true, default: 1000 },
+    ],
+  },
+]
+const BUILT_IN_SINKS: CatalogSinkType[] = [
+  {
+    sink_type: 'timescaledb',
+    label: 'TimescaleDB',
+    fields: [
+      { key: 'kafka_bootstrap', label: 'Kafka Bootstrap', input_type: 'text', required: true, default: 'kafka:9092' },
+      { key: 'topic', label: 'Topic', input_type: 'text', required: true, default: 'telemetry.clean' },
+      { key: 'group_id', label: 'Consumer Group', input_type: 'text', required: true, default: 'sf-sink-timescaledb' },
+      { key: 'db_dsn', label: 'Database DSN', input_type: 'text', required: true, default: 'postgresql://streamforge:streamforge@timescaledb:5432/streamforge' },
+      { key: 'table', label: 'Table', input_type: 'text', required: true, default: 'telemetry_clean' },
+    ],
+  },
+]
 
-function normalizeAdapterOptions(rows: PipelineItem[]): AdapterOption[] {
-  const map = new Map<string, AdapterOption>()
+function normalizeCatalogFieldValues(
+  fields: Array<{ key: string; input_type: string; default?: string | number | boolean | null }>,
+  values: Record<string, string | number>,
+): Record<string, string | number> {
+  const next: Record<string, string | number> = {}
 
-  for (const pipeline of rows) {
-    const config = pipeline.config as Record<string, unknown>
-    const adapters = Array.isArray(config.adapters)
-      ? (config.adapters as Array<Record<string, unknown>>)
-      : []
+  for (const field of fields) {
+    const rawValue = values[field.key]
+    const fallback = typeof field.default === 'string' || typeof field.default === 'number' ? field.default : undefined
 
-    for (const adapter of adapters) {
-      const adapterType = String(adapter.adapter_type || '').trim()
-      if (!adapterType) {
-        continue
+    if (field.input_type === 'number') {
+      const candidate = rawValue === '' || rawValue === undefined || rawValue === null ? fallback : rawValue
+      const numericValue = typeof candidate === 'number' ? candidate : Number(candidate)
+      if (Number.isFinite(numericValue)) {
+        next[field.key] = numericValue
+      } else if (typeof fallback === 'number') {
+        next[field.key] = fallback
       }
+      continue
+    }
 
-      const adapterConfig = (adapter.config as Record<string, unknown>) || {}
-      const supportsRegisters = Array.isArray(adapterConfig.registers)
-      const fields: AdapterField[] = Object.entries(adapterConfig)
-        .filter(([key]) => key !== 'registers' && key !== 'output')
-        .map(([key, value]) => ({
-          key,
-          label: formatLabel(key),
-          type: typeof value === 'number' ? 'number' : 'text',
-        }))
-
-      const existing = map.get(adapterType)
-      if (!existing) {
-        map.set(adapterType, {
-          adapter_type: adapterType,
-          label: formatLabel(adapterType),
-          supports_registers: supportsRegisters,
-          fields,
-        })
-        continue
-      }
-
-      const mergedFieldMap = new Map(existing.fields.map((field) => [field.key, field]))
-      for (const field of fields) {
-        if (!mergedFieldMap.has(field.key)) {
-          mergedFieldMap.set(field.key, field)
-        }
-      }
-
-      map.set(adapterType, {
-        ...existing,
-        supports_registers: existing.supports_registers || supportsRegisters,
-        fields: Array.from(mergedFieldMap.values()),
-      })
+    const textValue = rawValue === undefined || rawValue === null || rawValue === '' ? fallback : rawValue
+    if (typeof textValue === 'string' || typeof textValue === 'number') {
+      next[field.key] = textValue
     }
   }
 
-  return Array.from(map.values())
+  return next
+}
+
+function registerWidth(type: string): number {
+  return type === 'float32' ? 2 : 1
+}
+
+function nextRegisterAddress(registers: RegisterInput[]): number {
+  if (registers.length === 0) {
+    return 40001
+  }
+
+  const highestEnd = registers.reduce((highest, register) => {
+    const width = registerWidth(register.type)
+    return Math.max(highest, Number(register.address) + width - 1)
+  }, 40000)
+
+  return highestEnd + 1
 }
 
 /**
  * Step-based pipeline wizard.
  * Step 1: Adapter, Step 2: Sink, Step 3: Validation, Step 4: Review.
  */
-export function PipelineBuilderPage({ availableAdapters, availableSinks }: PipelineBuilderProps = {}) {
+export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, availableSinks }: PipelineBuilderProps = {}) {
   const navigate = useNavigate()
   const [step, setStep] = useState(1)
   const [gateways, setGateways] = useState<GatewayItem[]>([])
-  const [fetchedAdapters, setFetchedAdapters] = useState<AdapterOption[]>([])
+  const [catalogAdapters, setCatalogAdapters] = useState<CatalogAdapterType[]>([])
+  const [catalogSinks, setCatalogSinks] = useState<CatalogSinkType[]>([])
   const [fetchedSinks, setFetchedSinks] = useState<SinkItem[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
   const [stepError, setStepError] = useState<string | null>(null)
@@ -167,11 +183,16 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
         registers: [{ address: 40001, param: 'temperature', type: 'float32', unit: 'celsius' }],
       },
       output: {
+        create_new_sink: true,
         sink_id: '',
-        sink_type: '',
+        sink_type: 'timescaledb',
+        sink_status: 'active',
         kafka_bootstrap: 'kafka:9092',
         topic: 'telemetry.raw',
         asset_id: 'asset-01',
+        group_id: 'sf-sink-timescaledb',
+        db_dsn: 'postgresql://streamforge:streamforge@timescaledb:5432/streamforge',
+        table: 'telemetry_clean',
       },
       validationEnabled: true,
       rawTopic: 'telemetry.raw',
@@ -186,10 +207,12 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
     name: 'adapter.registers',
   })
 
-  const adapters = availableAdapters || fetchedAdapters
+  const adapters = availableAdapters || catalogAdapters || BUILT_IN_ADAPTERS
+  const sinkCatalog = availableSinkCatalog || catalogSinks || BUILT_IN_SINKS
   const sinks = availableSinks || fetchedSinks
 
   const selectedAdapterType = watch('adapter.adapter_type')
+  const createNewSink = watch('output.create_new_sink')
   const selectedSinkId = watch('output.sink_id')
   const selectedSinkType = watch('output.sink_type')
   const selectedRegisters = watch('adapter.registers')
@@ -206,8 +229,13 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
   )
 
   const sinkTypeOptions = useMemo(
-    () => Array.from(new Set(sinks.map((item) => item.sink_type).filter((value) => value.trim()))),
-    [sinks],
+    () => Array.from(new Set([...sinkCatalog.map((item) => item.sink_type), ...sinks.map((item) => item.sink_type).filter((value) => value.trim())])),
+    [sinkCatalog, sinks],
+  )
+
+  const selectedSinkCatalog = useMemo(
+    () => sinkCatalog.find((item) => item.sink_type === selectedSinkType) || null,
+    [selectedSinkType, sinkCatalog],
   )
 
   const parameterNames = useMemo(
@@ -219,18 +247,19 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
     const load = async () => {
       setLoadError(null)
       try {
-        const [gatewayRows, sinkRows, pipelineRows] = await Promise.all([
+        const [gatewayRows, sinkRows, catalog] = await Promise.all([
           listGateways(),
           availableSinks ? Promise.resolve([] as SinkItem[]) : listSinks(),
-          availableAdapters ? Promise.resolve([] as PipelineItem[]) : listPipelines(),
+          availableAdapters && availableSinkCatalog ? Promise.resolve(null) : getCatalog(),
         ])
 
         setGateways(gatewayRows)
         if (!availableSinks) {
           setFetchedSinks(sinkRows)
         }
-        if (!availableAdapters) {
-          setFetchedAdapters(normalizeAdapterOptions(pipelineRows))
+        if (catalog) {
+          setCatalogAdapters(catalog.adapters)
+          setCatalogSinks(catalog.sinks)
         }
 
         if (gatewayRows.length > 0) {
@@ -242,7 +271,7 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
     }
 
     void load()
-  }, [availableAdapters, availableSinks, setValue])
+  }, [availableAdapters, availableSinkCatalog, availableSinks, setValue])
 
   useEffect(() => {
     if (!selectedSink) {
@@ -256,16 +285,41 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
 
     setValue('output.kafka_bootstrap', kafkaBootstrap)
     setValue('output.topic', topic)
+    if (topic) {
+      setValue('cleanTopic', topic)
+    }
     setValue('output.asset_id', assetId)
     setValue('output.sink_type', selectedSink.sink_type)
+    setValue('output.group_id', typeof sinkConfig.group_id === 'string' ? sinkConfig.group_id : 'sf-sink-timescaledb')
+    setValue('output.db_dsn', typeof sinkConfig.db_dsn === 'string' ? sinkConfig.db_dsn : '')
+    setValue('output.table', typeof sinkConfig.table === 'string' ? sinkConfig.table : 'telemetry_clean')
+    setValue('output.sink_status', typeof selectedSink.status === 'string' ? selectedSink.status : 'active')
   }, [selectedSink, setValue])
+
+  useEffect(() => {
+    if (!createNewSink || selectedSink) {
+      return
+    }
+    if (selectedSinkCatalog) {
+      const currentOutput = getValues('output') as Record<string, unknown>
+      for (const field of selectedSinkCatalog.fields) {
+        const currentValue = currentOutput[field.key]
+        if (currentValue === '' || currentValue === undefined) {
+          setValue(`output.${field.key as keyof BuilderFormValues['output']}` as never, field.default as never)
+        }
+      }
+    }
+  }, [createNewSink, getValues, selectedSink, selectedSinkCatalog, setValue])
 
   useEffect(() => {
     const existing = getValues('validationByParam') || {}
     const next: Record<string, ValidationPerParam> = {}
 
     for (const param of parameterNames) {
-      next[param] = existing[param] || DEFAULT_PARAM_RULES
+      next[param] = {
+        ...DEFAULT_PARAM_RULES,
+        ...(existing[param] || {}),
+      }
     }
 
     setValue('validationByParam', next)
@@ -283,7 +337,11 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
       if (current[field.key] !== undefined) {
         next[field.key] = current[field.key]
       } else {
-        next[field.key] = field.type === 'number' ? 0 : ''
+        if (typeof field.default === 'number' || typeof field.default === 'string') {
+          next[field.key] = field.default
+        } else {
+          next[field.key] = field.input_type === 'number' ? 0 : ''
+        }
       }
     }
 
@@ -295,12 +353,12 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
     const output = {
       sink_type: values.output.sink_type,
       kafka_bootstrap: values.output.kafka_bootstrap,
-      topic: values.output.topic,
+      topic: values.rawTopic,
       asset_id: values.output.asset_id,
-      sink_id: values.output.sink_id || undefined,
+      sink_id: values.output.create_new_sink ? undefined : values.output.sink_id || undefined,
     }
 
-    const dynamicAdapterConfig = { ...values.adapter.config_values }
+    const dynamicAdapterConfig = normalizeCatalogFieldValues(selectedAdapter?.fields || [], values.adapter.config_values || {})
     const adapterConfig = selectedAdapter?.supports_registers
       ? {
           ...dynamicAdapterConfig,
@@ -320,12 +378,26 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
     const ranges: Record<string, { min: number; max: number }> = {}
     const rateOfChange: Record<string, number> = {}
     const gapDetection: Record<string, number> = {}
+    const alarmRules: Array<Record<string, string | number>> = []
 
     for (const param of Object.keys(values.validationByParam || {})) {
       const rules = values.validationByParam[param]
       ranges[param] = { min: Number(rules.min), max: Number(rules.max) }
       rateOfChange[param] = Number(rules.rate_of_change)
       gapDetection[param] = Number(rules.gap_detection)
+      if (rules.alarm_enabled) {
+        const threshold = Number(rules.alarm_threshold)
+        alarmRules.push({
+          parameter: param,
+          type: `${param}_threshold`,
+          severity: rules.alarm_severity || 'HIGH',
+          operator: '>',
+          threshold,
+          condition: `value > ${threshold}`,
+          message: `${param} exceeded configured threshold`,
+          clear_message: `${param} returned to normal range`,
+        })
+      }
     }
 
     return {
@@ -344,10 +416,29 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
           raw_topic: values.rawTopic,
           clean_topic: values.cleanTopic,
           dlq_topic: values.dlqTopic,
+          alarm_topic: 'alarms.raw',
+          alarm_rules: alarmRules,
           ranges,
           rate_of_change: rateOfChange,
           gap_detection: gapDetection,
         },
+      },
+    }
+  }
+
+  const buildSinkPayload = (pipelineId: number) => {
+    const values = getValues()
+    return {
+      pipeline_id: pipelineId,
+      sink_type: values.output.sink_type,
+      status: values.output.sink_status,
+      config: {
+        kafka_bootstrap: values.output.kafka_bootstrap,
+        topic: values.cleanTopic,
+        group_id: values.output.group_id,
+        db_dsn: values.output.db_dsn,
+        table: values.output.table,
+        asset_id: values.output.asset_id,
       },
     }
   }
@@ -357,10 +448,6 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
 
     if (step === 1) {
       const values = getValues()
-      if (adapters.length === 0) {
-        setStepError('No registered adapters found yet. Create at least one pipeline/adapter first.')
-        return
-      }
       if (!values.adapter.adapter_type) {
         setStepError('Select an adapter type to continue.')
         return
@@ -386,6 +473,16 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
         setStepError('Select a sink type to continue.')
         return
       }
+      if (!values.output.create_new_sink && !values.output.sink_id) {
+        setStepError('Select an existing sink or create a new one.')
+        return
+      }
+      if (values.output.create_new_sink) {
+        if (!values.output.db_dsn.trim() || !values.output.table.trim() || !values.output.group_id.trim()) {
+          setStepError('DB DSN, sink table, and consumer group are required when creating a sink.')
+          return
+        }
+      }
     }
 
     if (step === 3) {
@@ -408,7 +505,10 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
     setIsSubmitting(true)
     try {
       const payload = buildPayload()
-      await createPipeline(payload)
+      const pipeline = await createPipeline(payload)
+      if (getValues('output.create_new_sink')) {
+        await createSink(buildSinkPayload(pipeline.id))
+      }
       navigate('/overview', { replace: true })
     } catch (createError) {
       setSubmitError(createError instanceof Error ? createError.message : 'Failed to create pipeline')
@@ -417,7 +517,13 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
     }
   }
 
-  const reviewPayload = useMemo(() => buildPayload(), [formSnapshot, selectedAdapter])
+  const reviewPayload = useMemo(
+    () => ({
+      pipeline: buildPayload(),
+      sink: getValues('output.create_new_sink') ? buildSinkPayload(0) : { reuse_sink_id: selectedSinkId || null },
+    }),
+    [formSnapshot, getValues, selectedSinkId, selectedAdapter],
+  )
 
   return (
     <section>
@@ -440,6 +546,7 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
       {step === 1 && (
         <article className="card builder-section">
           <h3>Step 1: Source Adapter</h3>
+          <p className="muted">Build the gateway-side adapter config directly from the supported adapter catalog.</p>
 
           <div className="inline-grid">
             <label>
@@ -474,10 +581,6 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
             </label>
           </div>
 
-          {adapters.length === 0 && (
-            <p className="error">No adapter types are registered yet. Add one from an existing pipeline first.</p>
-          )}
-
           {selectedAdapter && (
             <>
               <h4>Adapter Configuration</h4>
@@ -486,7 +589,7 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
                   <label key={field.key}>
                     {field.label}
                     <input
-                      type={field.type === 'number' ? 'number' : 'text'}
+                      type={field.input_type === 'number' ? 'number' : 'text'}
                       {...register(`adapter.config_values.${field.key}` as const)}
                     />
                   </label>
@@ -497,7 +600,8 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
 
           {selectedAdapter?.supports_registers && (
             <>
-              <h4>Registers</h4>
+              <h4>Parameter Mapping</h4>
+              <p className="muted">Add one row per PLC/SCADA parameter you want the gateway to collect.</p>
               {fields.map((field, index) => (
                 <div className="inline-grid" key={field.id}>
                   <label>
@@ -528,7 +632,7 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
                 className="btn"
                 onClick={() =>
                   append({
-                    address: 40001,
+                    address: nextRegisterAddress(getValues('adapter.registers') || []),
                     param: '',
                     type: 'float32',
                     unit: 'unit',
@@ -546,9 +650,14 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
       {step === 2 && (
         <article className="card builder-section">
           <h3>Step 2: Destination Sink</h3>
-          <p className="muted">Select a sink type from the runtime registry, then tune output routing.</p>
+          <p className="muted">Create a new sink as part of this workflow or attach the pipeline to an existing sink instance.</p>
 
           <div className="inline-grid">
+            <label className="toggle-label">
+              <input type="checkbox" {...register('output.create_new_sink')} />
+              Create new sink
+            </label>
+
             <label>
               Sink Type
               <input list="sink-type-options" placeholder="e.g. timescaledb" {...register('output.sink_type')} />
@@ -560,8 +669,8 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
             </label>
 
             <label>
-              Existing Sink Instance (optional)
-              <select {...register('output.sink_id')}>
+              Existing Sink Instance
+              <select {...register('output.sink_id')} disabled={createNewSink}>
                 <option value="">None</option>
                 {sinks.map((sink) => (
                   <option key={sink.id} value={sink.id}>
@@ -581,13 +690,40 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
             </label>
             <label>
               Topic
-              <input {...register('output.topic')} />
+              <input {...register('cleanTopic')} />
             </label>
             <label>
               Asset ID
               <input {...register('output.asset_id')} />
             </label>
           </div>
+
+          {createNewSink && (
+            <div className="inline-grid">
+              <label>
+                Sink Status
+                <select {...register('output.sink_status')}>
+                  <option value="active">active</option>
+                  <option value="paused">paused</option>
+                </select>
+              </label>
+              <label>
+                Consumer Group
+                <input {...register('output.group_id')} />
+              </label>
+              {selectedSinkCatalog?.fields
+                .filter((field) => !['kafka_bootstrap', 'topic', 'group_id'].includes(field.key))
+                .map((field) => (
+                  <label key={field.key}>
+                    {field.label}
+                    <input
+                      type={field.input_type === 'number' ? 'number' : 'text'}
+                      {...register(`output.${field.key as keyof BuilderFormValues['output']}` as never)}
+                    />
+                  </label>
+                ))}
+            </div>
+          )}
         </article>
       )}
 
@@ -649,6 +785,27 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
                     {...register(`validationByParam.${param}.gap_detection` as const, { valueAsNumber: true })}
                   />
                 </label>
+                <label className="toggle-label">
+                  <input type="checkbox" {...register(`validationByParam.${param}.alarm_enabled` as const)} />
+                  Enable Alarm
+                </label>
+                <label>
+                  Alarm Threshold
+                  <input
+                    type="number"
+                    {...register(`validationByParam.${param}.alarm_threshold` as const, { valueAsNumber: true })}
+                  />
+                </label>
+                <label>
+                  Alarm Severity
+                  <select {...register(`validationByParam.${param}.alarm_severity` as const)}>
+                    <option value="CRITICAL">CRITICAL</option>
+                    <option value="HIGH">HIGH</option>
+                    <option value="MEDIUM">MEDIUM</option>
+                    <option value="LOW">LOW</option>
+                    <option value="INFO">INFO</option>
+                  </select>
+                </label>
               </div>
             </div>
           ))}
@@ -674,6 +831,9 @@ export function PipelineBuilderPage({ availableAdapters, availableSinks }: Pipel
             </p>
             <p>
               <strong>Validation Parameters:</strong> {parameterNames.join(', ') || 'None'}
+            </p>
+            <p>
+              <strong>Sink Provisioning:</strong> {createNewSink ? 'Create new sink' : `Reuse sink ${selectedSinkId || 'None'}`}
             </p>
           </div>
 

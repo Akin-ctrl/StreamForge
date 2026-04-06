@@ -119,7 +119,17 @@ payload = {
             },
             'gap_detection': {
                 'temperature': 5
-            }
+            },
+            'alarm_topic': 'alarms.raw',
+            'alarm_rules': [
+                {
+                    'parameter': 'temperature',
+                    'condition': 'value > 100',
+                    'severity': 'HIGH',
+                    'type': 'temperature_high',
+                    'message': 'Temperature exceeded configured threshold'
+                }
+            ]
         }
     }
 }
