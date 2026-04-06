@@ -21,6 +21,11 @@ class Gateway(Base):
     hardware_info: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="pending")
     approved: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_config_sync_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_config_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    runtime_health: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    system_metrics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

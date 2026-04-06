@@ -38,7 +38,10 @@ class AdapterManager:
             env = {
                 "ADAPTER_CONFIG_JSON": json.dumps(config.config),
                 "ADAPTER_CONFIG": json.dumps(config.config),
+                "ADAPTER_ID": config.adapter_id,
+                "ADAPTER_TYPE": config.adapter_type,
             }
+            self._inject_shared_env(env, config.config)
 
             labels = {
                 "app": "streamforge",
@@ -81,7 +84,10 @@ class AdapterManager:
         env = {
             "ADAPTER_CONFIG_JSON": json.dumps(config.config),
             "ADAPTER_CONFIG": json.dumps(config.config),
+            "ADAPTER_ID": config.adapter_id,
+            "ADAPTER_TYPE": config.adapter_type,
         }
+        self._inject_shared_env(env, config.config)
         
         labels = {
             "app": "streamforge",
@@ -188,19 +194,19 @@ class AdapterManager:
     ):
         try:
             container = client.containers.get(name)
-            if container.status != "running":
-                container.start()
-            return container
+            self._stop_container(client, container.id)
         except Exception:
-            return client.containers.run(
-                image=image,
-                name=name,
-                detach=True,
-                environment=environment,
-                network=network,
-                labels=labels,
-                restart_policy={"Name": "unless-stopped"},
-            )
+            pass
+
+        return client.containers.run(
+            image=image,
+            name=name,
+            detach=True,
+            environment=environment,
+            network=network,
+            labels=labels,
+            restart_policy={"Name": "unless-stopped"},
+        )
 
     def _stop_container(self, client, container_id: str) -> None:
         try:
@@ -229,3 +235,14 @@ class AdapterManager:
             "com.docker.compose.service": "adapter_modbus_tcp",
             "com.docker.compose.oneoff": "False",
         }
+
+    @staticmethod
+    def _inject_shared_env(env: Dict[str, str], config: dict) -> None:
+        output = config.get("output") if isinstance(config.get("output"), dict) else {}
+        shared = {
+            "SCHEMA_REGISTRY_URL": str(output.get("schema_registry_url") or os.getenv("SCHEMA_REGISTRY_URL", "")),
+            "SCHEMA_CACHE_PATH": str(output.get("schema_cache_path") or os.getenv("SCHEMA_CACHE_PATH", "/data/schemas.cache.json")),
+            "LOG_LEVEL": os.getenv("LOG_LEVEL", "INFO"),
+            "ADAPTER_HEALTH_PORT": os.getenv("ADAPTER_HEALTH_PORT", "8080"),
+        }
+        env.update({key: value for key, value in shared.items() if value != ""})

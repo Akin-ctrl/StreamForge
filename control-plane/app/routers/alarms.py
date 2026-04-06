@@ -24,6 +24,22 @@ from app.schemas.alarms import (
 router = APIRouter()
 
 
+def _to_utc_naive(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _to_utc_aware(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _metadata_dict(record: Alarm) -> dict:
     return dict(record.alarm_metadata or {})
 
@@ -32,7 +48,12 @@ def _duration_seconds(raised_at: datetime, cleared_at: datetime | None) -> int |
     if cleared_at is None:
         return None
 
-    delta = int((cleared_at - raised_at).total_seconds())
+    normalized_raised_at = _to_utc_naive(raised_at)
+    normalized_cleared_at = _to_utc_naive(cleared_at)
+    if normalized_raised_at is None or normalized_cleared_at is None:
+        return None
+
+    delta = int((normalized_cleared_at - normalized_raised_at).total_seconds())
     return delta if delta >= 0 else None
 
 
@@ -49,16 +70,16 @@ def _alarm_item(record: Alarm) -> AlarmItem:
         value=record.value,
         threshold=record.threshold,
         unit=record.unit,
-        raised_at=record.raised_at,
-        acked_at=record.acked_at,
+        raised_at=_to_utc_aware(record.raised_at),
+        acked_at=_to_utc_aware(record.acked_at),
         acked_by=record.acked_by,
-        cleared_at=record.cleared_at,
-        suppressed_at=record.suppressed_at,
+        cleared_at=_to_utc_aware(record.cleared_at),
+        suppressed_at=_to_utc_aware(record.suppressed_at),
         suppressed_by=record.suppressed_by,
         duration_seconds=record.duration_seconds,
         metadata=_metadata_dict(record),
-        created_at=record.created_at,
-        updated_at=record.updated_at,
+        created_at=_to_utc_aware(record.created_at),
+        updated_at=_to_utc_aware(record.updated_at),
     )
 
 
@@ -128,6 +149,8 @@ def ingest_alarm(
         raise HTTPException(status_code=409, detail="alarm_id already belongs to another gateway")
 
     metadata = payload.metadata.model_dump(exclude_none=True) if payload.metadata is not None else {}
+    raised_at = _to_utc_naive(payload.raised_at)
+    cleared_at = _to_utc_naive(payload.cleared_at)
 
     if alarm is None:
         alarm = Alarm(
@@ -143,9 +166,9 @@ def ingest_alarm(
             threshold=payload.threshold,
             unit=payload.unit,
             alarm_metadata=metadata,
-            raised_at=payload.raised_at,
-            cleared_at=payload.cleared_at,
-            duration_seconds=_duration_seconds(payload.raised_at, payload.cleared_at),
+            raised_at=raised_at,
+            cleared_at=cleared_at,
+            duration_seconds=_duration_seconds(raised_at, cleared_at),
         )
     else:
         if payload.state == "ACTIVE" and alarm.state == "CLEARED":
@@ -163,15 +186,15 @@ def ingest_alarm(
         alarm.threshold = payload.threshold
         alarm.unit = payload.unit
         alarm.alarm_metadata = metadata
-        alarm.raised_at = min(alarm.raised_at, payload.raised_at)
+        alarm.raised_at = min(alarm.raised_at, raised_at)
 
         if payload.state == "ACTIVE":
             if alarm.state not in ("ACKNOWLEDGED", "SUPPRESSED"):
                 alarm.state = "ACTIVE"
         else:
             alarm.state = "CLEARED"
-            alarm.cleared_at = payload.cleared_at
-            alarm.duration_seconds = _duration_seconds(alarm.raised_at, payload.cleared_at)
+            alarm.cleared_at = cleared_at
+            alarm.duration_seconds = _duration_seconds(alarm.raised_at, cleared_at)
 
     db.add(alarm)
     db.commit()
@@ -193,7 +216,7 @@ def acknowledge_alarm(
         raise HTTPException(status_code=409, detail=f"Cannot acknowledge alarm in {alarm.state} state")
 
     alarm.state = "ACKNOWLEDGED"
-    alarm.acked_at = datetime.now(timezone.utc)
+    alarm.acked_at = _to_utc_naive(datetime.now(timezone.utc))
     alarm.acked_by = payload.acked_by if payload and payload.acked_by else user.username
 
     db.add(alarm)
@@ -218,7 +241,7 @@ def suppress_alarm(
         raise HTTPException(status_code=409, detail=f"Cannot suppress alarm in {alarm.state} state")
 
     alarm.state = "SUPPRESSED"
-    alarm.suppressed_at = datetime.now(timezone.utc)
+    alarm.suppressed_at = _to_utc_naive(datetime.now(timezone.utc))
     alarm.suppressed_by = payload.suppressed_by if payload and payload.suppressed_by else user.username
 
     db.add(alarm)

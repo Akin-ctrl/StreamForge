@@ -12,5 +12,6 @@ RUN pip install -r /app/requirements.txt
 COPY gateway_runtime /app/gateway_runtime
 COPY adapters /app/adapters
 COPY sinks /app/sinks
+COPY schemas /app/schemas
 
 CMD ["python", "-m", "gateway_runtime.main"]

@@ -7,7 +7,14 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core.security import create_user_token, get_current_user, hash_password, validate_password_strength, verify_password
+from app.core.security import (
+    create_user_token,
+    get_current_user,
+    hash_password,
+    roles_for_user,
+    validate_password_strength,
+    verify_password,
+)
 from app.db.deps import get_db
 from app.db.models import User
 from app.schemas.users import (
@@ -51,7 +58,7 @@ def bootstrap_first_user(
     db.add(user)
     db.commit()
 
-    token, expires_at = create_user_token(user.username)
+    token, expires_at = create_user_token(user.username, is_admin=True)
     return UserTokenResponse(access_token=token, expires_at=expires_at)
 
 
@@ -65,10 +72,21 @@ def issue_user_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Sessi
     if not verify_password(form_data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
-    token, expires_at = create_user_token(user.username)
+    token, expires_at = create_user_token(user.username, is_admin=user.is_admin)
+    return UserTokenResponse(access_token=token, expires_at=expires_at)
+
+
+@router.post("/refresh", response_model=UserTokenResponse)
+def refresh_user_token(current_user: User = Depends(get_current_user)) -> UserTokenResponse:
+    token, expires_at = create_user_token(current_user.username, is_admin=current_user.is_admin)
     return UserTokenResponse(access_token=token, expires_at=expires_at)
 
 
 @router.get("/me", response_model=UserProfileResponse)
 def read_me(current_user: User = Depends(get_current_user)) -> UserProfileResponse:
-    return UserProfileResponse(username=current_user.username, is_admin=current_user.is_admin)
+    return UserProfileResponse(
+        username=current_user.username,
+        is_admin=current_user.is_admin,
+        roles=[role.value for role in roles_for_user(current_user.username, current_user.is_admin)],
+        created_at=current_user.created_at,
+    )

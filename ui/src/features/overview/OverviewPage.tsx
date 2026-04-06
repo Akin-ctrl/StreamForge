@@ -1,15 +1,28 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import { GatewayItem, PipelineItem, SinkItem, listGateways, listPipelines, listSinks } from '../../shared/api/client'
+import {
+  GatewayItem,
+  HealthResponse,
+  PipelineItem,
+  SinkItem,
+  getHealth,
+  listGateways,
+  listPipelines,
+  listSinks,
+} from '../../shared/api/client'
+import { formatDateTime } from '../../shared/format/datetime'
+import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 
 /**
  * Main operations landing page.
  * Shows current gateways, pipelines, and sinks in one place.
  */
 export function OverviewPage() {
+  const { timezone } = useOperatorPreferences()
   const [gateways, setGateways] = useState<GatewayItem[]>([])
   const [pipelines, setPipelines] = useState<PipelineItem[]>([])
   const [sinks, setSinks] = useState<SinkItem[]>([])
+  const [health, setHealth] = useState<HealthResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -17,10 +30,16 @@ export function OverviewPage() {
     setLoading(true)
     setError(null)
     try {
-      const [gatewayRows, pipelineRows, sinkRows] = await Promise.all([listGateways(), listPipelines(), listSinks()])
+      const [gatewayRows, pipelineRows, sinkRows, healthRow] = await Promise.all([
+        listGateways(),
+        listPipelines(),
+        listSinks(),
+        getHealth(),
+      ])
       setGateways(gatewayRows)
       setPipelines(pipelineRows)
       setSinks(sinkRows)
+      setHealth(healthRow)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load overview')
     } finally {
@@ -62,6 +81,11 @@ export function OverviewPage() {
           <p className="overview-kpi-value">{sinks.length}</p>
           <p className="muted">Pipeline output targets</p>
         </article>
+        <article className="card">
+          <h3>Gateway Health</h3>
+          <p className="overview-kpi-value">{health?.gateway_states?.healthy ?? 0}</p>
+          <p className="muted">Degraded: {health?.gateway_states?.degraded ?? 0}</p>
+        </article>
       </div>
 
       <div className="overview-grid">
@@ -82,7 +106,7 @@ export function OverviewPage() {
                   <td>{item.id}</td>
                   <td>{item.name}</td>
                   <td>{item.gateway_id}</td>
-                  <td>{new Date(item.created_at).toLocaleString()}</td>
+                  <td>{formatDateTime(item.created_at, timezone, { includeTimezone: true })}</td>
                 </tr>
               ))}
               {pipelines.length === 0 && (
@@ -104,6 +128,7 @@ export function OverviewPage() {
                 <th>ID</th>
                 <th>Status</th>
                 <th>Approved</th>
+                <th>Last Sync</th>
               </tr>
             </thead>
             <tbody>
@@ -112,11 +137,12 @@ export function OverviewPage() {
                   <td>{item.gateway_id}</td>
                   <td>{item.status}</td>
                   <td>{item.approved ? 'Yes' : 'No'}</td>
+                  <td>{formatDateTime(item.last_config_sync_at || null, timezone, { includeTimezone: true })}</td>
                 </tr>
               ))}
               {gateways.length === 0 && (
                 <tr>
-                  <td colSpan={3} className="muted">
+                  <td colSpan={4} className="muted">
                     No gateways yet.
                   </td>
                 </tr>

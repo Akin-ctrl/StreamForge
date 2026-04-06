@@ -20,6 +20,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   const response = await fetch(`${CONTROL_PLANE_URL}${path}`, {
     ...init,
+    cache: 'no-store',
     headers,
   })
 
@@ -40,6 +41,11 @@ export type GatewayItem = {
   hostname: string
   status: string
   approved: boolean
+  last_config_sync_at?: string | null
+  last_config_version?: string | null
+  last_seen_at?: string | null
+  runtime_health?: Record<string, unknown> | null
+  system_metrics?: Record<string, unknown> | null
   created_at: string
 }
 
@@ -124,11 +130,49 @@ export type DlqItem = {
 export type HealthResponse = {
   status: string
   service: string
+  dependencies?: Record<string, string>
+  counts?: Record<string, number>
+  gateway_states?: Record<string, number>
+  gateways?: GatewayItem[]
 }
 
 export type UserTokenResponse = {
   access_token: string
   expires_at: string
+}
+
+export type UserItem = {
+  username: string
+  is_admin: boolean
+  roles: string[]
+  created_at: string
+}
+
+export type CatalogField = {
+  key: string
+  label: string
+  input_type: 'text' | 'number'
+  required: boolean
+  default: string | number | boolean | null
+  help_text?: string | null
+}
+
+export type CatalogAdapterType = {
+  adapter_type: string
+  label: string
+  supports_registers: boolean
+  fields: CatalogField[]
+}
+
+export type CatalogSinkType = {
+  sink_type: string
+  label: string
+  fields: CatalogField[]
+}
+
+export type CatalogResponse = {
+  adapters: CatalogAdapterType[]
+  sinks: CatalogSinkType[]
 }
 
 export type BootstrapStatusResponse = {
@@ -157,6 +201,7 @@ export async function login(username: string, password: string): Promise<UserTok
 
   const response = await fetch(`${CONTROL_PLANE_URL}/api/v1/auth/token`, {
     method: 'POST',
+    cache: 'no-store',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
     },
@@ -171,7 +216,7 @@ export async function login(username: string, password: string): Promise<UserTok
 }
 
 export async function getBootstrapStatus(): Promise<BootstrapStatusResponse> {
-  const response = await fetch(`${CONTROL_PLANE_URL}/api/v1/auth/bootstrap/status`)
+  const response = await fetch(`${CONTROL_PLANE_URL}/api/v1/auth/bootstrap/status`, { cache: 'no-store' })
   if (!response.ok) {
     throw new Error(await readError(response, 'Unable to determine bootstrap status'))
   }
@@ -181,6 +226,7 @@ export async function getBootstrapStatus(): Promise<BootstrapStatusResponse> {
 export async function bootstrapFirstUser(username: string, password: string): Promise<UserTokenResponse> {
   const response = await fetch(`${CONTROL_PLANE_URL}/api/v1/auth/bootstrap/first-user`, {
     method: 'POST',
+    cache: 'no-store',
     headers: {
       'Content-Type': 'application/json',
     },
@@ -192,6 +238,31 @@ export async function bootstrapFirstUser(username: string, password: string): Pr
   }
 
   return (await response.json()) as UserTokenResponse
+}
+
+export function listUsers() {
+  return request<UserItem[]>('/api/v1/users')
+}
+
+export function getCurrentUser() {
+  return request<UserItem>('/api/v1/auth/me')
+}
+
+export function createUser(payload: {
+  username: string
+  password: string
+  is_admin?: boolean
+}) {
+  return request<UserItem>('/api/v1/users', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteUser(username: string) {
+  return request<{ deleted: boolean; username: string }>(`/api/v1/users/${encodeURIComponent(username)}`, {
+    method: 'DELETE',
+  })
 }
 
 export function listGateways() {
@@ -263,6 +334,10 @@ export function deleteSink(sinkId: number) {
 
 export function getHealth() {
   return request<HealthResponse>('/api/v1/health')
+}
+
+export function getCatalog() {
+  return request<CatalogResponse>('/api/v1/catalog')
 }
 
 export function listAlarms(filters?: {

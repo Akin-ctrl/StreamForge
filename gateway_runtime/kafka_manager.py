@@ -73,6 +73,11 @@ class KafkaManager:
         """Return bootstrap server address."""
         return self._bootstrap
 
+    @property
+    def container_name(self) -> str:
+        """Return the managed/external Kafka container name."""
+        return self._container_name
+
     def ensure_running(self) -> None:
         """Ensure Kafka remains available during runtime supervision."""
         if self._can_connect():

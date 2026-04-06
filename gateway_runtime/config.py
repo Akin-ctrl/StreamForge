@@ -338,12 +338,10 @@ class ControlPlaneConfigRepository(ConfigRepository):
                 payload = response.read().decode("utf-8")
         except error.HTTPError as exc:
             if exc.code == 403:
-                self._breaker.record_failure(exc)
                 raise ConfigError(
                     "Gateway token request denied: gateway is pending approval"
                 ) from exc
             if exc.code == 404:
-                self._breaker.record_failure(exc)
                 raise ConfigError(
                     "Gateway token request failed: gateway not registered"
                 ) from exc

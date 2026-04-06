@@ -11,11 +11,14 @@ import signal
 import threading
 import time
 from contextlib import suppress
+import re
 
 from fastapi import FastAPI
 import uvicorn
 
+from adapters.adapter_base.schema import SchemaManager
 from gateway_runtime.circuit_breaker import CircuitBreaker
+from gateway_runtime.logging_utils import configure_json_logging
 
 
 APP = FastAPI(title="sink-timescaledb", version="0.1.0")
@@ -31,7 +34,10 @@ _STATS = {
     "written": 0,
     "errors": 0,
     "last_error": None,
+    "consumer_lag": 0,
 }
+_SCHEMA = SchemaManager({"output": {"topic": os.getenv("SINK_TOPIC", "telemetry.clean")}})
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _load_config() -> dict:
@@ -53,9 +59,12 @@ def _load_config() -> dict:
 
 
 def _ensure_table(cursor, table: str) -> None:
+    if not _IDENTIFIER_RE.fullmatch(table):
+        raise ValueError(f"Unsafe table identifier: {table}")
+    quoted_table = f'"{table}"'
     cursor.execute(
         f"""
-        CREATE TABLE IF NOT EXISTS {table} (
+        CREATE TABLE IF NOT EXISTS {quoted_table} (
             id BIGSERIAL PRIMARY KEY,
             asset_id TEXT NOT NULL,
             parameter TEXT NOT NULL,
@@ -70,7 +79,8 @@ def _ensure_table(cursor, table: str) -> None:
     )
     with suppress(Exception):
         cursor.execute(
-            f"SELECT create_hypertable('{table}', 'gateway_time', if_not_exists => TRUE);"
+            "SELECT create_hypertable(%s, 'gateway_time', if_not_exists => TRUE);",
+            (table,),
         )
 
 
@@ -98,7 +108,7 @@ def _writer_loop() -> None:
                 group_id=cfg["group_id"],
                 auto_offset_reset="latest",
                 enable_auto_commit=False,
-                value_deserializer=lambda value: json.loads(value.decode("utf-8")),
+                value_deserializer=_SCHEMA.decode,
             )
 
             with psycopg.connect(cfg["db_dsn"], autocommit=True) as conn:
@@ -111,11 +121,12 @@ def _writer_loop() -> None:
 
                     payload = record.value
                     written_rows = 0
+                    quoted_table = f'"{cfg["table"]}"'
                     with conn.cursor() as cursor:
                         for reading in payload.get("readings", []):
                             cursor.execute(
                                 f"""
-                                INSERT INTO {cfg['table']} (
+                                INSERT INTO {quoted_table} (
                                     asset_id, parameter, value, unit, quality, gateway_time, device_time, payload
                                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
                                 """,
@@ -135,6 +146,7 @@ def _writer_loop() -> None:
                     _STATS["consumed"] += 1
                     _STATS["written"] += written_rows
                     _STATS["last_error"] = None
+                    _STATS["consumer_lag"] = 0
                     _DB_BREAKER.record_success()
         except Exception as exc:
             _STATS["errors"] += 1
@@ -182,6 +194,8 @@ def metrics() -> str:
         f"sink_timescaledb_written_total {_STATS['written']}",
         "# TYPE sink_timescaledb_errors_total counter",
         f"sink_timescaledb_errors_total {_STATS['errors']}",
+        "# TYPE sink_timescaledb_consumer_lag gauge",
+        f"sink_timescaledb_consumer_lag {_STATS['consumer_lag']}",
     ]
     return "\n".join(lines) + "\n"
 
@@ -196,6 +210,7 @@ def _shutdown(*_args) -> None:
 
 
 def main() -> None:
+    configure_json_logging(os.getenv("LOG_LEVEL", "INFO"))
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
     _start_background()

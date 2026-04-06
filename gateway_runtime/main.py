@@ -11,9 +11,11 @@ from gateway_runtime.adapter_manager import AdapterManager
 from gateway_runtime.config import ConfigRepository, ControlPlaneConfigRepository
 from gateway_runtime.health import HealthReporter
 from gateway_runtime.kafka_manager import KafkaManager
+from gateway_runtime.overflow import OverflowManager
 from gateway_runtime.runtime import GatewayRuntime
 from gateway_runtime.errors import ConfigError
 from gateway_runtime.health_server import HealthServer
+from gateway_runtime.logging_utils import configure_json_logging
 from gateway_runtime.sink_manager import SinkManager
 
 
@@ -29,6 +31,7 @@ async def _run(runtime: GatewayRuntime) -> None:
 
 def main() -> None:
     """Application entrypoint for the gateway runtime."""
+    configure_json_logging(os.getenv("LOG_LEVEL", "INFO"))
     config_path = os.getenv("GATEWAY_CONFIG")
     control_plane_url = os.getenv("CONTROL_PLANE_URL")
     control_plane_gateway_id = os.getenv("CONTROL_PLANE_GATEWAY_ID")
@@ -65,6 +68,11 @@ def main() -> None:
     adapters = AdapterManager(AdapterFactory())
     sinks = SinkManager()
     health = HealthReporter()
+    overflow = OverflowManager(
+        gateway_id=control_plane_gateway_id or "gateway",
+        kafka_manager=kafka,
+        adapter_manager=adapters,
+    )
 
     runtime = GatewayRuntime(
         config_repo=config_repo,
@@ -72,9 +80,10 @@ def main() -> None:
         adapters=adapters,
         sinks=sinks,
         health=health,
+        overflow=overflow,
     )
 
-    server = HealthServer(health_host, health_port_int, runtime.health_snapshot)
+    server = HealthServer(health_host, health_port_int, runtime.health_snapshot, runtime.metrics_snapshot)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
 

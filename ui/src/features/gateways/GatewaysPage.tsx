@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react'
 
 import { GatewayItem, approveGateway, createGateway, listGateways } from '../../shared/api/client'
+import { formatDateTime } from '../../shared/format/datetime'
+import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 
 /**
  * Gateway operations page.
  * Supports operator-managed gateway creation and approve actions.
  */
 export function GatewaysPage() {
+  const { timezone } = useOperatorPreferences()
   const [items, setItems] = useState<GatewayItem[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -90,6 +93,8 @@ export function GatewaysPage() {
               <th>Hostname</th>
               <th>Status</th>
               <th>Approved</th>
+              <th>Last Seen</th>
+              <th>Last Config Sync</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -100,6 +105,8 @@ export function GatewaysPage() {
                 <td>{item.hostname}</td>
                 <td>{item.status}</td>
                 <td>{item.approved ? 'Yes' : 'No'}</td>
+                <td>{formatDateTime(item.last_seen_at || null, timezone, { includeTimezone: true })}</td>
+                <td>{formatDateTime(item.last_config_sync_at || null, timezone, { includeTimezone: true })}</td>
                 <td>
                   {!item.approved && (
                     <button className="btn btn-secondary" onClick={() => void onApprove(item.gateway_id)}>

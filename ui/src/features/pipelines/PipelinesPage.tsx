@@ -8,12 +8,15 @@ import {
   listGateways,
   listPipelines,
 } from '../../shared/api/client'
+import { formatDateTime } from '../../shared/format/datetime'
+import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 
 /**
  * Pipelines management page.
  * Supports list/create/delete with JSON config input.
  */
 export function PipelinesPage() {
+  const { timezone } = useOperatorPreferences()
   const [items, setItems] = useState<PipelineItem[]>([])
   const [gateways, setGateways] = useState<GatewayItem[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -161,7 +164,7 @@ export function PipelinesPage() {
               <td>{item.id}</td>
               <td>{item.name}</td>
               <td>{item.gateway_id}</td>
-              <td>{new Date(item.created_at).toLocaleString()}</td>
+              <td>{formatDateTime(item.created_at, timezone, { includeTimezone: true })}</td>
               <td>
                 <button className="btn btn-secondary" onClick={() => void onDelete(item.id)}>
                   Delete

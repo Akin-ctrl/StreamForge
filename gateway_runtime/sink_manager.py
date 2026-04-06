@@ -48,7 +48,9 @@ class SinkManager:
         image = self._image_for(config.sink_type)
         env = {
             "SINK_CONFIG": json.dumps(config.config),
+            "SINK_TOPIC": str(config.config.get("topic", "telemetry.clean")),
         }
+        self._inject_shared_env(env, config.config)
 
         labels = {
             "app": "streamforge",
@@ -146,20 +148,20 @@ class SinkManager:
     ):
         try:
             container = client.containers.get(name)
-            if container.status != "running":
-                container.start()
-            return container
+            self._stop_container(client, container.id)
         except Exception:
-            return client.containers.run(
-                image=image,
-                name=name,
-                detach=True,
-                environment=environment,
-                network=network,
-                labels=labels,
-                command=command,
-                restart_policy={"Name": "unless-stopped"},
-            )
+            pass
+
+        return client.containers.run(
+            image=image,
+            name=name,
+            detach=True,
+            environment=environment,
+            network=network,
+            labels=labels,
+            command=command,
+            restart_policy={"Name": "unless-stopped"},
+        )
 
     @staticmethod
     def _stop_container(client, container_id: str) -> None:
@@ -194,3 +196,12 @@ class SinkManager:
             "com.docker.compose.service": "sink_timescaledb",
             "com.docker.compose.oneoff": "False",
         }
+
+    @staticmethod
+    def _inject_shared_env(env: Dict[str, str], config: dict) -> None:
+        shared = {
+            "SCHEMA_REGISTRY_URL": str(config.get("schema_registry_url") or os.getenv("SCHEMA_REGISTRY_URL", "")),
+            "SCHEMA_CACHE_PATH": str(config.get("schema_cache_path") or os.getenv("SCHEMA_CACHE_PATH", "/data/schemas.cache.json")),
+            "LOG_LEVEL": os.getenv("LOG_LEVEL", "INFO"),
+        }
+        env.update({key: value for key, value in shared.items() if value != ""})

@@ -2,15 +2,19 @@ import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 
 import { clearAccessToken } from '../../shared/auth/session'
+import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 
 // Primary navigation for MVP operator screens.
 const links = [
   { to: '/overview', label: 'Overview' },
   { to: '/gateways', label: 'Gateways' },
+  { to: '/pipelines', label: 'Pipelines' },
+  { to: '/sinks', label: 'Sinks' },
   { to: '/alarms', label: 'Alarms' },
   { to: '/dlq', label: 'DLQ' },
   { to: '/create-pipeline', label: 'Create Pipeline' },
   { to: '/health', label: 'Health' },
+  { to: '/users', label: 'Users' },
 ]
 
 /**
@@ -19,6 +23,7 @@ const links = [
  */
 export function AppShell() {
   const navigate = useNavigate()
+  const { timezone, setTimezone, timezoneOptions } = useOperatorPreferences()
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const stored = window.localStorage.getItem('sf-theme')
     return stored === 'dark' ? 'dark' : 'light'
@@ -56,6 +61,17 @@ export function AppShell() {
             </NavLink>
           ))}
         </nav>
+        <label className="sidebar-field">
+          Timezone
+          <select value={timezone} onChange={(event) => setTimezone(event.target.value)}>
+            <option value="browser">Browser Local</option>
+            {timezoneOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
         <button className="btn btn-secondary" onClick={onToggleTheme} type="button">
           {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
         </button>
