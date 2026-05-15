@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import signal
 import threading
 import time
@@ -36,16 +37,18 @@ _STATS = {
     "last_error": None,
     "consumer_lag": 0,
 }
-_SCHEMA = SchemaManager({"output": {"topic": os.getenv("SINK_TOPIC", "telemetry.clean")}})
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_AGGREGATE_SCHEMA_PATH = str(Path(__file__).resolve().parents[2] / "schemas" / "telemetry_aggregate.avsc")
+_EVENT_SCHEMA_PATH = str(Path(__file__).resolve().parents[2] / "schemas" / "event.avsc")
 
 
 def _load_config() -> dict:
     raw = os.getenv("SINK_CONFIG", "{}")
     config = json.loads(raw)
+    topic = config.get("topic", "telemetry.clean")
     return {
         "kafka_bootstrap": config.get("kafka_bootstrap", os.getenv("KAFKA_BOOTSTRAP", "kafka:9092")),
-        "topic": config.get("topic", "telemetry.clean"),
+        "topic": topic,
         "group_id": config.get("group_id", "sf-sink-timescaledb"),
         "db_dsn": config.get(
             "db_dsn",
@@ -55,12 +58,19 @@ def _load_config() -> dict:
             ),
         ),
         "table": config.get("table", "telemetry_clean"),
+        "message_format": config.get("message_format", "auto"),
+        "schema_path": config.get("schema_path"),
     }
 
 
-def _ensure_table(cursor, table: str) -> None:
+def _ensure_telemetry_table(cursor, table: str) -> None:
     if not _IDENTIFIER_RE.fullmatch(table):
         raise ValueError(f"Unsafe table identifier: {table}")
+    _ensure_table_shape(
+        cursor,
+        table,
+        required_columns={"asset_id", "parameter", "value", "gateway_time", "payload"},
+    )
     quoted_table = f'"{table}"'
     cursor.execute(
         f"""
@@ -84,6 +94,302 @@ def _ensure_table(cursor, table: str) -> None:
         )
 
 
+def _ensure_aggregate_table(cursor, table: str) -> None:
+    if not _IDENTIFIER_RE.fullmatch(table):
+        raise ValueError(f"Unsafe table identifier: {table}")
+    _ensure_table_shape(
+        cursor,
+        table,
+        required_columns={"asset_id", "parameter", "classification", "window_start", "window_end", "payload"},
+    )
+    quoted_table = f'"{table}"'
+    cursor.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {quoted_table} (
+            id BIGSERIAL PRIMARY KEY,
+            asset_id TEXT NOT NULL,
+            parameter TEXT NOT NULL,
+            unit TEXT,
+            classification TEXT NOT NULL,
+            window_start TIMESTAMPTZ NOT NULL,
+            window_end TIMESTAMPTZ NOT NULL,
+            avg DOUBLE PRECISION NOT NULL,
+            min DOUBLE PRECISION NOT NULL,
+            max DOUBLE PRECISION NOT NULL,
+            stddev DOUBLE PRECISION NOT NULL,
+            count BIGINT NOT NULL,
+            p50 DOUBLE PRECISION NOT NULL,
+            p95 DOUBLE PRECISION NOT NULL,
+            p99 DOUBLE PRECISION NOT NULL,
+            good_samples BIGINT NOT NULL,
+            suspect_samples BIGINT NOT NULL,
+            uncertain_samples BIGINT NOT NULL,
+            bad_samples BIGINT NOT NULL,
+            pct_good DOUBLE PRECISION NOT NULL,
+            payload JSONB NOT NULL
+        );
+        """
+    )
+    with suppress(Exception):
+        cursor.execute(
+            "SELECT create_hypertable(%s, 'window_start', if_not_exists => TRUE);",
+            (table,),
+        )
+    _dedupe_aggregate_table(cursor, table)
+    cursor.execute(
+        f"""
+        CREATE UNIQUE INDEX IF NOT EXISTS "{table}_asset_param_window_uidx"
+        ON {quoted_table} (asset_id, parameter, window_start, window_end);
+        """
+    )
+
+
+def _ensure_event_table(cursor, table: str) -> None:
+    if not _IDENTIFIER_RE.fullmatch(table):
+        raise ValueError(f"Unsafe table identifier: {table}")
+    _ensure_table_shape(
+        cursor,
+        table,
+        required_columns={"asset_id", "event_type", "classification", "gateway_time", "previous_state", "new_state", "payload"},
+    )
+    quoted_table = f'"{table}"'
+    cursor.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {quoted_table} (
+            id BIGSERIAL PRIMARY KEY,
+            asset_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            classification TEXT NOT NULL,
+            gateway_time TIMESTAMPTZ NOT NULL,
+            device_time TIMESTAMPTZ NULL,
+            previous_state JSONB NOT NULL,
+            new_state JSONB NOT NULL,
+            metadata JSONB NOT NULL,
+            payload JSONB NOT NULL
+        );
+        """
+    )
+    with suppress(Exception):
+        cursor.execute(
+            "SELECT create_hypertable(%s, 'gateway_time', if_not_exists => TRUE);",
+            (table,),
+        )
+    _dedupe_event_table(cursor, table)
+    cursor.execute(
+        f"""
+        CREATE UNIQUE INDEX IF NOT EXISTS "{table}_asset_event_gateway_uidx"
+        ON {quoted_table} (asset_id, event_type, gateway_time);
+        """
+    )
+
+
+def _ensure_table_shape(cursor, table: str, required_columns: set[str]) -> None:
+    columns = _table_columns(cursor, table)
+    if not columns:
+        return
+    if required_columns.issubset(columns):
+        return
+    row_count = _table_row_count(cursor, table)
+    if row_count > 0:
+        raise ValueError(
+            f"Existing table {table} has incompatible schema and contains {row_count} rows; manual migration required"
+        )
+    cursor.execute(f'DROP TABLE IF EXISTS "{table}"')
+
+
+def _table_columns(cursor, table: str) -> set[str]:
+    cursor.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = %s
+        """,
+        (table,),
+    )
+    return {row[0] for row in cursor.fetchall()}
+
+
+def _table_row_count(cursor, table: str) -> int:
+    cursor.execute(f'SELECT COUNT(*) FROM "{table}"')
+    row = cursor.fetchone()
+    return int(row[0]) if row else 0
+
+
+def _resolve_schema(topic: str, schema_path: str | None, message_format: str = "auto") -> SchemaManager:
+    resolved_path = schema_path
+    if resolved_path is None and (message_format == "aggregate" or topic.startswith("telemetry.1")):
+        resolved_path = _AGGREGATE_SCHEMA_PATH
+    if resolved_path is None and (message_format == "event" or topic.startswith("events.")):
+        resolved_path = _EVENT_SCHEMA_PATH
+    output = {"topic": topic}
+    if resolved_path:
+        output["schema_path"] = resolved_path
+    return SchemaManager({"output": output})
+
+
+def _payload_format(payload: dict, configured_format: str) -> str:
+    if configured_format in {"telemetry", "aggregate", "event"}:
+        return configured_format
+    if isinstance(payload.get("aggregates"), dict) and "window_start" in payload and "window_end" in payload:
+        return "aggregate"
+    if payload.get("classification") == "EVENT" and isinstance(payload.get("new_state"), dict):
+        return "event"
+    return "telemetry"
+
+
+def _write_payload(cursor, table: str, payload: dict, payload_format: str) -> int:
+    quoted_table = f'"{table}"'
+    if payload_format == "aggregate":
+        aggregates = payload.get("aggregates", {})
+        quality_summary = payload.get("quality_summary", {})
+        cursor.execute(
+            f"""
+            INSERT INTO {quoted_table} (
+                asset_id, parameter, unit, classification, window_start, window_end,
+                avg, min, max, stddev, count, p50, p95, p99,
+                good_samples, suspect_samples, uncertain_samples, bad_samples, pct_good, payload
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            ON CONFLICT (asset_id, parameter, window_start, window_end)
+            DO UPDATE SET
+                unit = EXCLUDED.unit,
+                classification = EXCLUDED.classification,
+                avg = EXCLUDED.avg,
+                min = EXCLUDED.min,
+                max = EXCLUDED.max,
+                stddev = EXCLUDED.stddev,
+                count = EXCLUDED.count,
+                p50 = EXCLUDED.p50,
+                p95 = EXCLUDED.p95,
+                p99 = EXCLUDED.p99,
+                good_samples = EXCLUDED.good_samples,
+                suspect_samples = EXCLUDED.suspect_samples,
+                uncertain_samples = EXCLUDED.uncertain_samples,
+                bad_samples = EXCLUDED.bad_samples,
+                pct_good = EXCLUDED.pct_good,
+                payload = EXCLUDED.payload
+            """,
+            (
+                payload.get("asset_id"),
+                payload.get("parameter"),
+                payload.get("unit"),
+                payload.get("classification", "TELEMETRY_AGGREGATE"),
+                payload.get("window_start"),
+                payload.get("window_end"),
+                aggregates.get("avg"),
+                aggregates.get("min"),
+                aggregates.get("max"),
+                aggregates.get("stddev"),
+                aggregates.get("count"),
+                aggregates.get("p50"),
+                aggregates.get("p95"),
+                aggregates.get("p99"),
+                quality_summary.get("good_samples", 0),
+                quality_summary.get("suspect_samples", 0),
+                quality_summary.get("uncertain_samples", 0),
+                quality_summary.get("bad_samples", 0),
+                quality_summary.get("pct_good", 0.0),
+                json.dumps(payload),
+            ),
+        )
+        return 1
+
+    if payload_format == "event":
+        timestamps = payload.get("timestamps", {})
+        metadata = payload.get("metadata", {})
+        cursor.execute(
+            f"""
+            INSERT INTO {quoted_table} (
+                asset_id, event_type, classification, gateway_time, device_time,
+                previous_state, new_state, metadata, payload
+            ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb)
+            ON CONFLICT (asset_id, event_type, gateway_time)
+            DO UPDATE SET
+                classification = EXCLUDED.classification,
+                device_time = EXCLUDED.device_time,
+                previous_state = EXCLUDED.previous_state,
+                new_state = EXCLUDED.new_state,
+                metadata = EXCLUDED.metadata,
+                payload = EXCLUDED.payload
+            """,
+            (
+                payload.get("asset_id"),
+                payload.get("event_type"),
+                payload.get("classification", "EVENT"),
+                timestamps.get("gateway_time"),
+                timestamps.get("device_time"),
+                json.dumps(payload.get("previous_state", {})),
+                json.dumps(payload.get("new_state", {})),
+                json.dumps(metadata),
+                json.dumps(payload),
+            ),
+        )
+        return 1
+
+    written_rows = 0
+    for reading in payload.get("readings", []):
+        cursor.execute(
+            f"""
+            INSERT INTO {quoted_table} (
+                asset_id, parameter, value, unit, quality, gateway_time, device_time, payload
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            """,
+            (
+                payload.get("asset_id"),
+                reading.get("parameter"),
+                reading.get("value"),
+                reading.get("unit"),
+                reading.get("quality", "GOOD"),
+                payload.get("gateway_time"),
+                reading.get("device_time"),
+                json.dumps(payload),
+            ),
+        )
+        written_rows += 1
+    return written_rows
+
+
+def _dedupe_aggregate_table(cursor, table: str) -> None:
+    quoted_table = f'"{table}"'
+    cursor.execute(
+        f"""
+        DELETE FROM {quoted_table}
+        WHERE id IN (
+            SELECT id
+            FROM (
+                SELECT id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY asset_id, parameter, window_start, window_end
+                           ORDER BY id DESC
+                       ) AS row_num
+                FROM {quoted_table}
+            ) ranked
+            WHERE ranked.row_num > 1
+        );
+        """
+    )
+
+
+def _dedupe_event_table(cursor, table: str) -> None:
+    quoted_table = f'"{table}"'
+    cursor.execute(
+        f"""
+        DELETE FROM {quoted_table}
+        WHERE id IN (
+            SELECT id
+            FROM (
+                SELECT id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY asset_id, event_type, gateway_time
+                           ORDER BY id DESC
+                       ) AS row_num
+                FROM {quoted_table}
+            ) ranked
+            WHERE ranked.row_num > 1
+        );
+        """
+    )
+
+
 def _writer_loop() -> None:
     cfg = _load_config()
 
@@ -102,46 +408,34 @@ def _writer_loop() -> None:
 
         consumer = None
         try:
+            schema = _resolve_schema(cfg["topic"], cfg.get("schema_path"), cfg["message_format"])
             consumer = KafkaConsumer(
                 cfg["topic"],
                 bootstrap_servers=cfg["kafka_bootstrap"],
                 group_id=cfg["group_id"],
                 auto_offset_reset="latest",
                 enable_auto_commit=False,
-                value_deserializer=_SCHEMA.decode,
+                value_deserializer=schema.decode,
             )
 
+            ensured_format: str | None = None
             with psycopg.connect(cfg["db_dsn"], autocommit=True) as conn:
-                with conn.cursor() as cursor:
-                    _ensure_table(cursor, cfg["table"])
-
                 for record in consumer:
                     if _STOP.is_set():
                         break
 
                     payload = record.value
-                    written_rows = 0
-                    quoted_table = f'"{cfg["table"]}"'
+                    payload_format = _payload_format(payload, cfg["message_format"])
                     with conn.cursor() as cursor:
-                        for reading in payload.get("readings", []):
-                            cursor.execute(
-                                f"""
-                                INSERT INTO {quoted_table} (
-                                    asset_id, parameter, value, unit, quality, gateway_time, device_time, payload
-                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-                                """,
-                                (
-                                    payload.get("asset_id"),
-                                    reading.get("parameter"),
-                                    reading.get("value"),
-                                    reading.get("unit"),
-                                    reading.get("quality", "GOOD"),
-                                    payload.get("gateway_time"),
-                                    reading.get("device_time"),
-                                    json.dumps(payload),
-                                ),
-                            )
-                            written_rows += 1
+                        if payload_format != ensured_format:
+                            if payload_format == "aggregate":
+                                _ensure_aggregate_table(cursor, cfg["table"])
+                            elif payload_format == "event":
+                                _ensure_event_table(cursor, cfg["table"])
+                            else:
+                                _ensure_telemetry_table(cursor, cfg["table"])
+                            ensured_format = payload_format
+                        written_rows = _write_payload(cursor, cfg["table"], payload, payload_format)
                     consumer.commit()
                     _STATS["consumed"] += 1
                     _STATS["written"] += written_rows
