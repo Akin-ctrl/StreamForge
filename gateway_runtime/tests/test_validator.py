@@ -104,6 +104,32 @@ class ValidatorModuleAlarmTests(unittest.TestCase):
         pending = next(iter(validator._pending_dlq_syncs.values()))
         self.assertEqual(pending["source_topic"], "telemetry.raw")
 
+    def test_health_reports_pipeline_stage_metrics_and_backpressure(self) -> None:
+        validator = ValidatorModule(
+            bootstrap="kafka:9092",
+            gateway_id="gw-edge-01",
+            rules={"ingress_queue_size": 2, "publish_queue_size": 2, "completion_queue_size": 2},
+        )
+
+        validator._record_stage_processed("ingress", latency_ms=1.5, count=3)
+        validator._record_stage_processed("validation", latency_ms=3.5, count=2)
+        validator._record_stage_blocked("publish")
+        validator._set_backpressure(True, "publish")
+        validator._increment_quality_total("good")
+        validator._increment_emit_total("clean")
+
+        health = validator.health()
+
+        self.assertEqual(health["status"], "degraded")
+        self.assertTrue(health["backpressure"]["active"])
+        self.assertEqual(health["backpressure"]["stage"], "publish")
+        self.assertEqual(health["quality_totals"]["good"], 1)
+        self.assertEqual(health["emit_totals"]["clean"], 1)
+        self.assertEqual(health["pipeline"]["stages"]["ingress"]["processed_total"], 3)
+        self.assertEqual(health["pipeline"]["stages"]["validation"]["processed_total"], 2)
+        self.assertEqual(health["pipeline"]["stages"]["publish"]["blocked_total"], 1)
+        self.assertEqual(health["pipeline"]["queues"]["ingress"]["capacity"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()
