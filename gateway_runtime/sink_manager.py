@@ -58,7 +58,7 @@ class SinkManager:
             "sink_id": config.sink_id,
             "sink_type": config.sink_type,
         }
-        labels.update(self._compose_labels())
+        labels.update(self._compose_labels(config.sink_type))
 
         command = self._command_for(config.sink_type)
 
@@ -180,20 +180,33 @@ class SinkManager:
     def _image_for(sink_type: str) -> str:
         if sink_type in {"timescaledb", "sink-timescaledb", "sink_timescaledb"}:
             return os.getenv("SINK_TIMESCALEDB_IMAGE", "streamforge/gateway_runtime:dev")
+        if sink_type in {"kafka", "sink-kafka", "sink_kafka"}:
+            return os.getenv("SINK_KAFKA_IMAGE", "streamforge/gateway_runtime:dev")
+        if sink_type in {"http", "sink-http", "sink_http"}:
+            return os.getenv("SINK_HTTP_IMAGE", "streamforge/gateway_runtime:dev")
         raise AdapterStartError(f"Unsupported sink type: {sink_type}")
 
     @staticmethod
     def _command_for(sink_type: str) -> list[str]:
         if sink_type in {"timescaledb", "sink-timescaledb", "sink_timescaledb"}:
             return ["python", "-m", "sinks.sink_timescaledb.main"]
+        if sink_type in {"kafka", "sink-kafka", "sink_kafka"}:
+            return ["python", "-m", "sinks.sink_kafka.main"]
+        if sink_type in {"http", "sink-http", "sink_http"}:
+            return ["python", "-m", "sinks.sink_http.main"]
         raise AdapterStartError(f"Unsupported sink type: {sink_type}")
 
     @staticmethod
-    def _compose_labels() -> Dict[str, str]:
+    def _compose_labels(sink_type: str) -> Dict[str, str]:
         project = os.getenv("COMPOSE_PROJECT_NAME") or os.getenv("DOCKER_COMPOSE_PROJECT") or "deploy"
+        service = "sink_timescaledb"
+        if sink_type in {"kafka", "sink-kafka", "sink_kafka"}:
+            service = "sink_kafka"
+        elif sink_type in {"http", "sink-http", "sink_http"}:
+            service = "sink_http"
         return {
             "com.docker.compose.project": project,
-            "com.docker.compose.service": "sink_timescaledb",
+            "com.docker.compose.service": service,
             "com.docker.compose.oneoff": "False",
         }
 
