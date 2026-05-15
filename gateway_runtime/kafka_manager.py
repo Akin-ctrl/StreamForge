@@ -144,10 +144,11 @@ class KafkaManager:
             return
 
         try:
-            container = self._docker_client().containers.get(self._container_name)
+            container = self._find_container(self._docker_client(), self._container_name)
         except Exception:
             return
 
+        self._container_name = container.name
         self._managed_container_id = container.id
         self._managed_by_runtime = self._is_runtime_managed(container)
 
@@ -174,7 +175,8 @@ class KafkaManager:
 
     def _ensure_container(self, client, network: str | None):
         try:
-            container = client.containers.get(self._container_name)
+            container = self._find_container(client, self._container_name)
+            self._container_name = container.name
             self._managed_by_runtime = self._is_runtime_managed(container)
             if container.status != "running":
                 container.start()
@@ -226,10 +228,43 @@ class KafkaManager:
 
         target = self._managed_container_id or self._container_name
         try:
-            container = self._docker_client().containers.get(target)
+            container = self._find_container(self._docker_client(), target)
             return container.status
         except Exception:
             return "missing"
+
+    def _find_container(self, client, target: str):
+        try:
+            return client.containers.get(target)
+        except Exception:
+            pass
+
+        for container in client.containers.list(all=True):
+            if self._matches_container(container, target):
+                return container
+
+        raise KafkaError(f"Kafka container {target} not found")
+
+    @staticmethod
+    def _matches_container(container, target: str) -> bool:
+        if container.name == target:
+            return True
+
+        labels = container.labels or {}
+        if labels.get("com.docker.compose.service") == target:
+            return True
+
+        config = container.attrs.get("Config", {})
+        if config.get("Hostname") == target:
+            return True
+
+        networks = container.attrs.get("NetworkSettings", {}).get("Networks", {})
+        for network in networks.values():
+            aliases = network.get("Aliases") or []
+            if target in aliases:
+                return True
+
+        return False
 
     def _kafka_environment(self) -> Dict[str, str]:
         broker_host = self._broker_host()
