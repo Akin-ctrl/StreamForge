@@ -6,7 +6,7 @@ import signal
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 import os
-from threading import Event
+from threading import Event, Lock
 from typing import Dict
 
 from adapters.adapter_base.kafka_publisher import KafkaPublisher
@@ -25,7 +25,12 @@ class BaseAdapter(ABC):
         """Initialize adapter with validated config."""
         self.config = config
         self._stop_event = Event()
-        self._poll_interval_s = max(self._parse_poll_interval_ms(config.get("poll_interval_ms", 1000)) / 1000.0, 0.0)
+        self._poll_interval_lock = Lock()
+        self._base_poll_interval_s = max(self._parse_poll_interval_ms(config.get("poll_interval_ms", 1000)) / 1000.0, 0.0)
+        self._poll_interval_s = self._base_poll_interval_s
+        self._throttle_mode = "normal"
+        self._throttle_multiplier = 1.0
+        self._throttle_reason: str | None = None
         self._publisher: KafkaPublisher | None = None
         self._adapter_id = str(config.get("adapter_id") or os.getenv("ADAPTER_ID", self.__class__.__name__.lower()))
         self._adapter_type = str(config.get("adapter_type") or os.getenv("ADAPTER_TYPE", self.__class__.__name__))
@@ -42,7 +47,13 @@ class BaseAdapter(ABC):
             "adapter": self.__class__.__name__,
             "connected": False,
             "running": False,
+            "base_poll_interval_ms": int(self._base_poll_interval_s * 1000),
             "poll_interval_ms": int(self._poll_interval_s * 1000),
+            "throttle_mode": self._throttle_mode,
+            "throttle_multiplier": self._throttle_multiplier,
+            "throttle_reason": self._throttle_reason,
+            "throttle_updated_at": None,
+            "throttle_transitions_total": 0,
             "last_poll_at": None,
             "last_publish_at": None,
             "last_publish_topic": initial_topic,
@@ -74,7 +85,7 @@ class BaseAdapter(ABC):
 
             while not self._stop_event.is_set():
                 self.run_once()
-                if self._stop_event.wait(self._poll_interval_s):
+                if self._stop_event.wait(self._effective_poll_interval_s()):
                     break
         except Exception as exc:
             self._set_status("failed", running=False, last_error=str(exc))
@@ -104,6 +115,41 @@ class BaseAdapter(ABC):
     def stop(self) -> None:
         """Request graceful shutdown."""
         self._stop_event.set()
+
+    def set_runtime_throttle(self, mode: str, multiplier: float, reason: str | None = None) -> Dict[str, object]:
+        """Apply a runtime throttle overlay without mutating base config."""
+        normalized_mode = str(mode or "normal").strip().lower()
+        normalized_multiplier = max(float(multiplier or 1.0), 1.0)
+        if normalized_mode == "normal":
+            normalized_multiplier = 1.0
+            reason = None
+
+        with self._poll_interval_lock:
+            changed = (
+                normalized_mode != self._throttle_mode
+                or normalized_multiplier != self._throttle_multiplier
+                or reason != self._throttle_reason
+            )
+            self._throttle_mode = normalized_mode
+            self._throttle_multiplier = normalized_multiplier
+            self._throttle_reason = reason
+            self._poll_interval_s = self._base_poll_interval_s * self._throttle_multiplier
+            self._health["poll_interval_ms"] = int(self._poll_interval_s * 1000)
+            self._health["throttle_mode"] = self._throttle_mode
+            self._health["throttle_multiplier"] = self._throttle_multiplier
+            self._health["throttle_reason"] = self._throttle_reason
+            self._health["throttle_updated_at"] = self._utcnow()
+            if changed:
+                self._health["throttle_transitions_total"] = int(self._health.get("throttle_transitions_total", 0)) + 1
+
+        return {
+            "status": "ok",
+            "adapter_id": self._adapter_id,
+            "throttle_mode": self._throttle_mode,
+            "throttle_multiplier": self._throttle_multiplier,
+            "effective_poll_interval_ms": int(self._effective_poll_interval_s() * 1000),
+            "reason": self._throttle_reason,
+        }
 
     @abstractmethod
     def connect(self) -> None:
@@ -154,6 +200,14 @@ class BaseAdapter(ABC):
             f"adapter_published_messages_total{{{labels}}} {int(health.get('published_messages', 0))}",
             "# TYPE adapter_publish_failures_total counter",
             f"adapter_publish_failures_total{{{labels}}} {int(health.get('publish_failures', 0))}",
+            "# TYPE adapter_poll_interval_ms gauge",
+            f"adapter_poll_interval_ms{{{labels}}} {int(health.get('poll_interval_ms', 0))}",
+            "# TYPE adapter_throttle_multiplier gauge",
+            f"adapter_throttle_multiplier{{{labels}}} {float(health.get('throttle_multiplier', 1.0))}",
+            "# TYPE adapter_throttle_active gauge",
+            f"adapter_throttle_active{{{labels}}} {1 if str(health.get('throttle_mode', 'normal')) != 'normal' else 0}",
+            "# TYPE adapter_throttle_transitions_total counter",
+            f"adapter_throttle_transitions_total{{{labels}}} {int(health.get('throttle_transitions_total', 0))}",
         ]
         for metric_name in ("modbus_connect_failures", "modbus_read_failures", "modbus_reconnects"):
             if metric_name in health:
@@ -194,3 +248,7 @@ class BaseAdapter(ABC):
     @staticmethod
     def _utcnow() -> str:
         return datetime.now(timezone.utc).isoformat()
+
+    def _effective_poll_interval_s(self) -> float:
+        with self._poll_interval_lock:
+            return self._poll_interval_s

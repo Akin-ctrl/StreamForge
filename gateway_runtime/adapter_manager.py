@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import socket
+import urllib.error
+import urllib.request
 from typing import Dict, List
 
 from gateway_runtime.adapter_factory import AdapterFactory
@@ -21,6 +23,14 @@ class AdapterManager:
         """Initialize manager with adapter factory."""
         self._factory = factory
         self._containers: Dict[str, str] = {}
+        self._container_names: Dict[str, str] = {}
+        self._throttle_state: Dict[str, Dict[str, object]] = {}
+        self._last_throttle_policy: Dict[str, object] = {
+            "mode": "normal",
+            "multiplier": 1.0,
+            "reason": None,
+            "updated_at": None,
+        }
         self._client = None
         self._network = None
 
@@ -50,6 +60,7 @@ class AdapterManager:
                 "adapter_type": config.adapter_type,
             }
             labels.update(self._compose_labels())
+            command = self._command_for(config.adapter_type)
 
             container = self._ensure_container(
                 client=client,
@@ -58,9 +69,12 @@ class AdapterManager:
                 environment=env,
                 network=network,
                 labels=labels,
+                command=command,
             )
 
             self._containers[config.adapter_id] = container.id
+            self._container_names[config.adapter_id] = container.name
+            self._throttle_state[config.adapter_id] = self._default_throttle_state()
             print(f"adapter_manager started {config.adapter_id} as {container.name}", flush=True)
 
     def stop_all(self) -> None:
@@ -69,6 +83,8 @@ class AdapterManager:
         for adapter_id, container_id in list(self._containers.items()):
             self._stop_container(client, container_id)
             self._containers.pop(adapter_id, None)
+            self._container_names.pop(adapter_id, None)
+            self._throttle_state.pop(adapter_id, None)
 
     def start_adapter(self, config: AdapterConfig) -> None:
         """Start a single adapter with given config."""
@@ -96,6 +112,7 @@ class AdapterManager:
             "adapter_type": config.adapter_type,
         }
         labels.update(self._compose_labels())
+        command = self._command_for(config.adapter_type)
         
         container = self._ensure_container(
             client=client,
@@ -104,9 +121,12 @@ class AdapterManager:
             environment=env,
             network=network,
             labels=labels,
+            command=command,
         )
         
         self._containers[config.adapter_id] = container.id
+        self._container_names[config.adapter_id] = container.name
+        self._throttle_state[config.adapter_id] = self._default_throttle_state()
         print(f"adapter_manager started {config.adapter_id} as {container.name}", flush=True)
 
     def stop_adapter(self, adapter_id: str) -> None:
@@ -118,6 +138,8 @@ class AdapterManager:
         container_id = self._containers[adapter_id]
         self._stop_container(client, container_id)
         self._containers.pop(adapter_id, None)
+        self._container_names.pop(adapter_id, None)
+        self._throttle_state.pop(adapter_id, None)
         print(f"adapter_manager stopped {adapter_id}", flush=True)
 
     def restart(self, adapter_id: str) -> None:
@@ -150,7 +172,20 @@ class AdapterManager:
         return {
             "status": overall,
             "adapters": adapter_states,
+            "throttle": {
+                "policy": dict(self._last_throttle_policy),
+                "adapters": {adapter_id: dict(state) for adapter_id, state in self._throttle_state.items()},
+            },
         }
+
+    def apply_throttle_policy(self, policy: Dict[str, object]) -> None:
+        """Push the current runtime throttle policy to all running adapters."""
+        self._last_throttle_policy = dict(policy)
+        if not self._containers:
+            return
+
+        for adapter_id in list(self._containers):
+            self._apply_throttle_to_adapter(adapter_id, policy)
 
     def _docker_client(self):
         if self._client is None:
@@ -191,6 +226,7 @@ class AdapterManager:
         environment: Dict[str, str],
         network: str,
         labels: Dict[str, str],
+        command: list[str],
     ):
         try:
             container = client.containers.get(name)
@@ -205,6 +241,7 @@ class AdapterManager:
             environment=environment,
             network=network,
             labels=labels,
+            command=command,
             restart_policy={"Name": "unless-stopped"},
         )
 
@@ -223,7 +260,14 @@ class AdapterManager:
     @staticmethod
     def _image_for(adapter_type: str) -> str:
         if adapter_type == "modbus_tcp":
-            return "streamforge/adapter_modbus_tcp:dev"
+            return os.getenv("ADAPTER_MODBUS_TCP_IMAGE", "streamforge/gateway_runtime:dev")
+
+        raise AdapterStartError(f"Unsupported adapter type: {adapter_type}")
+
+    @staticmethod
+    def _command_for(adapter_type: str) -> list[str]:
+        if adapter_type == "modbus_tcp":
+            return ["python", "-m", "adapters.adapter_modbus_tcp.main"]
 
         raise AdapterStartError(f"Unsupported adapter type: {adapter_type}")
 
@@ -246,3 +290,48 @@ class AdapterManager:
             "ADAPTER_HEALTH_PORT": os.getenv("ADAPTER_HEALTH_PORT", "8080"),
         }
         env.update({key: value for key, value in shared.items() if value != ""})
+
+    def _apply_throttle_to_adapter(self, adapter_id: str, policy: Dict[str, object]) -> None:
+        container_name = self._container_names.get(adapter_id) or self._container_name(adapter_id)
+        payload = json.dumps(
+            {
+                "mode": str(policy.get("mode", "normal")),
+                "multiplier": float(policy.get("multiplier", 1.0)),
+                "reason": policy.get("reason"),
+            }
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            self._throttle_url(container_name),
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=3) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            self._throttle_state[adapter_id] = {
+                "status": "error",
+                "error": str(exc),
+                "updated_at": None,
+            }
+            return
+
+        body["status"] = "ok"
+        self._throttle_state[adapter_id] = body
+
+    @staticmethod
+    def _throttle_url(container_name: str) -> str:
+        port = int(os.getenv("ADAPTER_HEALTH_PORT", "8080"))
+        return f"http://{container_name}:{port}/control/throttle"
+
+    @staticmethod
+    def _default_throttle_state() -> Dict[str, object]:
+        return {
+            "status": "pending",
+            "throttle_mode": "normal",
+            "throttle_multiplier": 1.0,
+            "effective_poll_interval_ms": None,
+            "reason": None,
+            "updated_at": None,
+        }
