@@ -46,6 +46,39 @@ class _AdapterHandler(BaseHTTPRequestHandler):
         self.send_response(404)
         self.end_headers()
 
+    def do_POST(self) -> None:  # noqa: N802
+        adapter = self.server.adapter  # type: ignore[attr-defined]
+
+        if self.path != "/control/throttle":
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            raw_body = self.rfile.read(length) if length > 0 else b"{}"
+            payload = json.loads(raw_body.decode("utf-8"))
+            response = adapter.set_runtime_throttle(
+                mode=str(payload.get("mode", "normal")),
+                multiplier=float(payload.get("multiplier", 1.0)),
+                reason=payload.get("reason"),
+            )
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            body = json.dumps({"status": "error", "error": str(exc)}).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        body = json.dumps(response).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
         return
 

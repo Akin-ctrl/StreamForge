@@ -11,8 +11,8 @@ from adapters.adapter_base.base_adapter import BaseAdapter
 class RecordingAdapter(BaseAdapter):
     """Concrete adapter used to verify the template lifecycle."""
 
-    def __init__(self) -> None:
-        super().__init__({"poll_interval_ms": 0})
+    def __init__(self, poll_interval_ms: int = 0) -> None:
+        super().__init__({"poll_interval_ms": poll_interval_ms})
         self.events: list[str] = []
         self.publish_count = 0
 
@@ -102,6 +102,31 @@ class BaseAdapterLifecycleTests(unittest.TestCase):
         adapter._poll_interval_s = adapter._parse_poll_interval_ms(adapter.config["poll_interval_ms"]) / 1000.0
 
         self.assertEqual(adapter._poll_interval_s, 1.0)
+
+    def test_runtime_throttle_updates_effective_poll_interval_and_health(self) -> None:
+        adapter = RecordingAdapter(poll_interval_ms=1000)
+
+        response = adapter.set_runtime_throttle(mode="high", multiplier=5.0, reason="validator_backpressure")
+
+        self.assertEqual(response["throttle_mode"], "high")
+        self.assertEqual(response["effective_poll_interval_ms"], 5000)
+        health = adapter.health()
+        self.assertEqual(health["base_poll_interval_ms"], 1000)
+        self.assertEqual(health["poll_interval_ms"], 5000)
+        self.assertEqual(health["throttle_mode"], "high")
+        self.assertEqual(health["throttle_multiplier"], 5.0)
+        self.assertEqual(health["throttle_reason"], "validator_backpressure")
+        self.assertEqual(health["throttle_transitions_total"], 1)
+
+    def test_metrics_expose_throttle_state(self) -> None:
+        adapter = RecordingAdapter(poll_interval_ms=1000)
+        adapter.set_runtime_throttle(mode="elevated", multiplier=2.0, reason="queue_pressure")
+
+        metrics = adapter.metrics()
+
+        self.assertIn("adapter_throttle_multiplier", metrics)
+        self.assertIn("adapter_throttle_active", metrics)
+        self.assertIn("adapter_poll_interval_ms", metrics)
 
 
 if __name__ == "__main__":
