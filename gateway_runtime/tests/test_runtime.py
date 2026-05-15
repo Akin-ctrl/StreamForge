@@ -17,6 +17,8 @@ def _gateway_config(version: str) -> GatewayConfig:
         adapters=[],
         sinks=[],
         validation={"enabled": False},
+        events={"enabled": False},
+        aggregates={"enabled": False},
         version=version,
     )
 
@@ -93,6 +95,7 @@ class FakeKafkaManager:
 class FakeAdapterManager:
     def __init__(self) -> None:
         self.started = []
+        self.policies: list[dict[str, object]] = []
 
     def start_all(self, adapters) -> None:
         self.started = list(adapters)
@@ -108,6 +111,9 @@ class FakeAdapterManager:
 
     def health(self) -> dict[str, object]:
         return {"status": "healthy"}
+
+    def apply_throttle_policy(self, policy: dict[str, object]) -> None:
+        self.policies.append(dict(policy))
 
 
 class FakeSinkManager:
@@ -133,6 +139,62 @@ class FakeHealthReporter:
 
     def snapshot(self) -> dict[str, object]:
         return {"status": "healthy", "components": {}}
+
+
+class FakeValidator:
+    def health(self) -> dict[str, object]:
+        return {
+            "status": "healthy",
+            "backpressure": {"active": True, "events_total": 2},
+            "quality_totals": {"good": 5, "suspect": 1, "uncertain": 1, "bad": 2},
+            "emit_totals": {"clean": 5, "dlq": 2, "alarm": 1},
+            "pipeline": {
+                "queues": {
+                    "ingress": {"depth": 3, "capacity": 50},
+                    "publish": {"depth": 2, "capacity": 50},
+                    "completion": {"depth": 1, "capacity": 50},
+                },
+                "stages": {
+                    "ingress": {"processed_total": 10, "errors_total": 1, "blocked_total": 2, "avg_latency_ms": 1.5, "max_latency_ms": 4.0},
+                    "validation": {"processed_total": 8, "errors_total": 0, "blocked_total": 0, "avg_latency_ms": 2.5, "max_latency_ms": 5.0},
+                    "publish": {"processed_total": 7, "errors_total": 0, "blocked_total": 1, "avg_latency_ms": 3.5, "max_latency_ms": 6.0},
+                    "control_sync": {"processed_total": 4, "errors_total": 0, "blocked_total": 0, "avg_latency_ms": 4.5, "max_latency_ms": 7.0},
+                },
+            },
+        }
+
+
+class FakeAggregator:
+    def health(self) -> dict[str, object]:
+        return {
+            "status": "healthy",
+            "samples_total": 12,
+            "emitted_totals": {"1s": 4, "1min": 1},
+            "open_windows": {"1s": 0, "1min": 1},
+        }
+
+
+class FakeEventValidator:
+    def health(self) -> dict[str, object]:
+        return {
+            "status": "healthy",
+            "backpressure": {"active": False, "events_total": 1},
+            "validated_totals": {"accepted": 4, "rejected": 1},
+            "emit_totals": {"clean": 4, "dlq": 1},
+            "pipeline": {
+                "queues": {
+                    "ingress": {"depth": 1, "capacity": 10},
+                    "publish": {"depth": 0, "capacity": 10},
+                    "completion": {"depth": 0, "capacity": 10},
+                },
+                "stages": {
+                    "ingress": {"processed_total": 5, "errors_total": 0, "blocked_total": 0, "avg_latency_ms": 1.0, "max_latency_ms": 2.0},
+                    "validation": {"processed_total": 5, "errors_total": 0, "blocked_total": 0, "avg_latency_ms": 1.5, "max_latency_ms": 2.5},
+                    "publish": {"processed_total": 5, "errors_total": 0, "blocked_total": 0, "avg_latency_ms": 2.0, "max_latency_ms": 3.0},
+                    "control_sync": {"processed_total": 1, "errors_total": 0, "blocked_total": 0, "avg_latency_ms": 3.0, "max_latency_ms": 3.0},
+                },
+            },
+        }
 
 
 class GatewayRuntimePollingTests(unittest.IsolatedAsyncioTestCase):
@@ -229,6 +291,105 @@ class GatewayRuntimePollingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(config.version, "provisioned")
         self.assertEqual(runtime._startup_status, "configured")
         self.assertEqual(sleep_mock.call_count, 1)
+
+    async def test_metrics_snapshot_exposes_validator_pipeline_metrics(self) -> None:
+        repo = PollingControlPlaneRepo()
+        runtime = GatewayRuntime(
+            config_repo=repo,
+            kafka=FakeKafkaManager(),
+            adapters=FakeAdapterManager(),
+            sinks=FakeSinkManager(),
+            health=FakeHealthReporter(),
+        )
+        runtime._current_config = _gateway_config("metrics")
+        runtime._validator = FakeValidator()
+        runtime._aggregator = FakeAggregator()
+
+        try:
+            metrics = runtime.metrics_snapshot()
+        finally:
+            repo.cleanup()
+
+        self.assertIn("gateway_validator_backpressure_active 1", metrics)
+        self.assertIn("gateway_validator_ingress_queue_depth 3", metrics)
+        self.assertIn("gateway_validator_quality_bad_total 2", metrics)
+        self.assertIn("gateway_validator_publish_processed_total 7", metrics)
+        self.assertIn("gateway_aggregator_up 1", metrics)
+        self.assertIn("gateway_aggregator_samples_total 12", metrics)
+        self.assertIn("gateway_aggregator_1s_emitted_total 4", metrics)
+
+    async def test_metrics_snapshot_exposes_event_validator_pipeline_metrics(self) -> None:
+        repo = PollingControlPlaneRepo()
+        runtime = GatewayRuntime(
+            config_repo=repo,
+            kafka=FakeKafkaManager(),
+            adapters=FakeAdapterManager(),
+            sinks=FakeSinkManager(),
+            health=FakeHealthReporter(),
+        )
+        runtime._current_config = _gateway_config("metrics-events")
+        runtime._validator = FakeValidator()
+        runtime._event_validator = FakeEventValidator()
+        runtime._aggregator = FakeAggregator()
+
+        try:
+            metrics = runtime.metrics_snapshot()
+        finally:
+            repo.cleanup()
+
+        self.assertIn("gateway_event_validator_up 1", metrics)
+        self.assertIn("gateway_event_validator_accepted_total 4", metrics)
+        self.assertIn("gateway_event_validator_clean_emitted_total 4", metrics)
+        self.assertIn("gateway_event_validator_validation_processed_total 5", metrics)
+
+    async def test_runtime_computes_elevated_adapter_throttle_from_validator_pressure(self) -> None:
+        repo = PollingControlPlaneRepo()
+        adapters = FakeAdapterManager()
+        runtime = GatewayRuntime(
+            config_repo=repo,
+            kafka=FakeKafkaManager(),
+            adapters=adapters,
+            sinks=FakeSinkManager(),
+            health=FakeHealthReporter(),
+        )
+        runtime._validator = FakeValidator()
+
+        try:
+            policy = runtime._compute_adapter_throttle_policy()
+            runtime._reconcile_adapter_throttle_policy()
+        finally:
+            repo.cleanup()
+
+        self.assertEqual(policy["mode"], "elevated")
+        self.assertEqual(policy["multiplier"], 2.0)
+        self.assertTrue(policy["active"])
+        self.assertGreaterEqual(len(adapters.policies), 1)
+        self.assertEqual(adapters.policies[-1]["mode"], "elevated")
+
+    async def test_runtime_uses_critical_throttle_when_overflow_blocks(self) -> None:
+        class FakeOverflow:
+            def snapshot(self) -> dict[str, object]:
+                return {"status": "failed", "stage": "block", "blocked": True}
+
+        repo = PollingControlPlaneRepo()
+        runtime = GatewayRuntime(
+            config_repo=repo,
+            kafka=FakeKafkaManager(),
+            adapters=FakeAdapterManager(),
+            sinks=FakeSinkManager(),
+            health=FakeHealthReporter(),
+            overflow=FakeOverflow(),
+        )
+        runtime._validator = FakeValidator()
+
+        try:
+            policy = runtime._compute_adapter_throttle_policy()
+        finally:
+            repo.cleanup()
+
+        self.assertEqual(policy["mode"], "critical")
+        self.assertEqual(policy["multiplier"], 10.0)
+        self.assertEqual(policy["reason"], "overflow_blocked")
 
 
 if __name__ == "__main__":

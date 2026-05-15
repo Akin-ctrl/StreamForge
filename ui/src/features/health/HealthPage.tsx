@@ -41,6 +41,34 @@ function componentEntries(gateway: GatewayItem): Array<[string, string]> {
   return Object.entries(components).map(([name, details]) => [name, details.status || 'unknown'])
 }
 
+function validatorDetails(gateway: GatewayItem): Record<string, unknown> | null {
+  const runtimeHealth = gateway.runtime_health as {
+    components?: Record<string, { details?: Record<string, unknown> }>
+  } | null
+  const details = runtimeHealth?.components?.validator?.details
+  return details && typeof details === 'object' ? details : null
+}
+
+function validatorQueues(gateway: GatewayItem): Array<[string, { depth?: number; capacity?: number }]> {
+  const details = validatorDetails(gateway)
+  const queues = details?.pipeline
+  if (!queues || typeof queues !== 'object') {
+    return []
+  }
+  const queueMap = (queues as { queues?: Record<string, { depth?: number; capacity?: number }> }).queues || {}
+  return Object.entries(queueMap)
+}
+
+function validatorStages(gateway: GatewayItem): Array<[string, Record<string, unknown>]> {
+  const details = validatorDetails(gateway)
+  const pipeline = details?.pipeline
+  if (!pipeline || typeof pipeline !== 'object') {
+    return []
+  }
+  const stageMap = (pipeline as { stages?: Record<string, Record<string, unknown>> }).stages || {}
+  return Object.entries(stageMap)
+}
+
 export function HealthPage() {
   const { timezone } = useOperatorPreferences()
   const [health, setHealth] = useState<HealthResponse | null>(null)
@@ -123,6 +151,9 @@ export function HealthPage() {
             {gateways.map((gateway) => {
               const metrics = gateway.system_metrics || {}
               const components = componentEntries(gateway)
+              const validator = validatorDetails(gateway)
+              const validatorQueueRows = validatorQueues(gateway)
+              const validatorStageRows = validatorStages(gateway)
               return (
                 <article className="card gateway-health-card" key={gateway.gateway_id}>
                   <div className="page-header">
@@ -201,6 +232,54 @@ export function HealthPage() {
                       </div>
                     </div>
                   </div>
+
+                  {validator && (
+                    <div className="section-grid">
+                      <div>
+                        <strong>Validator Pipeline</strong>
+                        <div className="component-grid">
+                          <div className="component-pill">
+                            <strong>Backpressure</strong>: {(validator.backpressure as { active?: boolean } | undefined)?.active ? 'active' : 'clear'}
+                          </div>
+                          <div className="component-pill">
+                            <strong>Quality</strong>: good {((validator.quality_totals as Record<string, number> | undefined)?.good) ?? 0}, bad{' '}
+                            {((validator.quality_totals as Record<string, number> | undefined)?.bad) ?? 0}
+                          </div>
+                          <div className="component-pill">
+                            <strong>Emits</strong>: clean {((validator.emit_totals as Record<string, number> | undefined)?.clean) ?? 0}, dlq{' '}
+                            {((validator.emit_totals as Record<string, number> | undefined)?.dlq) ?? 0}
+                          </div>
+                        </div>
+                      </div>
+
+                      {validatorQueueRows.length > 0 && (
+                        <div>
+                          <strong>Queue Depth</strong>
+                          <div className="component-grid">
+                            {validatorQueueRows.map(([name, queue]) => (
+                              <div className="component-pill" key={`${gateway.gateway_id}-queue-${name}`}>
+                                <strong>{name}</strong>: {queue.depth ?? 0}/{queue.capacity ?? 0}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {validatorStageRows.length > 0 && (
+                        <div>
+                          <strong>Stage Metrics</strong>
+                          <div className="component-grid">
+                            {validatorStageRows.map(([name, stage]) => (
+                              <div className="component-pill" key={`${gateway.gateway_id}-stage-${name}`}>
+                                <strong>{name}</strong>: {String(stage.status ?? 'unknown')} | processed {Number(stage.processed_total ?? 0)} | errors{' '}
+                                {Number(stage.errors_total ?? 0)}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </article>
               )
             })}
