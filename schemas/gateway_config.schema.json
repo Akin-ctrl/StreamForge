@@ -20,6 +20,12 @@
     "validation": {
       "type": "object"
     },
+    "events": {
+      "type": "object"
+    },
+    "aggregates": {
+      "type": "object"
+    },
     "sinks": {
       "type": "array",
       "items": {
