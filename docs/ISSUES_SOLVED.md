@@ -2,7 +2,7 @@
 
 This file tracks issues that have been completed and moved out of active queues.
 
-Last updated: 2026-03-28
+Last updated: 2026-05-14
 
 ---
 
@@ -24,6 +24,30 @@ Last updated: 2026-03-28
 | Runtime-managed embedded Kafka lifecycle gap | ✅ Solved | Added local Kafka auto-manage/supervision in runtime manager. | `gateway_runtime/kafka_manager.py` |
 | Control-plane config cache semantics gap | ✅ Solved | Added cache-first startup + refresh + cache persistence behavior. | `gateway_runtime/config.py`, `gateway_runtime/runtime.py` |
 | Explicit circuit breaker strategy gap | ✅ Solved | Added reusable circuit breaker + runtime/control-plane/sink integration. | `gateway_runtime/circuit_breaker.py`, `gateway_runtime/config.py`, `sinks/sink_timescaledb/main.py` |
+| Validator offset durability gap | ✅ Solved | Validator now commits Kafka offsets only after clean-topic/DLQ durability. | `gateway_runtime/validator.py` |
+| Sink SQL identifier safety gap | ✅ Solved | TimescaleDB sink validates and safely renders configured table identifiers. | `sinks/sink_timescaledb/main.py` |
+| Gateway status/approval consistency gap | ✅ Solved | Gateway update paths now reconcile and enforce `status`/`approved` invariants server-side. | `control-plane/app/routers/gateways.py` |
+
+---
+
+## Resolved from Runtime Architecture Review (2026-05)
+
+| Issue | Status | Resolution Summary | Evidence |
+|------|--------|--------------------|----------|
+| Validator execution path under-isolated | ✅ Solved | Refactored validator into staged in-process workers instead of one long loop. | `gateway_runtime/validator.py` |
+| No bounded internal stage handoff | ✅ Solved | Added bounded ingress/publish/completion queues between validator stages. | `gateway_runtime/validator.py` |
+| No explicit runtime backpressure state | ✅ Solved (baseline) | Added queue saturation handling, blocked counters, and explicit backpressure reporting. | `gateway_runtime/validator.py`, `gateway_runtime/runtime.py` |
+| No per-stage runtime observability | ✅ Solved | Added per-stage counters, latency metrics, queue depth, emit totals, and health snapshots. | `gateway_runtime/validator.py`, `gateway_runtime/runtime.py` |
+| Health UI too shallow for validator pipeline visibility | ✅ Solved | Health UI now shows validator queues, stage states, and backpressure details. | `ui/src/features/health/HealthPage.tsx` |
+| Missing in-runtime aggregator and aggregate topics | ✅ Solved | Added gateway-local aggregator module with Avro aggregate publishing to `telemetry.1s` and `telemetry.1min`, plus runtime health and metrics exposure. | `gateway_runtime/aggregator.py`, `gateway_runtime/runtime.py`, `schemas/telemetry_aggregate.avsc` |
+| Aggregate topics were not persisted to TimescaleDB | ✅ Solved | Added explicit TimescaleDB sink support for aggregate payloads and wired separate sink configs for `telemetry.1s` and `telemetry.1min`. | `sinks/sink_timescaledb/main.py`, `deploy/gateway_config.sample.json` |
+| Aggregate window rows duplicated on restart/replay | ✅ Solved | Aggregate tables now dedupe historical duplicate windows, enforce a unique window key, and upsert by `(asset_id, parameter, window_start, window_end)`. | `sinks/sink_timescaledb/main.py`, `sinks/tests/test_sink_timescaledb.py` |
+| Managed adapter startup depended on missing dedicated dev image | ✅ Solved | Adapter manager now launches adapters with explicit commands and configurable image selection compatible with the dev stack. | `gateway_runtime/adapter_manager.py`, `deploy/docker-compose.dev.yml` |
+| Fresh-stack end-to-end verification gaps | ✅ Solved | Live stack was revalidated from Modbus simulator through Kafka, validator, alarms/DLQ, and TimescaleDB. | `deploy/docker-compose.dev.yml`, `gateway_runtime/validator.py`, `sinks/sink_timescaledb/main.py` |
+| UI/control-plane startup race caused signup-time 502s | ✅ Solved | UI now waits for `control_plane` health instead of mere process start. | `deploy/docker-compose.dev.yml` |
+| Overflow admin actions failed against external Compose Kafka | ✅ Solved | Kafka container discovery now resolves Compose service/alias-backed Kafka containers correctly for overflow admin operations. | `gateway_runtime/kafka_manager.py`, `gateway_runtime/tests/test_kafka_manager.py` |
+| Overflow evict stage failed when aggregate topics were absent | ✅ Solved | Optional aggregate-topic retention updates are now tolerated until the aggregate topics exist. | `gateway_runtime/overflow.py`, `gateway_runtime/tests/test_overflow.py` |
+| Overflow recovery left stale Kafka topic overrides after restart | ✅ Solved | Overflow now restores topic defaults on first normal evaluation after restart, not only on an in-process stage transition. | `gateway_runtime/overflow.py`, `gateway_runtime/tests/test_overflow.py` |
 
 ---
 
