@@ -27,6 +27,10 @@ class SinkManagerMetadataTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=False):
             self.assertEqual(SinkManager._image_for("http"), "streamforge/gateway_runtime:dev")
 
+    def test_alert_router_defaults_to_runtime_image_for_dev_stack(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            self.assertEqual(SinkManager._image_for("alert_router"), "streamforge/gateway_runtime:dev")
+
     def test_kafka_launch_command_is_explicit(self) -> None:
         self.assertEqual(
             SinkManager._command_for("kafka"),
@@ -39,6 +43,12 @@ class SinkManagerMetadataTests(unittest.TestCase):
             ["python", "-m", "sinks.sink_http.main"],
         )
 
+    def test_alert_router_launch_command_is_explicit(self) -> None:
+        self.assertEqual(
+            SinkManager._command_for("alert_router"),
+            ["python", "-m", "sinks.sink_alert_router.main"],
+        )
+
     def test_kafka_compose_service_label_matches_sink(self) -> None:
         labels = SinkManager._compose_labels("kafka")
         self.assertEqual(labels["com.docker.compose.service"], "sink_kafka")
@@ -46,6 +56,10 @@ class SinkManagerMetadataTests(unittest.TestCase):
     def test_http_compose_service_label_matches_sink(self) -> None:
         labels = SinkManager._compose_labels("http")
         self.assertEqual(labels["com.docker.compose.service"], "sink_http")
+
+    def test_alert_router_compose_service_label_matches_sink(self) -> None:
+        labels = SinkManager._compose_labels("alert_router")
+        self.assertEqual(labels["com.docker.compose.service"], "sink_alert_router")
 
     def test_unsupported_sink_type_raises(self) -> None:
         with self.assertRaises(AdapterStartError):
