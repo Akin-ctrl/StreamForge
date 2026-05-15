@@ -35,6 +35,8 @@ class RecordingOverflowManager(OverflowManager):
         return self.fake_usage
 
     def _apply_topic_config(self, topic: str, configs: dict[str, str]) -> None:
+        if topic in {"telemetry.1s", "telemetry.1min"} and getattr(self, "raise_optional_unknown", False):
+            raise RuntimeError("UnknownTopicOrPartitionException")
         self.events.append({"kind": "topic_config", "topic": topic, "configs": dict(configs)})
 
     def _restore_topic_defaults(self) -> None:
@@ -45,6 +47,18 @@ class RecordingOverflowManager(OverflowManager):
 
 
 class OverflowManagerTests(unittest.TestCase):
+    def test_first_normal_evaluation_restores_topic_defaults(self) -> None:
+        manager = RecordingOverflowManager()
+        manager.fake_usage = 65.0
+
+        manager.evaluate()
+
+        self.assertIn({"kind": "restore"}, manager.events)
+        self.assertIn(
+            {"kind": "event", "stage": "normal", "usage": 65.0, "action": "restored", "topic": None},
+            manager.events,
+        )
+
     def test_block_stage_stops_adapters_and_normal_stage_restarts_them(self) -> None:
         manager = RecordingOverflowManager()
         adapters = [AdapterConfig(adapter_id="a-1", adapter_type="modbus_tcp", config={})]
@@ -71,6 +85,24 @@ class OverflowManagerTests(unittest.TestCase):
 
         self.assertIn(
             {"kind": "topic_config", "topic": "telemetry.raw", "configs": {"retention.ms": "3600000"}},
+            manager.events,
+        )
+
+    def test_evict_stage_tolerates_missing_optional_aggregate_topics(self) -> None:
+        manager = RecordingOverflowManager()
+        manager.raise_optional_unknown = True
+        manager.fake_usage = 92.0
+
+        manager.evaluate()
+
+        self.assertEqual(manager.snapshot()["stage"], "evict")
+        self.assertEqual(manager.snapshot()["last_error"], None)
+        self.assertIn(
+            {"kind": "topic_config", "topic": "telemetry.raw", "configs": {"retention.ms": "300000"}},
+            manager.events,
+        )
+        self.assertIn(
+            {"kind": "event", "stage": "evict", "usage": 92.0, "action": "priority_evicting", "topic": "telemetry.raw"},
             manager.events,
         )
 

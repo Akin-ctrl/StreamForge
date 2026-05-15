@@ -41,6 +41,7 @@ class OverflowManager:
         self._block_threshold = float(os.getenv("OVERFLOW_BLOCK_THRESHOLD_PERCENT", "95"))
         self._desired_adapters: list[AdapterConfig] = []
         self._stage = "normal"
+        self._evaluated = False
         self._blocked = False
         self._last_action: str | None = None
         self._last_error: str | None = None
@@ -52,7 +53,7 @@ class OverflowManager:
     def evaluate(self) -> None:
         usage = self._disk_usage_percent()
         target_stage = self._stage_for_usage(usage)
-        if target_stage == self._stage:
+        if self._evaluated and target_stage == self._stage:
             return
 
         try:
@@ -63,6 +64,7 @@ class OverflowManager:
             logger.exception("overflow stage transition failed")
         finally:
             self._stage = target_stage
+            self._evaluated = True
 
     def snapshot(self) -> dict[str, object]:
         usage = self._disk_usage_percent()
@@ -109,8 +111,8 @@ class OverflowManager:
 
         if stage == "evict":
             self._apply_topic_config("telemetry.raw", {"retention.ms": str(5 * 60 * 1000)})
-            self._apply_topic_config("telemetry.1s", {"retention.ms": str(30 * 60 * 1000)})
-            self._apply_topic_config("telemetry.1min", {"retention.ms": str(6 * 60 * 60 * 1000)})
+            self._apply_optional_topic_config("telemetry.1s", {"retention.ms": str(30 * 60 * 1000)})
+            self._apply_optional_topic_config("telemetry.1min", {"retention.ms": str(6 * 60 * 60 * 1000)})
             self._emit_event(stage=stage, usage=usage, action="priority_evicting", topic="telemetry.raw")
             self._last_action = "priority_evicting"
             return
@@ -160,6 +162,14 @@ class OverflowManager:
                 config_str,
             ]
         )
+
+    def _apply_optional_topic_config(self, topic: str, configs: dict[str, str]) -> None:
+        try:
+            self._apply_topic_config(topic, configs)
+        except RuntimeError as exc:
+            if "UnknownTopicOrPartitionException" not in str(exc):
+                raise
+            logger.info("optional overflow topic %s is not present; skipping config update", topic)
 
     def _restore_topic_defaults(self) -> None:
         for topic in ("telemetry.raw", "telemetry.1s", "telemetry.1min"):
