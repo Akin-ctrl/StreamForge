@@ -150,6 +150,11 @@ services:
       # Control-plane polling configuration (used for dynamic config)
       CONTROL_PLANE_URL: http://control_plane:8000
       CONTROL_PLANE_GATEWAY_ID: gateway-demo-01
+      OVERFLOW_CHECK_INTERVAL: ${OVERFLOW_CHECK_INTERVAL:-60}
+      OVERFLOW_COMPRESS_THRESHOLD_PERCENT: ${OVERFLOW_COMPRESS_THRESHOLD_PERCENT:-70}
+      OVERFLOW_DOWNSAMPLE_THRESHOLD_PERCENT: ${OVERFLOW_DOWNSAMPLE_THRESHOLD_PERCENT:-80}
+      OVERFLOW_EVICT_THRESHOLD_PERCENT: ${OVERFLOW_EVICT_THRESHOLD_PERCENT:-90}
+      OVERFLOW_BLOCK_THRESHOLD_PERCENT: ${OVERFLOW_BLOCK_THRESHOLD_PERCENT:-95}
       # Optional: preset gateway JWT token. If unset, gateway_runtime will request one automatically.
       # CONTROL_PLANE_TOKEN: <gateway-jwt-token>
       # GATEWAY_CONFIG_CACHE: Local cache path for control-plane config used for offline restarts
@@ -171,6 +176,7 @@ services:
       # Kafka and runtime configuration
       KAFKA_BOOTSTRAP: kafka:9092
       SCHEMA_REGISTRY_URL: http://schema_registry:8081
+      ADAPTER_MODBUS_TCP_IMAGE: streamforge/gateway_runtime:dev
       # When the local broker is not already reachable, gateway_runtime can provision and supervise
       # its own single-node Kafka container through the Docker socket.
       KAFKA_AUTO_MANAGE: "true"
@@ -228,9 +234,9 @@ services:
       dockerfile: Dockerfile
     depends_on:
       control_plane:
-        condition: service_started
+        condition: service_healthy
     ports:
-      - "3000:80"
+      - "5000:80"
 
 volumes:
   gateway-data:

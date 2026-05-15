@@ -97,6 +97,8 @@ def _ensure_pipeline_and_sinks(token: str, raw_config: dict) -> None:
     pipeline_config = {
         "adapters": raw_config.get("adapters", []),
         "validation": raw_config.get("validation", {}),
+        "events": raw_config.get("events", {}),
+        "aggregates": raw_config.get("aggregates", {}),
     }
 
     pipelines = _http_json("/api/v1/pipelines", token=token)
