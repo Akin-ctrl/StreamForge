@@ -154,14 +154,7 @@ Resolved direction:
 
 The following open implementation-level gaps remain attached to this baseline for remediation tracking:
 
-1. **Validator at-least-once gap**
-   - Validator consumer currently auto-commits offsets before publish confirmation, which can acknowledge data before clean-topic/DLQ durability on process failure.
-2. **Sink SQL identifier safety gap**
-   - TimescaleDB sink interpolates table identifiers directly from config into SQL statements and needs strict identifier validation/quoting.
-3. **Gateway status/approval consistency gap**
-   - Gateway update path allows `status` and `approved` to drift into contradictory combinations without server-side reconciliation.
-
-Completed hardening issues were moved to [docs/ISSUES_SOLVED.md](../ISSUES_SOLVED.md).
+The hardening issues originally tracked here are now resolved and have been moved to [docs/ISSUES_SOLVED.md](../ISSUES_SOLVED.md).
 
 ---
 
@@ -191,17 +184,17 @@ The checklist below converts the findings in this ADR into a practical fix seque
 - [x] Defer zero-touch gateway auto-registration/bootstrap. Current architecture keeps gateway creation and pipeline/sink composition operator-driven in the UI until multi-adapter/multi-sink onboarding is explicitly designed.
 - [x] Implement deterministic cached control-plane config semantics for offline startup/fallback autonomy.
 - [x] Expand failure-mode implementation to include explicit circuit-breaker strategy described by ADR-008.
-- [ ] Enforce manual offset commit semantics in validator so Kafka offsets are committed only after clean-topic or DLQ publish durability is confirmed.
-- [ ] Harden sink SQL identifier handling by validating/quoting configured table names before executing DDL/DML.
-- [ ] Enforce gateway state invariants by reconciling or rejecting conflicting `status`/`approved` updates server-side.
+- [x] Enforce manual offset commit semantics in validator so Kafka offsets are committed only after clean-topic or DLQ publish durability is confirmed.
+- [x] Harden sink SQL identifier handling by validating/quoting configured table names before executing DDL/DML.
+- [x] Enforce gateway state invariants by reconciling or rejecting conflicting `status`/`approved` updates server-side.
 
 ### P3: Architecture Conformance Expansion
 
-- [ ] Decide and codify final schema strategy: align implementation/docs on Avro + Schema Registry or formally revise ADR/docs around the current JSON path.
-- [ ] Implement the chosen schema path consistently, including offline schema-cache behavior if Avro/Registry remains the target architecture.
+- [x] Decide and codify final schema strategy: align implementation/docs on Avro + Schema Registry or formally revise ADR/docs around the current JSON path.
+- [x] Implement the chosen schema path consistently, including offline schema-cache behavior if Avro/Registry remains the target architecture.
 - [ ] Expand adapter support beyond effectively single-protocol `modbus_tcp`, or narrow architecture claims if multi-protocol support is deferred.
 - [ ] Expand sink portfolio to match documented architecture/ADR scope, or narrow architecture claims if limited sink support is the intentional near-term scope.
-- [ ] Implement tiered overflow handling from ADR-009: compress, downsample, priority eviction, and blocking behavior.
+- [x] Implement tiered overflow handling from ADR-009: compress, downsample, priority eviction, and blocking behavior.
 - [ ] Complete authentication roadmap gaps for richer RBAC and/or OAuth/OIDC if ADR-007 remains in scope for this phase set.
 - [ ] Implement MCP/Copilot tool surface only if ADR-010 remains part of the committed architecture roadmap; otherwise explicitly defer/re-scope it.
 
