@@ -6,7 +6,7 @@ import json
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from adapters.adapter_modbus_tcp.main import main
 
@@ -20,7 +20,11 @@ class ModbusMainTests(unittest.TestCase):
         }
 
         with patch.dict("os.environ", {"ADAPTER_CONFIG_JSON": json.dumps(config)}, clear=True):
-            with patch("adapters.adapter_modbus_tcp.main.ModbusTcpAdapter") as adapter_cls:
+            server = Mock()
+            with patch("adapters.adapter_modbus_tcp.main.ModbusTcpAdapter") as adapter_cls, patch(
+                "adapters.adapter_modbus_tcp.main.start_adapter_http_server",
+                return_value=(server, object()),
+            ):
                 adapter = adapter_cls.return_value
 
                 main()
@@ -41,7 +45,11 @@ class ModbusMainTests(unittest.TestCase):
 
         try:
             with patch.dict("os.environ", {"ADAPTER_CONFIG": path}, clear=True):
-                with patch("adapters.adapter_modbus_tcp.main.ModbusTcpAdapter") as adapter_cls:
+                server = Mock()
+                with patch("adapters.adapter_modbus_tcp.main.ModbusTcpAdapter") as adapter_cls, patch(
+                    "adapters.adapter_modbus_tcp.main.start_adapter_http_server",
+                    return_value=(server, object()),
+                ):
                     adapter = adapter_cls.return_value
 
                     main()

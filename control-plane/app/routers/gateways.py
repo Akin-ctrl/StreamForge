@@ -227,6 +227,8 @@ def get_gateway_config(gateway_id: str, token: str = Depends(oauth2_scheme), db:
             "adapters": [],
             "sinks": [],
             "validation": {},
+            "events": {},
+            "aggregates": {},
             "version": "1",
         }
 
@@ -261,6 +263,8 @@ def get_gateway_config(gateway_id: str, token: str = Depends(oauth2_scheme), db:
         "gateway_id": gateway.gateway_id,
         "adapters": config.get("adapters", []),
         "validation": config.get("validation", {}),
+        "events": config.get("events", {}),
+        "aggregates": config.get("aggregates", {}),
         "sinks": sinks,
         "version": str(pipeline.id),
     }

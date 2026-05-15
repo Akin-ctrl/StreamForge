@@ -5,10 +5,15 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from struct import unpack
 from typing import Dict, Iterable, Sequence
 
 from adapters.adapter_base.base_adapter import BaseAdapter
+from adapters.adapter_base.kafka_publisher import KafkaPublisher
+
+
+_EVENT_SCHEMA_PATH = str(Path(__file__).resolve().parents[2] / "schemas" / "event.avsc")
 
 
 @dataclass(frozen=True)
@@ -30,6 +35,24 @@ class RegisterBatch:
     specs: tuple[RegisterSpec, ...]
 
 
+@dataclass(frozen=True)
+class CoilSpec:
+    """Single Modbus coil specification used for event generation."""
+
+    address: int
+    param: str
+    event_type: str
+
+
+@dataclass(frozen=True)
+class CoilBatch:
+    """A contiguous block of Modbus coils to read together."""
+
+    start: int
+    count: int
+    specs: tuple[CoilSpec, ...]
+
+
 class ModbusTcpAdapter(BaseAdapter):
     """
     Modbus TCP adapter implementation.
@@ -41,6 +64,8 @@ class ModbusTcpAdapter(BaseAdapter):
         """Initialize adapter with validated config."""
         super().__init__(config)
         self._client = None
+        self._event_publisher: KafkaPublisher | None = None
+        self._last_coil_states: dict[str, bool] = {}
         self._connect_max_attempts = max(int(config.get("connect_max_attempts", 3)), 1)
         self._read_max_attempts = max(int(config.get("read_max_attempts", 3)), 1)
         self._retry_backoff_s = max(float(config.get("retry_backoff_ms", 250)) / 1000.0, 0.0)
@@ -58,6 +83,13 @@ class ModbusTcpAdapter(BaseAdapter):
                 "last_modbus_retry_operation": None,
                 "last_modbus_retry_attempt": 0,
                 "last_modbus_backoff_s": 0.0,
+                "events_topic": self._events_topic,
+                "published_events": 0,
+                "event_publish_failures": 0,
+                "last_event_publish_at": None,
+                "last_event_publish_key": None,
+                "last_event_publish_partition": None,
+                "last_event_publish_offset": None,
             }
         )
 
@@ -87,6 +119,8 @@ class ModbusTcpAdapter(BaseAdapter):
                 self._client.close()
             finally:
                 self._client = None
+        if self._event_publisher is not None:
+            self._event_publisher.close()
         self._health["connected"] = False
 
     def poll(self) -> Dict[str, object]:
@@ -98,6 +132,7 @@ class ModbusTcpAdapter(BaseAdapter):
         registers = sorted(self._iter_registers(), key=lambda spec: spec.address)
         batches = self._build_batches(registers)
         readings: Dict[str, object] = {}
+        events: list[dict[str, object]] = []
 
         self._health["last_modbus_batch_count"] = len(batches)
         self._health["last_modbus_register_span"] = sum(batch.count for batch in batches)
@@ -111,22 +146,49 @@ class ModbusTcpAdapter(BaseAdapter):
                 value = self._decode_value(spec, response.registers[start_index:end_index])
                 readings[spec.param] = {"value": value, "unit": spec.unit}
 
-        return readings
+        coils = sorted(self._iter_coils(), key=lambda spec: spec.address)
+        coil_batches = self._build_coil_batches(coils)
+        if coil_batches:
+            self._health["last_modbus_coil_batch_count"] = len(coil_batches)
+            self._health["last_modbus_coil_span"] = sum(batch.count for batch in coil_batches)
+        else:
+            self._health["last_modbus_coil_batch_count"] = 0
+            self._health["last_modbus_coil_span"] = 0
+
+        for batch in coil_batches:
+            response = self._read_coil_batch_with_retry(batch=batch, unit_id=unit_id)
+            for spec in batch.specs:
+                state = bool(response.bits[spec.address - batch.start])
+                previous_state = self._last_coil_states.get(spec.param)
+                self._last_coil_states[spec.param] = state
+                if previous_state is None or previous_state == state:
+                    continue
+                events.append(
+                    {
+                        "parameter": spec.param,
+                        "event_type": spec.event_type,
+                        "previous_state": previous_state,
+                        "new_state": state,
+                    }
+                )
+
+        return {"readings": readings, "events": events}
 
     def transform(self, raw: Dict[str, object]) -> Dict[str, object]:
-        """Map registers to telemetry message."""
+        """Map polled readings and state changes into telemetry and event messages."""
         now = datetime.now(timezone.utc).isoformat()
         output = self.config["output"]
         asset_id = output["asset_id"]
+        pipeline_id = str(output.get("pipeline_id") or asset_id)
 
-        messages: Dict[str, object] = {
+        telemetry_message: Dict[str, object] = {
             "asset_id": asset_id,
             "gateway_time": now,
             "readings": [],
         }
 
-        for param, payload in raw.items():
-            messages["readings"].append(
+        for param, payload in raw.get("readings", {}).items():
+            telemetry_message["readings"].append(
                 {
                     "parameter": param,
                     "value": payload["value"],
@@ -136,7 +198,84 @@ class ModbusTcpAdapter(BaseAdapter):
                 }
             )
 
-        return messages
+        event_messages: list[dict[str, object]] = []
+        for item in raw.get("events", []):
+            if not isinstance(item, dict):
+                continue
+            event_messages.append(
+                {
+                    "asset_id": asset_id,
+                    "event_type": str(item.get("event_type") or f"{item.get('parameter', 'state')}_state_change"),
+                    "classification": "EVENT",
+                    "previous_state": {
+                        str(item.get("parameter", "state")): bool(item.get("previous_state", False)),
+                    },
+                    "new_state": {
+                        str(item.get("parameter", "state")): bool(item.get("new_state", False)),
+                    },
+                    "timestamps": {
+                        "device_time": None,
+                        "gateway_time": now,
+                    },
+                    "metadata": {
+                        "adapter_id": self._adapter_id,
+                        "pipeline_id": pipeline_id,
+                    },
+                }
+            )
+
+        return {
+            "telemetry": telemetry_message,
+            "events": event_messages,
+        }
+
+    def publish(self, message: Dict[str, object]) -> None:
+        """Publish telemetry and events on their explicit topics."""
+        telemetry_message = message.get("telemetry")
+        if isinstance(telemetry_message, dict) and telemetry_message.get("readings"):
+            if self._publisher is None:
+                self._publisher = KafkaPublisher(self.config)
+            publish_metadata = self._publisher.publish(telemetry_message)
+            publish_health = self._publisher.health()
+            self._health["last_publish_topic"] = publish_metadata["topic"]
+            self._health["last_publish_key"] = publish_metadata["key"]
+            self._health["last_publish_partition"] = publish_metadata["partition"]
+            self._health["last_publish_offset"] = publish_metadata["offset"]
+            self._health["last_error"] = publish_health["last_error"]
+
+        events = message.get("events", [])
+        if self._events_topic and isinstance(events, list) and events:
+            if self._event_publisher is None:
+                self._event_publisher = KafkaPublisher(self._event_publisher_config())
+            for event_message in events:
+                publish_metadata = self._event_publisher.publish(event_message)
+                event_health = self._event_publisher.health()
+                self._health["last_event_publish_at"] = self._utcnow()
+                self._health["last_event_publish_key"] = publish_metadata["key"]
+                self._health["last_event_publish_partition"] = publish_metadata["partition"]
+                self._health["last_event_publish_offset"] = publish_metadata["offset"]
+                self._health["published_events"] = event_health["published_messages"]
+                self._health["event_publish_failures"] = event_health["publish_failures"]
+                self._health["last_error"] = event_health["last_error"]
+
+    def health(self) -> Dict[str, object]:
+        """Return adapter health with combined telemetry and event publishing stats."""
+        snapshot = dict(self._health)
+        telemetry_health = self._publisher.health() if self._publisher is not None else None
+        event_health = self._event_publisher.health() if self._event_publisher is not None else None
+        if telemetry_health is not None:
+            snapshot["telemetry_publish"] = telemetry_health
+        if event_health is not None:
+            snapshot["event_publish"] = event_health
+        snapshot["published_messages"] = int((telemetry_health or {}).get("published_messages", 0)) + int(
+            snapshot.get("published_events", 0)
+        )
+        snapshot["publish_failures"] = int((telemetry_health or {}).get("publish_failures", 0)) + int(
+            snapshot.get("event_publish_failures", 0)
+        )
+        snapshot["last_publish_topic"] = snapshot.get("last_publish_topic") or self.config.get("output", {}).get("topic")
+        snapshot["last_error"] = snapshot.get("last_error") or (telemetry_health or {}).get("last_error") or (event_health or {}).get("last_error")
+        return snapshot
 
     def _iter_registers(self) -> Iterable[RegisterSpec]:
         """Yield register specs from configuration."""
@@ -146,7 +285,34 @@ class ModbusTcpAdapter(BaseAdapter):
                 address=address,
                 param=item["param"],
                 data_type=item.get("type", "uint16"),
-                unit=item.get("unit", "")
+                unit=item.get("unit", ""),
+            )
+
+    def _iter_coils(self) -> Iterable[CoilSpec]:
+        """Yield coil specs from configuration."""
+        raw_coils = self.config.get("coils", [])
+        if isinstance(raw_coils, dict):
+            items = []
+            for address, item in raw_coils.items():
+                if not isinstance(item, dict):
+                    continue
+                normalized = dict(item)
+                normalized.setdefault("address", int(address))
+                items.append(normalized)
+        else:
+            items = list(raw_coils) if isinstance(raw_coils, list) else []
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            param = str(item.get("param", "")).strip()
+            if not param:
+                continue
+            address = self._normalize_coil_address(int(item["address"]))
+            yield CoilSpec(
+                address=address,
+                param=param,
+                event_type=str(item.get("event_type") or f"{param}_state_change"),
             )
 
     def _read_batch_with_retry(self, batch: RegisterBatch, unit_id: int):
@@ -162,6 +328,28 @@ class ModbusTcpAdapter(BaseAdapter):
             )
             if response.isError():
                 raise RuntimeError(f"Modbus read error at {batch.start}")
+            return response
+
+        return self._retry_operation(
+            operation="read",
+            max_attempts=self._read_max_attempts,
+            action=attempt,
+            before_retry=self._reconnect_after_read_failure,
+        )
+
+    def _read_coil_batch_with_retry(self, batch: CoilBatch, unit_id: int):
+        """Read a coil batch with reconnect-aware retry semantics."""
+
+        def attempt():
+            if self._client is None:
+                raise RuntimeError("Modbus client not connected")
+            response = self._client.read_coils(
+                batch.start,
+                count=batch.count,
+                device_id=unit_id,
+            )
+            if response.isError():
+                raise RuntimeError(f"Modbus coil read error at {batch.start}")
             return response
 
         return self._retry_operation(
@@ -249,6 +437,44 @@ class ModbusTcpAdapter(BaseAdapter):
         return batches
 
     @classmethod
+    def _build_coil_batches(cls, specs: Sequence[CoilSpec]) -> list[CoilBatch]:
+        """Group contiguous coils into shared reads."""
+        if not specs:
+            return []
+
+        batches: list[CoilBatch] = []
+        current_start = specs[0].address
+        current_end = current_start + 1
+        current_specs = [specs[0]]
+
+        for spec in specs[1:]:
+            spec_end = spec.address + 1
+            if spec.address <= current_end:
+                current_end = max(current_end, spec_end)
+                current_specs.append(spec)
+                continue
+
+            batches.append(
+                CoilBatch(
+                    start=current_start,
+                    count=current_end - current_start,
+                    specs=tuple(current_specs),
+                )
+            )
+            current_start = spec.address
+            current_end = spec_end
+            current_specs = [spec]
+
+        batches.append(
+            CoilBatch(
+                start=current_start,
+                count=current_end - current_start,
+                specs=tuple(current_specs),
+            )
+        )
+        return batches
+
+    @classmethod
     def _register_width(cls, spec: RegisterSpec) -> int:
         """Return the number of 16-bit registers needed for a spec."""
         if spec.data_type == "float32":
@@ -274,6 +500,11 @@ class ModbusTcpAdapter(BaseAdapter):
         return address
 
     @staticmethod
+    def _normalize_coil_address(address: int) -> int:
+        """Normalize Modbus coil address to zero-based offset."""
+        return max(address - 1, 0) if address > 0 else address
+
+    @staticmethod
     def _decode_float32(registers: list[int]) -> float:
         """Decode two 16-bit registers into IEEE754 float32."""
         packed = bytes([registers[0] >> 8, registers[0] & 0xFF, registers[1] >> 8, registers[1] & 0xFF])
@@ -293,3 +524,20 @@ class ModbusTcpAdapter(BaseAdapter):
             raise RuntimeError("pymodbus is required for ModbusTcpAdapter") from exc
 
         return ModbusTcpClient(host=host, port=port)
+
+    @property
+    def _events_topic(self) -> str | None:
+        output = self.config.get("output")
+        if not isinstance(output, dict):
+            return None
+        topic = output.get("events_topic")
+        return str(topic) if topic else None
+
+    def _event_publisher_config(self) -> dict:
+        output = dict(self.config.get("output", {}))
+        output["topic"] = self._events_topic
+        output["schema_path"] = _EVENT_SCHEMA_PATH
+        return {
+            **self.config,
+            "output": output,
+        }
