@@ -5,7 +5,9 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
 from pathlib import Path
+from queue import Empty, Full, Queue
 import re
 import threading
 import time
@@ -22,10 +24,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _ALARM_CONDITION_RE = re.compile(r"^value\s*(>=|<=|>|<|==|!=)\s*(-?\d+(?:\.\d+)?)$")
 _ALARM_SCHEMA_PATH = str(Path(__file__).resolve().parents[1] / "schemas" / "alarm.avsc")
+_QUEUE_WAIT_TIMEOUT_S = 0.25
 
 
 class ValidatorModule:
-    """Consumes raw telemetry, applies validation rules, emits clean/DLQ topics."""
+    """Consumes raw telemetry, applies validation rules, and publishes outcomes via staged workers."""
 
     def __init__(
         self,
@@ -40,7 +43,8 @@ class ValidatorModule:
         self._control_plane = control_plane
         self._consumer = None
         self._producer = None
-        self._thread: threading.Thread | None = None
+        self._dlq_producer = None
+        self._alarm_producer = None
         self._stop_event = threading.Event()
         self._last_samples: dict[Tuple[str, str], dict] = {}
         self._decision_poll_interval = int(self._rules.get("dlq_decision_poll_interval_s", 5))
@@ -58,37 +62,135 @@ class ValidatorModule:
                 }
             }
         )
+        self._ingress_queue_size = max(int(self._rules.get("ingress_queue_size", os.getenv("VALIDATOR_INGRESS_QUEUE_SIZE", "500"))), 1)
+        self._publish_queue_size = max(int(self._rules.get("publish_queue_size", os.getenv("VALIDATOR_PUBLISH_QUEUE_SIZE", "500"))), 1)
+        self._completion_queue_size = max(
+            int(self._rules.get("completion_queue_size", os.getenv("VALIDATOR_COMPLETION_QUEUE_SIZE", "500"))),
+            1,
+        )
+        self._ingress_queue: Queue[dict[str, object]] = Queue(maxsize=self._ingress_queue_size)
+        self._publish_queue: Queue[dict[str, object]] = Queue(maxsize=self._publish_queue_size)
+        self._completion_queue: Queue[object] = Queue(maxsize=self._completion_queue_size)
+        self._threads: dict[str, threading.Thread] = {}
+        self._metrics_lock = threading.Lock()
+        self._stage_metrics: dict[str, dict[str, object]] = {
+            stage: {
+                "processed_total": 0,
+                "errors_total": 0,
+                "blocked_total": 0,
+                "avg_latency_ms": 0.0,
+                "max_latency_ms": 0.0,
+                "last_error": None,
+            }
+            for stage in ("ingress", "validation", "publish", "control_sync")
+        }
+        self._quality_totals = {"good": 0, "suspect": 0, "uncertain": 0, "bad": 0}
+        self._emit_totals = {"clean": 0, "dlq": 0, "alarm": 0}
+        self._control_sync_totals = {"actions_executed": 0, "mirror_success_total": 0, "mirror_failure_total": 0}
+        self._backpressure = {"active": False, "stage": None, "events_total": 0}
+        self._sentinel = object()
 
     def start(self) -> None:
-        """Start validator loop in background thread."""
-        if self._thread and self._thread.is_alive():
+        """Start validator workers."""
+        if any(thread.is_alive() for thread in self._threads.values()):
             return
 
+        self._ensure_clients()
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run_loop, daemon=True)
-        self._thread.start()
+        self._ingress_queue = Queue(maxsize=self._ingress_queue_size)
+        self._publish_queue = Queue(maxsize=self._publish_queue_size)
+        self._completion_queue = Queue(maxsize=self._completion_queue_size)
+        self._threads = {
+            "ingress": threading.Thread(target=self._ingress_loop, daemon=True, name=f"validator-ingress-{self._gateway_id}"),
+            "validation": threading.Thread(target=self._validation_loop, daemon=True, name=f"validator-validation-{self._gateway_id}"),
+            "publish": threading.Thread(target=self._publish_loop, daemon=True, name=f"validator-publish-{self._gateway_id}"),
+            "control_sync": threading.Thread(
+                target=self._control_sync_loop,
+                daemon=True,
+                name=f"validator-control-sync-{self._gateway_id}",
+            ),
+        }
+        for thread in self._threads.values():
+            thread.start()
         print("validator_module started", flush=True)
 
     def stop(self) -> None:
-        """Stop validator loop."""
+        """Stop validator workers."""
         self._stop_event.set()
-        if self._thread:
-            self._thread.join(timeout=5)
+        for queue_obj in (self._ingress_queue, self._publish_queue, self._completion_queue):
+            try:
+                queue_obj.put_nowait(self._sentinel)
+            except Full:
+                continue
+
+        for thread in self._threads.values():
+            thread.join(timeout=5)
+        self._threads = {}
+
+        if self._producer is not None:
+            try:
+                self._producer.flush()
+                self._producer.close()
+            except Exception:
+                pass
+        if self._dlq_producer is not None:
+            try:
+                self._dlq_producer.flush()
+                self._dlq_producer.close()
+            except Exception:
+                pass
+        if self._alarm_producer is not None:
+            try:
+                self._alarm_producer.flush()
+                self._alarm_producer.close()
+            except Exception:
+                pass
+        if self._consumer is not None:
+            try:
+                self._consumer.close()
+            except Exception:
+                pass
+
         print("validator_module stopped", flush=True)
 
     def health(self) -> Dict[str, object]:
-        """Return validator health status."""
-        running = bool(self._thread and self._thread.is_alive())
-        consumer_connected = self._consumer is not None
+        """Return validator health and per-stage metrics."""
+        stage_snapshots = {
+            "ingress": self._stage_snapshot("ingress", self._threads.get("ingress"), self._ingress_queue),
+            "validation": self._stage_snapshot("validation", self._threads.get("validation"), self._publish_queue),
+            "publish": self._stage_snapshot("publish", self._threads.get("publish"), self._completion_queue),
+            "control_sync": self._stage_snapshot("control_sync", self._threads.get("control_sync"), None),
+        }
+        statuses = [snapshot["status"] for snapshot in stage_snapshots.values()]
+        overall = "healthy"
+        if any(status == "failed" for status in statuses):
+            overall = "failed"
+        elif any(status == "degraded" for status in statuses) or bool(self._backpressure["active"]):
+            overall = "degraded"
+        elif not any(thread.is_alive() for thread in self._threads.values()):
+            overall = "stopped"
+
         return {
-            "status": "healthy" if running else "stopped",
-            "thread_alive": running,
-            "consumer_initialized": consumer_connected,
+            "status": overall,
+            "thread_alive": any(thread.is_alive() for thread in self._threads.values()),
+            "consumer_initialized": self._consumer is not None,
             "raw_topic": self._raw_topic,
             "clean_topic": self._clean_topic,
             "dlq_topic": self._dlq_topic,
             "alarm_topic": self._alarm_topic,
             "active_alarms": len(self._active_alarms),
+            "backpressure": dict(self._backpressure),
+            "quality_totals": dict(self._quality_totals),
+            "emit_totals": dict(self._emit_totals),
+            "control_sync_totals": dict(self._control_sync_totals),
+            "pipeline": {
+                "queues": {
+                    "ingress": {"depth": self._ingress_queue.qsize(), "capacity": self._ingress_queue.maxsize},
+                    "publish": {"depth": self._publish_queue.qsize(), "capacity": self._publish_queue.maxsize},
+                    "completion": {"depth": self._completion_queue.qsize(), "capacity": self._completion_queue.maxsize},
+                },
+                "stages": stage_snapshots,
+            },
         }
 
     @property
@@ -114,109 +216,273 @@ class ValidatorModule:
             raise RuntimeError("kafka-python is required for validator module") from exc
 
         if self._consumer is None:
-            try:
-                print(f"validator_module: creating consumer for {self._raw_topic}...", flush=True)
-                self._consumer = KafkaConsumer(
-                    self._raw_topic,
-                    bootstrap_servers=self._bootstrap,
-                    group_id=f"sf-validator-{self._gateway_id}",
-                    auto_offset_reset="earliest",
-                    enable_auto_commit=False,
-                    session_timeout_ms=30000,  # 30 sec session
-                    request_timeout_ms=60000,  # 60 sec (must be larger than session timeout)
-                    value_deserializer=self._raw_schema.decode,
-                )
-                print(f"validator_module: consumer created successfully, subscription={self._consumer.subscription()}", flush=True)
-            except Exception as consumer_exc:
-                print(f"validator_module: CONSUMER CREATE FAILED: {consumer_exc}", flush=True)
-                logger.exception("validator consumer creation failed")
-                raise RuntimeError(f"Consumer creation failed: {consumer_exc}") from consumer_exc
+            self._consumer = KafkaConsumer(
+                self._raw_topic,
+                bootstrap_servers=self._bootstrap,
+                group_id=f"sf-validator-{self._gateway_id}",
+                auto_offset_reset="earliest",
+                enable_auto_commit=False,
+                session_timeout_ms=30000,
+                request_timeout_ms=60000,
+                value_deserializer=self._raw_schema.decode,
+            )
+            print(f"validator_module: consumer created successfully, subscription={self._consumer.subscription()}", flush=True)
 
         if self._producer is None:
+            self._producer = KafkaProducer(
+                bootstrap_servers=self._bootstrap,
+                value_serializer=self._clean_schema.encode,
+            )
+            print(f"validator_module: producer created successfully for {self._clean_topic}", flush=True)
+
+        if self._dlq_producer is None:
+            self._dlq_producer = KafkaProducer(
+                bootstrap_servers=self._bootstrap,
+                value_serializer=lambda value: json.dumps(value).encode("utf-8"),
+            )
+
+        if self._alarm_producer is None:
+            self._alarm_producer = KafkaProducer(
+                bootstrap_servers=self._bootstrap,
+                value_serializer=self._alarm_schema.encode,
+            )
+
+    def _ingress_loop(self) -> None:
+        assert self._consumer is not None
+        print(f"validator_module consuming from {self._raw_topic}, group_id=sf-validator-{self._gateway_id}", flush=True)
+        while not self._stop_event.is_set():
             try:
-                print(f"validator_module: creating producer for {self._clean_topic}...", flush=True)
-                self._producer = KafkaProducer(
-                    bootstrap_servers=self._bootstrap,
-                    value_serializer=self._clean_schema.encode,
-                )
-                print(f"validator_module: producer created successfully", flush=True)
-            except Exception as producer_exc:
-                print(f"validator_module: PRODUCER CREATE FAILED: {producer_exc}", flush=True)
-                logger.exception("validator producer creation failed")
-                raise RuntimeError(f"Producer creation failed: {producer_exc}") from producer_exc
+                batch = self._consumer.poll(timeout_ms=1000)
+                if not batch:
+                    self._drain_completion_queue()
+                    continue
 
-        if not hasattr(self, "_dlq_producer") or self._dlq_producer is None:
+                for records in batch.values():
+                    for record in records:
+                        envelope = {
+                            "record": record,
+                            "message": record.value,
+                            "received_at": time.monotonic(),
+                            "publish_attempts": 0,
+                        }
+                        if not self._enqueue_with_backpressure(self._ingress_queue, envelope, "ingress"):
+                            return
+                        self._record_stage_processed("ingress", latency_ms=0.0)
+
+                self._drain_completion_queue()
+            except Exception as exc:
+                print(f"validator_module ingress error: {exc}", flush=True)
+                logger.exception("validator ingress loop failed")
+                self._record_stage_error("ingress", exc)
+                time.sleep(1)
+
+    def _validation_loop(self) -> None:
+        while not self._stop_event.is_set():
+            envelope = self._get_queue_item(self._ingress_queue)
+            if envelope is self._sentinel:
+                return
+            if envelope is None:
+                continue
+
+            started_at = time.monotonic()
+            message = envelope["message"]
             try:
-                self._dlq_producer = KafkaProducer(
-                    bootstrap_servers=self._bootstrap,
-                    value_serializer=lambda value: json.dumps(value).encode("utf-8"),
-                )
-            except Exception as producer_exc:
-                logger.exception("validator dlq producer creation failed")
-                raise RuntimeError(f"DLQ producer creation failed: {producer_exc}") from producer_exc
-
-        if not hasattr(self, "_alarm_producer") or self._alarm_producer is None:
-            try:
-                self._alarm_producer = KafkaProducer(
-                    bootstrap_servers=self._bootstrap,
-                    value_serializer=self._alarm_schema.encode,
-                )
-            except Exception as producer_exc:
-                logger.exception("validator alarm producer creation failed")
-                raise RuntimeError(f"Alarm producer creation failed: {producer_exc}") from producer_exc
-
-    def _run_loop(self) -> None:
-        try:
-            self._ensure_clients()
-            assert self._consumer is not None
-            assert self._producer is not None
-            print(f"validator_module consuming from {self._raw_topic}, group_id=sf-validator-{self._gateway_id}", flush=True)
-
-            poll_count = 0
-            while not self._stop_event.is_set():
+                quality, reason = self._validate_message(message)
                 try:
-                    poll_count += 1
-                    print(f"validator_module: poll_attempt_{poll_count} starting", flush=True)
-                    
-                    batch = self._consumer.poll(timeout_ms=1000)
-                    print(f"validator_module: poll_attempt_{poll_count} returned {len(batch) if batch else 0} partitions", flush=True)
-                    
-                    if not batch:
-                        self._maybe_process_dlq_actions()
-                        continue
+                    self._process_alarm_rules(message)
+                except Exception as alarm_exc:
+                    logger.exception("validator alarm processing failed: %s", alarm_exc)
+                    self._record_stage_error("validation", alarm_exc)
 
-                    for _, records in batch.items():
-                        for record in records:
-                            try:
-                                message = record.value
-                                quality, reason = self._validate_message(message)
-                                try:
-                                    self._process_alarm_rules(message)
-                                except Exception as alarm_exc:
-                                    logger.exception("validator alarm processing failed: %s", alarm_exc)
+                if quality == "BAD":
+                    self._increment_quality_total("bad")
+                    publish_item = {
+                        "record": envelope["record"],
+                        "message": message,
+                        "action": "dlq",
+                        "reason": reason,
+                        "received_at": envelope["received_at"],
+                        "publish_attempts": 0,
+                    }
+                else:
+                    normalized_quality = quality.casefold()
+                    if normalized_quality in self._quality_totals:
+                        self._increment_quality_total(normalized_quality)
+                    enriched = self._apply_quality(message, quality, reason)
+                    publish_item = {
+                        "record": envelope["record"],
+                        "message": message,
+                        "action": "clean",
+                        "payload": enriched,
+                        "reason": reason,
+                        "received_at": envelope["received_at"],
+                        "publish_attempts": 0,
+                    }
+                self._record_stage_processed("validation", latency_ms=(time.monotonic() - started_at) * 1000.0)
+            except Exception as exc:
+                logger.exception("validator validation stage failed")
+                self._record_stage_error("validation", exc)
+                self._increment_quality_total("bad")
+                publish_item = {
+                    "record": envelope["record"],
+                    "message": message,
+                    "action": "dlq",
+                    "reason": f"validator_exception:{type(exc).__name__}",
+                    "received_at": envelope["received_at"],
+                    "publish_attempts": 0,
+                }
 
-                                if quality == "BAD":
-                                    self._emit_dlq(message, reason)
-                                    self._commit_record(record)
-                                    continue
+            if not self._enqueue_with_backpressure(self._publish_queue, publish_item, "publish"):
+                return
 
-                                enriched = self._apply_quality(message, quality, reason)
-                                self._producer.send(self._clean_topic, enriched)
-                                self._producer.flush()
-                                self._commit_record(record)
-                            except Exception as record_exc:
-                                print(f"validator_module record processing error: {record_exc}", flush=True)
-                                logger.exception("validator record processing failed")
+    def _publish_loop(self) -> None:
+        assert self._producer is not None
+        while not self._stop_event.is_set():
+            item = self._get_queue_item(self._publish_queue)
+            if item is self._sentinel:
+                return
+            if item is None:
+                continue
 
-                    self._maybe_process_dlq_actions()
-                except Exception as poll_exc:
-                    print(f"validator_module poll error: {poll_exc}", flush=True)
-                    logger.exception("validator poll failed")
-                    time.sleep(5)  # Back off on errors
-        except Exception as exc:
-            print(f"validator_module FATAL ERROR: {exc}", flush=True)
-            logger.exception("validator module crashed")
-            raise
+            started_at = time.monotonic()
+            try:
+                if item["action"] == "dlq":
+                    self._emit_dlq(item["message"], item.get("reason"))
+                    self._increment_emit_total("dlq")
+                else:
+                    self._producer.send(self._clean_topic, item["payload"])
+                    self._producer.flush()
+                    self._increment_emit_total("clean")
+
+                if not self._enqueue_with_backpressure(self._completion_queue, {"record": item["record"]}, "publish"):
+                    return
+                self._record_stage_processed("publish", latency_ms=(time.monotonic() - started_at) * 1000.0)
+            except Exception as exc:
+                logger.exception("validator publish stage failed")
+                self._record_stage_error("publish", exc)
+                item["publish_attempts"] = int(item.get("publish_attempts", 0)) + 1
+                time.sleep(min(5.0, float(item["publish_attempts"])))
+                if not self._enqueue_with_backpressure(self._publish_queue, item, "publish"):
+                    return
+
+    def _control_sync_loop(self) -> None:
+        while not self._stop_event.is_set():
+            started_at = time.monotonic()
+            try:
+                operations = self._maybe_process_dlq_actions()
+                if operations > 0:
+                    self._record_stage_processed("control_sync", latency_ms=(time.monotonic() - started_at) * 1000.0, count=operations)
+            except Exception as exc:
+                logger.exception("validator control sync loop failed")
+                self._record_stage_error("control_sync", exc)
+            finally:
+                if self._stop_event.wait(1.0):
+                    return
+
+    def _get_queue_item(self, queue_obj: Queue[object]) -> object | None:
+        try:
+            return queue_obj.get(timeout=_QUEUE_WAIT_TIMEOUT_S)
+        except Empty:
+            return None
+
+    def _enqueue_with_backpressure(self, queue_obj: Queue[object], item: object, stage: str) -> bool:
+        blocked = False
+        while not self._stop_event.is_set():
+            try:
+                queue_obj.put(item, timeout=_QUEUE_WAIT_TIMEOUT_S)
+                if blocked:
+                    self._set_backpressure(False, None)
+                return True
+            except Full:
+                blocked = True
+                self._record_stage_blocked(stage)
+                self._set_backpressure(True, stage)
+                if stage == "ingress":
+                    self._drain_completion_queue()
+        return False
+
+    def _drain_completion_queue(self) -> None:
+        while True:
+            try:
+                item = self._completion_queue.get_nowait()
+            except Empty:
+                return
+            if item is self._sentinel:
+                return
+            if not isinstance(item, dict):
+                continue
+            try:
+                self._commit_record(item["record"])
+            except Exception as exc:
+                logger.exception("validator commit failed")
+                self._record_stage_error("ingress", exc)
+
+    def _stage_snapshot(self, stage: str, thread: threading.Thread | None, queue_obj: Queue[object] | None) -> dict[str, object]:
+        with self._metrics_lock:
+            metrics = dict(self._stage_metrics[stage])
+            backpressure_active = bool(self._backpressure["active"] and self._backpressure["stage"] == stage)
+
+        queue_depth = queue_obj.qsize() if queue_obj is not None else 0
+        queue_capacity = queue_obj.maxsize if queue_obj is not None else 0
+        utilization = (queue_depth / queue_capacity) if queue_capacity else 0.0
+        alive = bool(thread and thread.is_alive())
+
+        status = "healthy"
+        if self._threads and not alive:
+            status = "failed"
+        elif backpressure_active or utilization >= 0.8:
+            status = "degraded"
+
+        return {
+            "status": status,
+            "thread_alive": alive,
+            "queue_depth": queue_depth,
+            "queue_capacity": queue_capacity,
+            "queue_utilization": round(utilization, 4),
+            **metrics,
+        }
+
+    def _record_stage_processed(self, stage: str, latency_ms: float, count: int = 1) -> None:
+        with self._metrics_lock:
+            metrics = self._stage_metrics[stage]
+            processed = int(metrics["processed_total"]) + count
+            previous_avg = float(metrics["avg_latency_ms"])
+            metrics["processed_total"] = processed
+            metrics["avg_latency_ms"] = (
+                ((previous_avg * (processed - count)) + latency_ms) / processed if processed > 0 else latency_ms
+            )
+            metrics["max_latency_ms"] = max(float(metrics["max_latency_ms"]), latency_ms)
+
+    def _record_stage_error(self, stage: str, exc: Exception) -> None:
+        with self._metrics_lock:
+            metrics = self._stage_metrics[stage]
+            metrics["errors_total"] = int(metrics["errors_total"]) + 1
+            metrics["last_error"] = str(exc)[:1024]
+
+    def _record_stage_blocked(self, stage: str) -> None:
+        with self._metrics_lock:
+            metrics = self._stage_metrics[stage]
+            metrics["blocked_total"] = int(metrics["blocked_total"]) + 1
+
+    def _set_backpressure(self, active: bool, stage: str | None) -> None:
+        with self._metrics_lock:
+            previous_state = bool(self._backpressure["active"])
+            self._backpressure["active"] = active
+            self._backpressure["stage"] = stage
+            if active and not previous_state:
+                self._backpressure["events_total"] = int(self._backpressure["events_total"]) + 1
+
+    def _increment_quality_total(self, quality: str) -> None:
+        with self._metrics_lock:
+            self._quality_totals[quality] = self._quality_totals.get(quality, 0) + 1
+
+    def _increment_emit_total(self, emit_type: str) -> None:
+        with self._metrics_lock:
+            self._emit_totals[emit_type] = self._emit_totals.get(emit_type, 0) + 1
+
+    def _increment_control_sync_total(self, key: str, amount: int = 1) -> None:
+        with self._metrics_lock:
+            self._control_sync_totals[key] = self._control_sync_totals.get(key, 0) + amount
 
     def _validate_message(self, message: dict) -> tuple[str, str | None]:
         readings = message.get("readings", [])
@@ -292,7 +558,6 @@ class ValidatorModule:
         return enriched
 
     def _emit_dlq(self, message: dict, reason: str | None) -> None:
-        assert self._producer is not None
         assert self._dlq_producer is not None
         message_id = str(uuid4())
         preview_payload = self._build_reprocess_payload(message)
@@ -314,7 +579,6 @@ class ValidatorModule:
             "original_payload": copy.deepcopy(message),
             "preview_payload": preview_payload,
         }
-        self._flush_pending_dlq_syncs()
 
     def _build_reprocess_payload(self, message: dict) -> dict:
         payload = self._apply_quality(message, "GOOD", None)
@@ -324,23 +588,23 @@ class ValidatorModule:
         }
         return payload
 
-    def _maybe_process_dlq_actions(self) -> None:
+    def _maybe_process_dlq_actions(self) -> int:
         if self._control_plane is None:
-            return
+            return 0
 
         now = time.time()
         if now - self._last_decision_poll_at < self._decision_poll_interval:
-            return
+            return self._flush_pending_dlq_syncs() + self._flush_completed_decisions()
 
         self._last_decision_poll_at = now
-        self._flush_pending_dlq_syncs()
-        self._flush_completed_decisions()
+        operations = self._flush_pending_dlq_syncs() + self._flush_completed_decisions()
 
         try:
             actions = self._control_plane.get_json_list("/api/v1/dlq/gateway-actions/pending")
         except ConfigError as exc:
             logger.warning("failed to fetch dlq actions from control plane: %s", exc)
-            return
+            self._increment_control_sync_total("mirror_failure_total")
+            return operations
 
         assert self._producer is not None
         for action in actions:
@@ -358,33 +622,45 @@ class ValidatorModule:
                     self._producer.send(clean_topic, preview_payload)
                     self._producer.flush()
                     self._completed_decisions[message_id] = {"result": "REPROCESSED", "error": None}
+                    operations += 1
+                    self._increment_control_sync_total("actions_executed")
                 elif action_type == "DISCARD":
                     self._completed_decisions[message_id] = {"result": "DISCARDED", "error": None}
+                    operations += 1
+                    self._increment_control_sync_total("actions_executed")
                 else:
                     logger.warning("unknown dlq action type for %s: %s", message_id, action_type)
             except Exception as exc:
                 logger.exception("failed to execute dlq action %s", message_id)
                 self._completed_decisions[message_id] = {"result": "REPROCESS_FAILED", "error": str(exc)[:1024]}
+                self._increment_control_sync_total("mirror_failure_total")
 
-        self._flush_completed_decisions()
+        operations += self._flush_completed_decisions()
+        return operations
 
-    def _flush_pending_dlq_syncs(self) -> None:
+    def _flush_pending_dlq_syncs(self) -> int:
         if self._control_plane is None or not self._pending_dlq_syncs:
-            return
+            return 0
 
+        mirrored = 0
         for message_id, payload in list(self._pending_dlq_syncs.items()):
             try:
                 self._control_plane.post_json("/api/v1/dlq", payload)
             except ConfigError as exc:
                 logger.warning("failed to mirror dlq message %s to control plane: %s", message_id, exc)
+                self._increment_control_sync_total("mirror_failure_total")
                 continue
 
+            mirrored += 1
+            self._increment_control_sync_total("mirror_success_total")
             self._pending_dlq_syncs.pop(message_id, None)
+        return mirrored
 
-    def _flush_completed_decisions(self) -> None:
+    def _flush_completed_decisions(self) -> int:
         if self._control_plane is None or not self._completed_decisions:
-            return
+            return 0
 
+        confirmed = 0
         for message_id, payload in list(self._completed_decisions.items()):
             try:
                 self._control_plane.post_json(
@@ -396,9 +672,13 @@ class ValidatorModule:
                 )
             except ConfigError as exc:
                 logger.warning("failed to confirm dlq action %s to control plane: %s", message_id, exc)
+                self._increment_control_sync_total("mirror_failure_total")
                 continue
 
+            confirmed += 1
+            self._increment_control_sync_total("mirror_success_total")
             self._completed_decisions.pop(message_id, None)
+        return confirmed
 
     def _process_alarm_rules(self, message: dict) -> None:
         rules = self._rules.get("alarm_rules")
@@ -478,11 +758,12 @@ class ValidatorModule:
                 self._active_alarms.pop(alarm_key, None)
 
     def _emit_alarm(self, payload: dict[str, object]) -> None:
-        if not hasattr(self, "_alarm_producer") or self._alarm_producer is None:
+        if self._alarm_producer is None:
             return
 
         self._alarm_producer.send(self._alarm_topic, payload)
         self._alarm_producer.flush()
+        self._increment_emit_total("alarm")
         self._mirror_alarm_to_control_plane(payload)
 
     def _mirror_alarm_to_control_plane(self, payload: dict[str, object]) -> None:
@@ -506,8 +787,10 @@ class ValidatorModule:
         }
         try:
             self._control_plane.post_json("/api/v1/alarms", mirrored)
+            self._increment_control_sync_total("mirror_success_total")
         except ConfigError as exc:
             logger.warning("failed to mirror alarm %s to control plane: %s", payload["alarm_id"], exc)
+            self._increment_control_sync_total("mirror_failure_total")
 
     def _alarm_payload(
         self,
@@ -587,15 +870,15 @@ class ValidatorModule:
     def _commit_record(self, record) -> None:
         if self._consumer is None:
             return
-        topic_partition = record.topic, record.partition
         try:
             from kafka.structs import OffsetAndMetadata, TopicPartition  # type: ignore
         except ModuleNotFoundError as exc:
             raise RuntimeError("kafka-python is required for validator commits") from exc
+
         leader_epoch = getattr(record, "leader_epoch", -1)
         self._consumer.commit(
             {
-                TopicPartition(topic_partition[0], topic_partition[1]): OffsetAndMetadata(
+                TopicPartition(record.topic, record.partition): OffsetAndMetadata(
                     record.offset + 1,
                     None,
                     leader_epoch,

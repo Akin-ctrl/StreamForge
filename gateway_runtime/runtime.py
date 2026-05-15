@@ -9,7 +9,9 @@ import time
 from typing import Dict
 
 from gateway_runtime.adapter_manager import AdapterManager
+from gateway_runtime.aggregator import AggregatorModule
 from gateway_runtime.config import ConfigRepository, ControlPlaneConfigRepository, GatewayConfig
+from gateway_runtime.event_validator import EventValidatorModule
 from gateway_runtime.errors import ConfigError
 from gateway_runtime.health import AdapterState, HealthEvent, HealthReporter
 from gateway_runtime.kafka_manager import KafkaManager
@@ -55,9 +57,13 @@ class GatewayRuntime:
         self._kafka_watchdog_stop_event: asyncio.Event | None = None
         self._overflow_task: asyncio.Task[None] | None = None
         self._overflow_stop_event: asyncio.Event | None = None
+        self._adapter_control_task: asyncio.Task[None] | None = None
+        self._adapter_control_stop_event: asyncio.Event | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._heartbeat_stop_event: asyncio.Event | None = None
         self._validator: ValidatorModule | None = None
+        self._event_validator: EventValidatorModule | None = None
+        self._aggregator: AggregatorModule | None = None
         self._poll_initial_delay = 0
         self._last_cpu_sample: tuple[int, int] | None = None
         self._last_network_sample: tuple[float, int, int] | None = None
@@ -68,11 +74,20 @@ class GatewayRuntime:
         self._poll_backoff_multiplier = float(os.getenv("GATEWAY_POLL_BACKOFF_MULTIPLIER", "2.0"))
         self._kafka_watchdog_interval = int(os.getenv("KAFKA_WATCHDOG_INTERVAL", "10"))
         self._overflow_check_interval = int(os.getenv("OVERFLOW_CHECK_INTERVAL", "60"))
+        self._adapter_control_interval = max(int(os.getenv("GATEWAY_ADAPTER_CONTROL_INTERVAL", "5")), 1)
         self._heartbeat_interval = int(os.getenv("GATEWAY_HEARTBEAT_INTERVAL", "30"))
         self._metrics_path = os.getenv("GATEWAY_METRICS_PATH", "/data")
         self._provisioning_retry_interval = max(int(os.getenv("GATEWAY_PROVISIONING_RETRY_INTERVAL", "5")), 1)
         self._startup_status = "initializing"
         self._startup_error: str | None = None
+        self._adapter_throttle_policy: Dict[str, object] = {
+            "status": "healthy",
+            "mode": "normal",
+            "multiplier": 1.0,
+            "reason": None,
+            "active": False,
+            "updated_at": None,
+        }
 
     def start(self) -> None:
         """Start all runtime components in correct order."""
@@ -102,6 +117,24 @@ class GatewayRuntime:
                 control_plane=control_plane_repo,
             )
             self._validator.start()
+        event_rules = config.events if isinstance(config.events, dict) else {}
+        if event_rules.get("enabled", False):
+            control_plane_repo = self._config_repo if isinstance(self._config_repo, ControlPlaneConfigRepository) else None
+            self._event_validator = EventValidatorModule(
+                bootstrap=self._kafka.bootstrap,
+                gateway_id=config.gateway_id,
+                rules=event_rules,
+                control_plane=control_plane_repo,
+            )
+            self._event_validator.start()
+        aggregate_rules = config.aggregates if isinstance(config.aggregates, dict) else {}
+        if aggregate_rules.get("enabled", True):
+            self._aggregator = AggregatorModule(
+                bootstrap=self._kafka.bootstrap,
+                gateway_id=config.gateway_id,
+                rules=aggregate_rules,
+            )
+            self._aggregator.start()
 
         self._sinks.start_all(config.sinks)
         print("gateway_runtime sinks started", flush=True)
@@ -109,6 +142,9 @@ class GatewayRuntime:
             self._overflow_stop_event = asyncio.Event()
             self._overflow_task = asyncio.create_task(self._overflow_loop())
             print("gateway_runtime overflow monitor started", flush=True)
+        self._adapter_control_stop_event = asyncio.Event()
+        self._adapter_control_task = asyncio.create_task(self._adapter_control_loop())
+        print("gateway_runtime adapter control loop started", flush=True)
         
         # Start polling loop when using Control Plane-backed config repository
         if isinstance(self._config_repo, ControlPlaneConfigRepository):
@@ -142,6 +178,11 @@ class GatewayRuntime:
         if self._overflow_task:
             if not self._overflow_task.done():
                 self._overflow_task.cancel()
+        if self._adapter_control_stop_event:
+            self._adapter_control_stop_event.set()
+        if self._adapter_control_task:
+            if not self._adapter_control_task.done():
+                self._adapter_control_task.cancel()
         if self._heartbeat_stop_event:
             self._heartbeat_stop_event.set()
         if self._heartbeat_task:
@@ -150,6 +191,10 @@ class GatewayRuntime:
 
         if self._validator:
             self._validator.stop()
+        if self._event_validator:
+            self._event_validator.stop()
+        if self._aggregator:
+            self._aggregator.stop()
         if self._overflow is not None:
             self._overflow.stop()
         
@@ -256,6 +301,19 @@ class GatewayRuntime:
                 print(f"gateway_runtime overflow monitor error: {exc}", flush=True)
                 await asyncio.sleep(self._overflow_check_interval)
 
+    async def _adapter_control_loop(self) -> None:
+        """Translate runtime pressure into adapter throttle policy."""
+        assert self._adapter_control_stop_event is not None
+        while not self._adapter_control_stop_event.is_set():
+            try:
+                self._reconcile_adapter_throttle_policy()
+                await asyncio.sleep(self._adapter_control_interval)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                print(f"gateway_runtime adapter control error: {exc}", flush=True)
+                await asyncio.sleep(self._adapter_control_interval)
+
     def _next_poll_backoff(self, current_delay: float) -> float:
         """Calculate the next poll delay without allowing zero-delay retry loops."""
         if current_delay <= 0:
@@ -274,6 +332,10 @@ class GatewayRuntime:
             return True
 
         if old.validation != new.validation:
+            return True
+        if old.events != new.events:
+            return True
+        if old.aggregates != new.aggregates:
             return True
         
         old_by_id = {a.adapter_id: a for a in old.adapters}
@@ -354,6 +416,32 @@ class GatewayRuntime:
                 )
                 self._validator.start()
 
+        if old_config is None or old_config.events != new_config.events:
+            if self._event_validator:
+                self._event_validator.stop()
+                self._event_validator = None
+            if new_config.events.get("enabled", False):
+                control_plane_repo = self._config_repo if isinstance(self._config_repo, ControlPlaneConfigRepository) else None
+                self._event_validator = EventValidatorModule(
+                    bootstrap=self._kafka.bootstrap,
+                    gateway_id=new_config.gateway_id,
+                    rules=new_config.events,
+                    control_plane=control_plane_repo,
+                )
+                self._event_validator.start()
+
+        if old_config is None or old_config.aggregates != new_config.aggregates:
+            if self._aggregator:
+                self._aggregator.stop()
+                self._aggregator = None
+            if new_config.aggregates.get("enabled", True):
+                self._aggregator = AggregatorModule(
+                    bootstrap=self._kafka.bootstrap,
+                    gateway_id=new_config.gateway_id,
+                    rules=new_config.aggregates,
+                )
+                self._aggregator.start()
+
 
     def health_snapshot(self) -> Dict[str, object]:
         """Return aggregated health snapshot for the gateway."""
@@ -378,12 +466,15 @@ class GatewayRuntime:
             "adapters": self._adapters.health(),
             "sinks": self._sinks.health(),
             "validator": self._validator.health() if self._validator else {"status": "disabled"},
+            "event_validator": self._event_validator.health() if self._event_validator else {"status": "disabled"},
+            "aggregator": self._aggregator.health() if self._aggregator else {"status": "disabled"},
             "control_plane": (
                 self._config_repo.health()
                 if isinstance(self._config_repo, ControlPlaneConfigRepository)
                 else {"status": "disabled", "mode": "file"}
             ),
             "overflow": self._overflow.snapshot() if self._overflow is not None else {"status": "disabled"},
+            "adapter_control": dict(self._adapter_throttle_policy),
         }
         for component, details in snapshot.items():
             status = str(details.get("status", "unknown"))
@@ -409,7 +500,26 @@ class GatewayRuntime:
         sinks = snapshot.get("sinks", {}).get("sinks", {})
         kafka_reachable = 1 if snapshot.get("kafka", {}).get("reachable") else 0
         validator_status = 1 if snapshot.get("validator", {}).get("status") not in {"failed", "stopped"} else 0
+        event_validator_status = 1 if snapshot.get("event_validator", {}).get("status") not in {"failed", "stopped"} else 0
+        validator = snapshot.get("validator", {})
+        validator_pipeline = validator.get("pipeline", {}) if isinstance(validator, dict) else {}
+        validator_queues = validator_pipeline.get("queues", {}) if isinstance(validator_pipeline, dict) else {}
+        validator_stages = validator_pipeline.get("stages", {}) if isinstance(validator_pipeline, dict) else {}
+        validator_backpressure = validator.get("backpressure", {}) if isinstance(validator, dict) else {}
+        validator_quality_totals = validator.get("quality_totals", {}) if isinstance(validator, dict) else {}
+        validator_emit_totals = validator.get("emit_totals", {}) if isinstance(validator, dict) else {}
+        event_validator = snapshot.get("event_validator", {})
+        event_validator_pipeline = event_validator.get("pipeline", {}) if isinstance(event_validator, dict) else {}
+        event_validator_queues = event_validator_pipeline.get("queues", {}) if isinstance(event_validator_pipeline, dict) else {}
+        event_validator_stages = event_validator_pipeline.get("stages", {}) if isinstance(event_validator_pipeline, dict) else {}
+        event_validator_backpressure = event_validator.get("backpressure", {}) if isinstance(event_validator, dict) else {}
+        event_validator_validated_totals = event_validator.get("validated_totals", {}) if isinstance(event_validator, dict) else {}
+        event_validator_emit_totals = event_validator.get("emit_totals", {}) if isinstance(event_validator, dict) else {}
+        aggregator = snapshot.get("aggregator", {})
+        aggregator_emitted_totals = aggregator.get("emitted_totals", {}) if isinstance(aggregator, dict) else {}
+        aggregator_open_windows = aggregator.get("open_windows", {}) if isinstance(aggregator, dict) else {}
         overflow = snapshot.get("overflow", {})
+        adapter_control = snapshot.get("adapter_control", {})
         lines = [
             "# TYPE gateway_kafka_reachable gauge",
             f"gateway_kafka_reachable {kafka_reachable}",
@@ -419,12 +529,200 @@ class GatewayRuntime:
             f"gateway_sinks_running {len([state for state in sinks.values() if state == 'running'])}",
             "# TYPE gateway_validator_up gauge",
             f"gateway_validator_up {validator_status}",
+            "# TYPE gateway_event_validator_up gauge",
+            f"gateway_event_validator_up {event_validator_status}",
             "# TYPE gateway_disk_usage_percent gauge",
             f"gateway_disk_usage_percent {float(overflow.get('disk_usage_percent', 0.0))}",
             "# TYPE gateway_overflow_blocked gauge",
             f"gateway_overflow_blocked {1 if overflow.get('blocked') else 0}",
+            "# TYPE gateway_adapter_throttle_active gauge",
+            f"gateway_adapter_throttle_active {1 if adapter_control.get('active') else 0}",
+            "# TYPE gateway_adapter_throttle_multiplier gauge",
+            f"gateway_adapter_throttle_multiplier {float(adapter_control.get('multiplier', 1.0))}",
+            "# TYPE gateway_validator_backpressure_active gauge",
+            f"gateway_validator_backpressure_active {1 if validator_backpressure.get('active') else 0}",
+            "# TYPE gateway_validator_backpressure_events_total counter",
+            f"gateway_validator_backpressure_events_total {int(validator_backpressure.get('events_total', 0))}",
+            "# TYPE gateway_event_validator_backpressure_active gauge",
+            f"gateway_event_validator_backpressure_active {1 if event_validator_backpressure.get('active') else 0}",
+            "# TYPE gateway_event_validator_backpressure_events_total counter",
+            f"gateway_event_validator_backpressure_events_total {int(event_validator_backpressure.get('events_total', 0))}",
+            "# TYPE gateway_validator_ingress_queue_depth gauge",
+            f"gateway_validator_ingress_queue_depth {int((validator_queues.get('ingress') or {}).get('depth', 0))}",
+            "# TYPE gateway_validator_publish_queue_depth gauge",
+            f"gateway_validator_publish_queue_depth {int((validator_queues.get('publish') or {}).get('depth', 0))}",
+            "# TYPE gateway_validator_completion_queue_depth gauge",
+            f"gateway_validator_completion_queue_depth {int((validator_queues.get('completion') or {}).get('depth', 0))}",
+            "# TYPE gateway_event_validator_ingress_queue_depth gauge",
+            f"gateway_event_validator_ingress_queue_depth {int((event_validator_queues.get('ingress') or {}).get('depth', 0))}",
+            "# TYPE gateway_event_validator_publish_queue_depth gauge",
+            f"gateway_event_validator_publish_queue_depth {int((event_validator_queues.get('publish') or {}).get('depth', 0))}",
+            "# TYPE gateway_event_validator_completion_queue_depth gauge",
+            f"gateway_event_validator_completion_queue_depth {int((event_validator_queues.get('completion') or {}).get('depth', 0))}",
+            "# TYPE gateway_validator_quality_good_total counter",
+            f"gateway_validator_quality_good_total {int(validator_quality_totals.get('good', 0))}",
+            "# TYPE gateway_validator_quality_suspect_total counter",
+            f"gateway_validator_quality_suspect_total {int(validator_quality_totals.get('suspect', 0))}",
+            "# TYPE gateway_validator_quality_uncertain_total counter",
+            f"gateway_validator_quality_uncertain_total {int(validator_quality_totals.get('uncertain', 0))}",
+            "# TYPE gateway_validator_quality_bad_total counter",
+            f"gateway_validator_quality_bad_total {int(validator_quality_totals.get('bad', 0))}",
+            "# TYPE gateway_validator_clean_emitted_total counter",
+            f"gateway_validator_clean_emitted_total {int(validator_emit_totals.get('clean', 0))}",
+            "# TYPE gateway_validator_dlq_emitted_total counter",
+            f"gateway_validator_dlq_emitted_total {int(validator_emit_totals.get('dlq', 0))}",
+            "# TYPE gateway_validator_alarm_emitted_total counter",
+            f"gateway_validator_alarm_emitted_total {int(validator_emit_totals.get('alarm', 0))}",
+            "# TYPE gateway_aggregator_up gauge",
+            f"gateway_aggregator_up {1 if aggregator.get('status') not in {'failed', 'stopped', 'disabled'} else 0}",
+            "# TYPE gateway_aggregator_samples_total counter",
+            f"gateway_aggregator_samples_total {int(aggregator.get('samples_total', 0))}",
         ]
+        for stage_name in ("ingress", "validation", "publish", "control_sync"):
+            stage = validator_stages.get(stage_name, {}) if isinstance(validator_stages, dict) else {}
+            lines.extend(
+                [
+                    f"# TYPE gateway_validator_{stage_name}_processed_total counter",
+                    f"gateway_validator_{stage_name}_processed_total {int(stage.get('processed_total', 0))}",
+                    f"# TYPE gateway_validator_{stage_name}_errors_total counter",
+                    f"gateway_validator_{stage_name}_errors_total {int(stage.get('errors_total', 0))}",
+                    f"# TYPE gateway_validator_{stage_name}_blocked_total counter",
+                    f"gateway_validator_{stage_name}_blocked_total {int(stage.get('blocked_total', 0))}",
+                    f"# TYPE gateway_validator_{stage_name}_avg_latency_ms gauge",
+                    f"gateway_validator_{stage_name}_avg_latency_ms {float(stage.get('avg_latency_ms', 0.0))}",
+                    f"# TYPE gateway_validator_{stage_name}_max_latency_ms gauge",
+                    f"gateway_validator_{stage_name}_max_latency_ms {float(stage.get('max_latency_ms', 0.0))}",
+                ]
+            )
+        for outcome_name, total in event_validator_validated_totals.items():
+            safe_name = str(outcome_name).replace(".", "_")
+            lines.extend(
+                [
+                    f"# TYPE gateway_event_validator_{safe_name}_total counter",
+                    f"gateway_event_validator_{safe_name}_total {int(total)}",
+                ]
+            )
+        for emit_name, emit_total in event_validator_emit_totals.items():
+            safe_name = str(emit_name).replace(".", "_")
+            lines.extend(
+                [
+                    f"# TYPE gateway_event_validator_{safe_name}_emitted_total counter",
+                    f"gateway_event_validator_{safe_name}_emitted_total {int(emit_total)}",
+                ]
+            )
+        for stage_name in ("ingress", "validation", "publish", "control_sync"):
+            stage = event_validator_stages.get(stage_name, {}) if isinstance(event_validator_stages, dict) else {}
+            lines.extend(
+                [
+                    f"# TYPE gateway_event_validator_{stage_name}_processed_total counter",
+                    f"gateway_event_validator_{stage_name}_processed_total {int(stage.get('processed_total', 0))}",
+                    f"# TYPE gateway_event_validator_{stage_name}_errors_total counter",
+                    f"gateway_event_validator_{stage_name}_errors_total {int(stage.get('errors_total', 0))}",
+                    f"# TYPE gateway_event_validator_{stage_name}_blocked_total counter",
+                    f"gateway_event_validator_{stage_name}_blocked_total {int(stage.get('blocked_total', 0))}",
+                    f"# TYPE gateway_event_validator_{stage_name}_avg_latency_ms gauge",
+                    f"gateway_event_validator_{stage_name}_avg_latency_ms {float(stage.get('avg_latency_ms', 0.0))}",
+                    f"# TYPE gateway_event_validator_{stage_name}_max_latency_ms gauge",
+                    f"gateway_event_validator_{stage_name}_max_latency_ms {float(stage.get('max_latency_ms', 0.0))}",
+                ]
+            )
+        for resolution_name in ("1s", "1min"):
+            safe_name = resolution_name.replace(".", "_")
+            lines.extend(
+                [
+                    f"# TYPE gateway_aggregator_{safe_name}_emitted_total counter",
+                    f"gateway_aggregator_{safe_name}_emitted_total {int(aggregator_emitted_totals.get(resolution_name, 0))}",
+                    f"# TYPE gateway_aggregator_{safe_name}_open_windows gauge",
+                    f"gateway_aggregator_{safe_name}_open_windows {int(aggregator_open_windows.get(resolution_name, 0))}",
+                ]
+            )
         return "\n".join(lines) + "\n"
+
+    def _reconcile_adapter_throttle_policy(self) -> None:
+        policy = self._compute_adapter_throttle_policy()
+        self._adapter_throttle_policy = policy
+        self._adapters.apply_throttle_policy(policy)
+
+    def _compute_adapter_throttle_policy(self) -> Dict[str, object]:
+        validator_snapshot = self._validator.health() if self._validator else {"status": "disabled"}
+        overflow_snapshot = self._overflow.snapshot() if self._overflow is not None else {"status": "disabled", "stage": "normal", "blocked": False}
+        sink_snapshot = self._sinks.health()
+
+        validator_pipeline = validator_snapshot.get("pipeline", {}) if isinstance(validator_snapshot, dict) else {}
+        validator_queues = validator_pipeline.get("queues", {}) if isinstance(validator_pipeline, dict) else {}
+        validator_stages = validator_pipeline.get("stages", {}) if isinstance(validator_pipeline, dict) else {}
+        validator_backpressure = validator_snapshot.get("backpressure", {}) if isinstance(validator_snapshot, dict) else {}
+        ingress_queue = validator_queues.get("ingress", {}) if isinstance(validator_queues, dict) else {}
+        publish_queue = validator_queues.get("publish", {}) if isinstance(validator_queues, dict) else {}
+        completion_queue = validator_queues.get("completion", {}) if isinstance(validator_queues, dict) else {}
+        publish_stage = validator_stages.get("publish", {}) if isinstance(validator_stages, dict) else {}
+
+        queue_utilization = max(
+            self._queue_utilization(ingress_queue),
+            self._queue_utilization(publish_queue),
+            self._queue_utilization(completion_queue),
+        )
+        publish_latency_ms = float(publish_stage.get("avg_latency_ms", 0.0))
+        blocked_events = sum(
+            int((validator_stages.get(stage_name, {}) if isinstance(validator_stages, dict) else {}).get("blocked_total", 0))
+            for stage_name in ("ingress", "validation", "publish", "control_sync")
+        )
+        overflow_stage = str(overflow_snapshot.get("stage", "normal"))
+        overflow_blocked = bool(overflow_snapshot.get("blocked"))
+        sink_status = str(sink_snapshot.get("status", "unknown"))
+        backpressure_active = bool(validator_backpressure.get("active"))
+
+        mode = "normal"
+        multiplier = 1.0
+        reason: str | None = None
+
+        if overflow_blocked or overflow_stage == "block":
+            mode = "critical"
+            multiplier = 10.0
+            reason = "overflow_blocked"
+        elif sink_status not in {"healthy", "disabled"} or overflow_stage == "evict" or queue_utilization >= 0.8:
+            mode = "high"
+            multiplier = 5.0
+            reason = "sink_or_queue_pressure"
+        elif backpressure_active or overflow_stage == "downsample" or publish_latency_ms >= 250.0 or blocked_events > 0 or queue_utilization >= 0.5:
+            mode = "elevated"
+            multiplier = 2.0
+            reason = "validator_backpressure"
+        elif overflow_stage == "compress" or queue_utilization >= 0.25:
+            mode = "elevated"
+            multiplier = 1.5
+            reason = "preemptive_pressure_relief"
+
+        status = "healthy"
+        if mode == "critical":
+            status = "failed"
+        elif mode != "normal":
+            status = "degraded"
+
+        return {
+            "status": status,
+            "mode": mode,
+            "multiplier": multiplier,
+            "reason": reason,
+            "active": mode != "normal",
+            "validator_backpressure_active": backpressure_active,
+            "queue_utilization": round(queue_utilization, 3),
+            "publish_latency_ms": round(publish_latency_ms, 2),
+            "blocked_events": blocked_events,
+            "overflow_stage": overflow_stage,
+            "sink_status": sink_status,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @staticmethod
+    def _queue_utilization(queue_snapshot: object) -> float:
+        if not isinstance(queue_snapshot, dict):
+            return 0.0
+        depth = int(queue_snapshot.get("depth", 0))
+        capacity = int(queue_snapshot.get("capacity", 0))
+        if capacity <= 0:
+            return 0.0
+        return max(0.0, min(depth / capacity, 1.0))
 
     def _send_heartbeat(self) -> None:
         """Send a health and metrics heartbeat to the control plane."""
