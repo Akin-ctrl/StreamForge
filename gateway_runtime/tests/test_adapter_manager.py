@@ -17,14 +17,83 @@ class AdapterManagerMetadataTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=False):
             self.assertEqual(AdapterManager._image_for("modbus_tcp"), "streamforge/gateway_runtime:dev")
 
+    def test_modbus_rtu_defaults_to_runtime_image_for_dev_stack(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            self.assertEqual(AdapterManager._image_for("modbus_rtu"), "streamforge/gateway_runtime:dev")
+
     def test_modbus_tcp_image_can_be_overridden(self) -> None:
         with patch.dict(os.environ, {"ADAPTER_MODBUS_TCP_IMAGE": "streamforge/adapter_modbus_tcp:dev"}, clear=False):
             self.assertEqual(AdapterManager._image_for("modbus_tcp"), "streamforge/adapter_modbus_tcp:dev")
+
+    def test_modbus_rtu_image_can_be_overridden(self) -> None:
+        with patch.dict(os.environ, {"ADAPTER_MODBUS_RTU_IMAGE": "streamforge/adapter_modbus_rtu:dev"}, clear=False):
+            self.assertEqual(AdapterManager._image_for("modbus_rtu"), "streamforge/adapter_modbus_rtu:dev")
 
     def test_modbus_tcp_launch_command_is_explicit(self) -> None:
         self.assertEqual(
             AdapterManager._command_for("modbus_tcp"),
             ["python", "-m", "adapters.adapter_modbus_tcp.main"],
+        )
+
+    def test_modbus_rtu_launch_command_is_explicit(self) -> None:
+        self.assertEqual(
+            AdapterManager._command_for("modbus_rtu"),
+            ["python", "-m", "adapters.adapter_modbus_rtu.main"],
+        )
+
+    def test_modbus_rtu_compose_service_label_matches_adapter(self) -> None:
+        labels = AdapterManager._compose_labels("modbus_rtu")
+        self.assertEqual(labels["com.docker.compose.service"], "adapter_modbus_rtu")
+
+    def test_mqtt_defaults_to_runtime_image_for_dev_stack(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            self.assertEqual(AdapterManager._image_for("mqtt"), "streamforge/gateway_runtime:dev")
+
+    def test_mqtt_image_can_be_overridden(self) -> None:
+        with patch.dict(os.environ, {"ADAPTER_MQTT_IMAGE": "streamforge/adapter_mqtt:dev"}, clear=False):
+            self.assertEqual(AdapterManager._image_for("mqtt"), "streamforge/adapter_mqtt:dev")
+
+    def test_mqtt_launch_command_is_explicit(self) -> None:
+        self.assertEqual(
+            AdapterManager._command_for("mqtt"),
+            ["python", "-m", "adapters.adapter_mqtt.main"],
+        )
+
+    def test_mqtt_compose_service_label_matches_adapter(self) -> None:
+        labels = AdapterManager._compose_labels("mqtt")
+        self.assertEqual(labels["com.docker.compose.service"], "adapter_mqtt")
+
+    def test_opcua_defaults_to_runtime_image_for_dev_stack(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            self.assertEqual(AdapterManager._image_for("opcua"), "streamforge/gateway_runtime:dev")
+
+    def test_opcua_image_can_be_overridden(self) -> None:
+        with patch.dict(os.environ, {"ADAPTER_OPCUA_IMAGE": "streamforge/adapter_opcua:dev"}, clear=False):
+            self.assertEqual(AdapterManager._image_for("opcua"), "streamforge/adapter_opcua:dev")
+
+    def test_opcua_launch_command_is_explicit(self) -> None:
+        self.assertEqual(
+            AdapterManager._command_for("opcua"),
+            ["python", "-m", "adapters.adapter_opcua.main"],
+        )
+
+    def test_opcua_compose_service_label_matches_adapter(self) -> None:
+        labels = AdapterManager._compose_labels("opcua")
+        self.assertEqual(labels["com.docker.compose.service"], "adapter_opcua")
+
+    def test_device_mappings_include_serial_port_and_explicit_devices(self) -> None:
+        mappings = AdapterManager._device_mappings(
+            {
+                "port": "/dev/ttyUSB0",
+                "devices": ["/dev/ttyS0:/dev/ttyS0:rwm"],
+            }
+        )
+        self.assertEqual(
+            mappings,
+            [
+                "/dev/ttyS0:/dev/ttyS0:rwm",
+                "/dev/ttyUSB0:/dev/ttyUSB0:rwm",
+            ],
         )
 
     def test_unsupported_adapter_type_raises(self) -> None:

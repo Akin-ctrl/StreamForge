@@ -87,6 +87,48 @@ const BUILT_IN_ADAPTERS: CatalogAdapterType[] = [
       { key: 'poll_interval_ms', label: 'Poll Interval (ms)', input_type: 'number', required: true, default: 1000 },
     ],
   },
+  {
+    adapter_type: 'modbus_rtu',
+    label: 'Modbus RTU',
+    supports_registers: true,
+    fields: [
+      { key: 'port', label: 'Serial Port', input_type: 'text', required: true, default: '/dev/ttyUSB0' },
+      { key: 'baudrate', label: 'Baud Rate', input_type: 'number', required: true, default: 9600 },
+      { key: 'bytesize', label: 'Data Bits', input_type: 'number', required: true, default: 8 },
+      { key: 'parity', label: 'Parity', input_type: 'text', required: true, default: 'N' },
+      { key: 'stopbits', label: 'Stop Bits', input_type: 'number', required: true, default: 1 },
+      { key: 'timeout', label: 'Timeout (s)', input_type: 'number', required: true, default: 1 },
+      { key: 'unit_id', label: 'Unit ID', input_type: 'number', required: true, default: 1 },
+      { key: 'poll_interval_ms', label: 'Poll Interval (ms)', input_type: 'number', required: true, default: 1000 },
+    ],
+  },
+  {
+    adapter_type: 'mqtt',
+    label: 'MQTT',
+    supports_registers: false,
+    fields: [
+      { key: 'broker_host', label: 'Broker Host', input_type: 'text', required: true, default: 'mqtt-broker' },
+      { key: 'broker_port', label: 'Broker Port', input_type: 'number', required: true, default: 1883 },
+      { key: 'client_id', label: 'Client ID', input_type: 'text', required: true, default: 'streamforge-mqtt' },
+      { key: 'qos', label: 'QoS', input_type: 'number', required: true, default: 1 },
+      { key: 'keepalive_seconds', label: 'Keepalive (s)', input_type: 'number', required: true, default: 60 },
+      { key: 'poll_interval_ms', label: 'Throttle Interval Hint (ms)', input_type: 'number', required: true, default: 1000 },
+    ],
+  },
+  {
+    adapter_type: 'opcua',
+    label: 'OPC UA',
+    supports_registers: false,
+    fields: [
+      { key: 'endpoint', label: 'Endpoint', input_type: 'text', required: true, default: 'opc.tcp://opcua-server:4840' },
+      { key: 'security_mode', label: 'Security Mode', input_type: 'text', required: true, default: 'None' },
+      { key: 'security_policy', label: 'Security Policy', input_type: 'text', required: true, default: 'None' },
+      { key: 'username', label: 'Username', input_type: 'text', required: false, default: '' },
+      { key: 'password', label: 'Password', input_type: 'text', required: false, default: '' },
+      { key: 'subscription_interval_ms', label: 'Subscription Interval (ms)', input_type: 'number', required: true, default: 1000 },
+      { key: 'poll_interval_ms', label: 'Throttle Interval Hint (ms)', input_type: 'number', required: true, default: 1000 },
+    ],
+  },
 ]
 const BUILT_IN_SINKS: CatalogSinkType[] = [
   {

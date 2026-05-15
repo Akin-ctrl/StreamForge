@@ -59,8 +59,9 @@ class AdapterManager:
                 "adapter_id": config.adapter_id,
                 "adapter_type": config.adapter_type,
             }
-            labels.update(self._compose_labels())
+            labels.update(self._compose_labels(config.adapter_type))
             command = self._command_for(config.adapter_type)
+            devices = self._device_mappings(config.config)
 
             container = self._ensure_container(
                 client=client,
@@ -70,6 +71,7 @@ class AdapterManager:
                 network=network,
                 labels=labels,
                 command=command,
+                devices=devices,
             )
 
             self._containers[config.adapter_id] = container.id
@@ -111,8 +113,9 @@ class AdapterManager:
             "adapter_id": config.adapter_id,
             "adapter_type": config.adapter_type,
         }
-        labels.update(self._compose_labels())
+        labels.update(self._compose_labels(config.adapter_type))
         command = self._command_for(config.adapter_type)
+        devices = self._device_mappings(config.config)
         
         container = self._ensure_container(
             client=client,
@@ -122,6 +125,7 @@ class AdapterManager:
             network=network,
             labels=labels,
             command=command,
+            devices=devices,
         )
         
         self._containers[config.adapter_id] = container.id
@@ -227,6 +231,7 @@ class AdapterManager:
         network: str,
         labels: Dict[str, str],
         command: list[str],
+        devices: list[str],
     ):
         try:
             container = client.containers.get(name)
@@ -242,6 +247,7 @@ class AdapterManager:
             network=network,
             labels=labels,
             command=command,
+            devices=devices,
             restart_policy={"Name": "unless-stopped"},
         )
 
@@ -261,6 +267,12 @@ class AdapterManager:
     def _image_for(adapter_type: str) -> str:
         if adapter_type == "modbus_tcp":
             return os.getenv("ADAPTER_MODBUS_TCP_IMAGE", "streamforge/gateway_runtime:dev")
+        if adapter_type == "modbus_rtu":
+            return os.getenv("ADAPTER_MODBUS_RTU_IMAGE", "streamforge/gateway_runtime:dev")
+        if adapter_type == "mqtt":
+            return os.getenv("ADAPTER_MQTT_IMAGE", "streamforge/gateway_runtime:dev")
+        if adapter_type == "opcua":
+            return os.getenv("ADAPTER_OPCUA_IMAGE", "streamforge/gateway_runtime:dev")
 
         raise AdapterStartError(f"Unsupported adapter type: {adapter_type}")
 
@@ -268,17 +280,45 @@ class AdapterManager:
     def _command_for(adapter_type: str) -> list[str]:
         if adapter_type == "modbus_tcp":
             return ["python", "-m", "adapters.adapter_modbus_tcp.main"]
+        if adapter_type == "modbus_rtu":
+            return ["python", "-m", "adapters.adapter_modbus_rtu.main"]
+        if adapter_type == "mqtt":
+            return ["python", "-m", "adapters.adapter_mqtt.main"]
+        if adapter_type == "opcua":
+            return ["python", "-m", "adapters.adapter_opcua.main"]
 
         raise AdapterStartError(f"Unsupported adapter type: {adapter_type}")
 
     @staticmethod
-    def _compose_labels() -> Dict[str, str]:
+    def _compose_labels(adapter_type: str = "modbus_tcp") -> Dict[str, str]:
         project = os.getenv("COMPOSE_PROJECT_NAME") or os.getenv("DOCKER_COMPOSE_PROJECT") or "deploy"
+        service = "adapter_modbus_tcp"
+        if adapter_type == "modbus_rtu":
+            service = "adapter_modbus_rtu"
+        elif adapter_type == "mqtt":
+            service = "adapter_mqtt"
+        elif adapter_type == "opcua":
+            service = "adapter_opcua"
         return {
             "com.docker.compose.project": project,
-            "com.docker.compose.service": "adapter_modbus_tcp",
+            "com.docker.compose.service": service,
             "com.docker.compose.oneoff": "False",
         }
+
+    @staticmethod
+    def _device_mappings(config: dict) -> list[str]:
+        devices: list[str] = []
+        raw_devices = config.get("devices")
+        if isinstance(raw_devices, list):
+            for item in raw_devices:
+                if isinstance(item, str) and item.strip():
+                    devices.append(item.strip())
+        serial_port = config.get("port") or config.get("device")
+        if isinstance(serial_port, str) and serial_port.startswith("/dev/"):
+            mapping = f"{serial_port}:{serial_port}:rwm"
+            if mapping not in devices:
+                devices.append(mapping)
+        return devices
 
     @staticmethod
     def _inject_shared_env(env: Dict[str, str], config: dict) -> None:
