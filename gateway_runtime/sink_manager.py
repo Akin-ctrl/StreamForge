@@ -184,6 +184,8 @@ class SinkManager:
             return os.getenv("SINK_KAFKA_IMAGE", "streamforge/gateway_runtime:dev")
         if sink_type in {"http", "sink-http", "sink_http"}:
             return os.getenv("SINK_HTTP_IMAGE", "streamforge/gateway_runtime:dev")
+        if sink_type in {"alert_router", "sink-alert-router", "sink_alert_router"}:
+            return os.getenv("SINK_ALERT_ROUTER_IMAGE", "streamforge/gateway_runtime:dev")
         raise AdapterStartError(f"Unsupported sink type: {sink_type}")
 
     @staticmethod
@@ -194,6 +196,8 @@ class SinkManager:
             return ["python", "-m", "sinks.sink_kafka.main"]
         if sink_type in {"http", "sink-http", "sink_http"}:
             return ["python", "-m", "sinks.sink_http.main"]
+        if sink_type in {"alert_router", "sink-alert-router", "sink_alert_router"}:
+            return ["python", "-m", "sinks.sink_alert_router.main"]
         raise AdapterStartError(f"Unsupported sink type: {sink_type}")
 
     @staticmethod
@@ -204,6 +208,8 @@ class SinkManager:
             service = "sink_kafka"
         elif sink_type in {"http", "sink-http", "sink_http"}:
             service = "sink_http"
+        elif sink_type in {"alert_router", "sink-alert-router", "sink_alert_router"}:
+            service = "sink_alert_router"
         return {
             "com.docker.compose.project": project,
             "com.docker.compose.service": service,
