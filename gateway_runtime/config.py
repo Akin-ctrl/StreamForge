@@ -39,6 +39,8 @@ class GatewayConfig:
     adapters: List[AdapterConfig]
     sinks: List[SinkConfig]
     validation: dict
+    events: dict
+    aggregates: dict
     version: str | None = None
 
 
@@ -114,6 +116,10 @@ class ConfigRepository:
 
         if "validation" in raw and not isinstance(raw["validation"], dict):
             raise ConfigError("'validation' must be an object")
+        if "events" in raw and not isinstance(raw["events"], dict):
+            raise ConfigError("'events' must be an object")
+        if "aggregates" in raw and not isinstance(raw["aggregates"], dict):
+            raise ConfigError("'aggregates' must be an object")
 
     def _config_from_raw(self, raw: dict, source: str) -> GatewayConfig:
         """Validate and hydrate a strongly typed gateway config."""
@@ -144,6 +150,8 @@ class ConfigRepository:
             adapters=adapters,
             sinks=sinks,
             validation=raw.get("validation", {}),
+            events=raw.get("events", {}),
+            aggregates=raw.get("aggregates", {}),
             version=str(raw["version"]) if "version" in raw and raw["version"] is not None else None,
         )
 

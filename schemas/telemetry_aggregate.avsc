@@ -1,0 +1,56 @@
+{
+  "type": "record",
+  "name": "TelemetryAggregateEnvelope",
+  "namespace": "streamforge.telemetry.aggregate",
+  "fields": [
+    {"name": "asset_id", "type": "string"},
+    {"name": "parameter", "type": "string"},
+    {"name": "unit", "type": "string"},
+    {"name": "classification", "type": "string"},
+    {"name": "window_start", "type": "string"},
+    {"name": "window_end", "type": "string"},
+    {
+      "name": "aggregates",
+      "type": {
+        "type": "record",
+        "name": "TelemetryAggregateStats",
+        "fields": [
+          {"name": "avg", "type": "double"},
+          {"name": "min", "type": "double"},
+          {"name": "max", "type": "double"},
+          {"name": "stddev", "type": "double"},
+          {"name": "count", "type": "long"},
+          {"name": "p50", "type": "double"},
+          {"name": "p95", "type": "double"},
+          {"name": "p99", "type": "double"}
+        ]
+      }
+    },
+    {
+      "name": "quality_summary",
+      "type": {
+        "type": "record",
+        "name": "TelemetryAggregateQualitySummary",
+        "fields": [
+          {"name": "good_samples", "type": "long"},
+          {"name": "suspect_samples", "type": "long"},
+          {"name": "uncertain_samples", "type": "long"},
+          {"name": "bad_samples", "type": "long"},
+          {"name": "pct_good", "type": "double"}
+        ]
+      }
+    },
+    {
+      "name": "metadata",
+      "type": {
+        "type": "record",
+        "name": "TelemetryAggregateMetadata",
+        "fields": [
+          {"name": "aggregation_version", "type": "string"},
+          {"name": "resolution", "type": "string"},
+          {"name": "source_topic", "type": "string"}
+        ]
+      }
+    }
+  ]
+}
