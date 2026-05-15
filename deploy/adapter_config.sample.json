@@ -6,9 +6,13 @@
   "registers": [
     {"address": 40001, "param": "temperature", "type": "float32", "unit": "celsius"}
   ],
+  "coils": [
+    {"address": 1, "param": "motor_running", "event_type": "motor_state_change"}
+  ],
   "output": {
     "kafka_bootstrap": "kafka:9092",
     "topic": "telemetry.raw",
+    "events_topic": "events.raw",
     "asset_id": "demo_sensor_01"
   }
 }

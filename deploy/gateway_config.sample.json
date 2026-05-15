@@ -12,9 +12,13 @@
         "registers": [
           {"address": 40001, "param": "temperature", "type": "float32", "unit": "celsius"}
         ],
+        "coils": [
+          {"address": 1, "param": "motor_running", "event_type": "motor_state_change"}
+        ],
         "output": {
           "kafka_bootstrap": "kafka:9092",
           "topic": "telemetry.raw",
+          "events_topic": "events.raw",
           "asset_id": "demo_sensor_01"
         }
       }
@@ -48,6 +52,28 @@
       }
     ]
   },
+  "events": {
+    "enabled": true,
+    "raw_topic": "events.raw",
+    "clean_topic": "events.clean",
+    "dlq_topic": "dlq.events"
+  },
+  "aggregates": {
+    "enabled": true,
+    "source_topic": "telemetry.clean",
+    "resolutions": {
+      "1s": {
+        "enabled": true,
+        "topic": "telemetry.1s",
+        "window_seconds": 1
+      },
+      "1min": {
+        "enabled": true,
+        "topic": "telemetry.1min",
+        "window_seconds": 60
+      }
+    }
+  },
   "sinks": [
     {
       "sink_id": "timescaledb-primary",
@@ -59,6 +85,45 @@
         "group_id": "sf-sink-timescaledb",
         "db_dsn": "postgresql://streamforge:streamforge@timescaledb:5432/streamforge",
         "table": "telemetry_clean"
+      }
+    },
+    {
+      "sink_id": "timescaledb-aggregate-1s",
+      "sink_type": "timescaledb",
+      "status": "active",
+      "config": {
+        "kafka_bootstrap": "kafka:9092",
+        "topic": "telemetry.1s",
+        "group_id": "sf-sink-timescaledb-1s",
+        "db_dsn": "postgresql://streamforge:streamforge@timescaledb:5432/streamforge",
+        "table": "telemetry_1s",
+        "message_format": "aggregate"
+      }
+    },
+    {
+      "sink_id": "timescaledb-aggregate-1min",
+      "sink_type": "timescaledb",
+      "status": "active",
+      "config": {
+        "kafka_bootstrap": "kafka:9092",
+        "topic": "telemetry.1min",
+        "group_id": "sf-sink-timescaledb-1min",
+        "db_dsn": "postgresql://streamforge:streamforge@timescaledb:5432/streamforge",
+        "table": "telemetry_1min",
+        "message_format": "aggregate"
+      }
+    },
+    {
+      "sink_id": "timescaledb-events",
+      "sink_type": "timescaledb",
+      "status": "active",
+      "config": {
+        "kafka_bootstrap": "kafka:9092",
+        "topic": "events.clean",
+        "group_id": "sf-sink-timescaledb-events",
+        "db_dsn": "postgresql://streamforge:streamforge@timescaledb:5432/streamforge",
+        "table": "events",
+        "message_format": "event"
       }
     }
   ]

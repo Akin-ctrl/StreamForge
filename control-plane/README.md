@@ -57,7 +57,7 @@ The container entrypoint runs `alembic upgrade head` before starting `uvicorn`, 
 From [deploy/docker-compose.dev.yml](deploy/docker-compose.dev.yml):
 
 - `postgres` runs on `localhost:5432`
-- `control_plane` runs on `localhost:8000`
+- `control_plane` runs on `localhost:8001`
 
 The default compose stack keeps first-user bootstrap intact for the UI. If you explicitly want a fully seeded demo topology, start the optional seed helper profile:
 

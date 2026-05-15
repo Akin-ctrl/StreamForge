@@ -465,7 +465,7 @@ volumes:
 docker-compose -f deploy/docker-compose.onprem.yml up -d
 
 # Access UI
-open http://localhost
+open http://localhost:5000
 ```
 
 ---
