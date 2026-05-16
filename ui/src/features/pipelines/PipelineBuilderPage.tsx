@@ -570,9 +570,13 @@ export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, a
   return (
     <section>
       <div className="page-header">
-        <h2>Create Pipeline Wizard</h2>
+        <h2>Compose Deployment</h2>
         <span className="muted">Step {step} of 4</span>
       </div>
+      <p className="muted">
+        This composer builds a gateway deployment configuration. In the current control-plane model it writes one
+        pipeline record plus sink attachments; fuller multi-adapter and multi-sink composition is the next UI phase.
+      </p>
 
       <div className="wizard-steps">
         <span className={step >= 1 ? 'wizard-step active' : 'wizard-step'}>1. Adapter</span>
@@ -592,7 +596,7 @@ export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, a
 
           <div className="inline-grid">
             <label>
-              Pipeline Name
+              Deployment Name
               <input {...register('pipelineName', { required: true })} />
               {errors.pipelineName && <span className="error">Required</span>}
             </label>
@@ -692,7 +696,7 @@ export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, a
       {step === 2 && (
         <article className="card builder-section">
           <h3>Step 2: Destination Sink</h3>
-          <p className="muted">Create a new sink as part of this workflow or attach the pipeline to an existing sink instance.</p>
+          <p className="muted">Create a new sink as part of this workflow or attach the deployment to an existing sink instance.</p>
 
           <div className="inline-grid">
             <label className="toggle-label">
@@ -857,10 +861,11 @@ export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, a
       {step === 4 && (
         <article className="card builder-section">
           <h3>Step 4: Review & Confirm</h3>
+          <p className="muted">Review the gateway deployment bundle before it is written into the current control-plane pipeline model.</p>
 
           <div className="review-grid">
             <p>
-              <strong>Pipeline:</strong> {getValues('pipelineName')}
+              <strong>Deployment:</strong> {getValues('pipelineName')}
             </p>
             <p>
               <strong>Gateway:</strong> {getValues('gatewayId')}
@@ -883,7 +888,7 @@ export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, a
           <pre className="json-preview">{JSON.stringify(reviewPayload, null, 2)}</pre>
 
           <button className="btn" onClick={() => void onConfirm()} type="button" disabled={isSubmitting}>
-            {isSubmitting ? 'Creating...' : 'Create Pipeline'}
+            {isSubmitting ? 'Creating...' : 'Create Deployment'}
           </button>
         </article>
       )}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
-import { GatewayItem, approveGateway, createGateway, listGateways } from '../../shared/api/client'
+import { GatewayItem, PipelineItem, SinkItem, approveGateway, createGateway, listGateways, listPipelines, listSinks } from '../../shared/api/client'
+import { summarizeDeployment } from '../../shared/config/deployments'
 import { formatDateTime } from '../../shared/format/datetime'
 import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 
@@ -11,6 +12,8 @@ import { useOperatorPreferences } from '../../shared/preferences/PreferencesProv
 export function GatewaysPage() {
   const { timezone } = useOperatorPreferences()
   const [items, setItems] = useState<GatewayItem[]>([])
+  const [pipelines, setPipelines] = useState<PipelineItem[]>([])
+  const [sinks, setSinks] = useState<SinkItem[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [gatewayId, setGatewayId] = useState('gateway-demo-01')
@@ -21,8 +24,10 @@ export function GatewaysPage() {
     setLoading(true)
     setError(null)
     try {
-      const gateways = await listGateways()
+      const [gateways, pipelineRows, sinkRows] = await Promise.all([listGateways(), listPipelines(), listSinks()])
       setItems(gateways)
+      setPipelines(pipelineRows)
+      setSinks(sinkRows)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load gateways')
     } finally {
@@ -58,6 +63,19 @@ export function GatewaysPage() {
     }
   }
 
+  const sinkCountByPipeline = sinks.reduce<Record<number, number>>((counts, sink) => {
+    counts[sink.pipeline_id] = (counts[sink.pipeline_id] || 0) + 1
+    return counts
+  }, {})
+
+  const latestPipelineByGateway = pipelines.reduce<Record<string, PipelineItem>>((latest, pipeline) => {
+    const current = latest[pipeline.gateway_id]
+    if (!current || new Date(pipeline.created_at).getTime() > new Date(current.created_at).getTime()) {
+      latest[pipeline.gateway_id] = pipeline
+    }
+    return latest
+  }, {})
+
   return (
     <section>
       <div className="page-header">
@@ -66,6 +84,10 @@ export function GatewaysPage() {
           Refresh
         </button>
       </div>
+      <p className="muted">
+        Each gateway runs one active deployment/config at a time. That active deployment can include multiple adapters,
+        validation rules, event flow, aggregate rules, and multiple sinks.
+      </p>
 
       <div className="card">
         <h3>Create Gateway</h3>
@@ -93,29 +115,40 @@ export function GatewaysPage() {
               <th>Hostname</th>
               <th>Status</th>
               <th>Approved</th>
+              <th>Active Deployment</th>
+              <th>Adapters</th>
+              <th>Sinks</th>
               <th>Last Seen</th>
               <th>Last Config Sync</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {items.map((item) => (
-              <tr key={item.gateway_id}>
-                <td>{item.gateway_id}</td>
-                <td>{item.hostname}</td>
-                <td>{item.status}</td>
-                <td>{item.approved ? 'Yes' : 'No'}</td>
-                <td>{formatDateTime(item.last_seen_at || null, timezone, { includeTimezone: true })}</td>
-                <td>{formatDateTime(item.last_config_sync_at || null, timezone, { includeTimezone: true })}</td>
-                <td>
-                  {!item.approved && (
-                    <button className="btn btn-secondary" onClick={() => void onApprove(item.gateway_id)}>
-                      Approve
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
+            {items.map((item) => {
+              const activePipeline = latestPipelineByGateway[item.gateway_id]
+              const summary = activePipeline ? summarizeDeployment(activePipeline.config, sinkCountByPipeline[activePipeline.id] || 0) : null
+
+              return (
+                <tr key={item.gateway_id}>
+                  <td>{item.gateway_id}</td>
+                  <td>{item.hostname}</td>
+                  <td>{item.status}</td>
+                  <td>{item.approved ? 'Yes' : 'No'}</td>
+                  <td>{activePipeline ? `${activePipeline.id} - ${activePipeline.name}` : 'None'}</td>
+                  <td>{summary ? summary.adapterCount : 0}</td>
+                  <td>{summary ? summary.sinkCount : 0}</td>
+                  <td>{formatDateTime(item.last_seen_at || null, timezone, { includeTimezone: true })}</td>
+                  <td>{formatDateTime(item.last_config_sync_at || null, timezone, { includeTimezone: true })}</td>
+                  <td>
+                    {!item.approved && (
+                      <button className="btn btn-secondary" onClick={() => void onApprove(item.gateway_id)}>
+                        Approve
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       )}

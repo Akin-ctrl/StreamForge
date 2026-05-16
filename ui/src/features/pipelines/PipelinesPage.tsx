@@ -7,7 +7,10 @@ import {
   deletePipeline,
   listGateways,
   listPipelines,
+  listSinks,
+  SinkItem,
 } from '../../shared/api/client'
+import { summarizeDeployment } from '../../shared/config/deployments'
 import { formatDateTime } from '../../shared/format/datetime'
 import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 
@@ -19,6 +22,7 @@ export function PipelinesPage() {
   const { timezone } = useOperatorPreferences()
   const [items, setItems] = useState<PipelineItem[]>([])
   const [gateways, setGateways] = useState<GatewayItem[]>([])
+  const [sinks, setSinks] = useState<SinkItem[]>([])
   const [error, setError] = useState<string | null>(null)
   const [name, setName] = useState('demo-pipeline-ui')
   const [gatewayId, setGatewayId] = useState('gateway-demo-01')
@@ -70,13 +74,19 @@ export function PipelinesPage() {
 
   // Pull pipelines and gateways together so form options always match current state.
   const refresh = async () => {
-    const [pipelineRows, gatewayRows] = await Promise.all([listPipelines(), listGateways()])
+    const [pipelineRows, gatewayRows, sinkRows] = await Promise.all([listPipelines(), listGateways(), listSinks()])
     setItems(pipelineRows)
     setGateways(gatewayRows)
+    setSinks(sinkRows)
     if (gatewayRows.length > 0 && !gatewayRows.some((gateway) => gateway.gateway_id === gatewayId)) {
       setGatewayId(gatewayRows[0].gateway_id)
     }
   }
+
+  const sinkCountByPipeline = sinks.reduce<Record<number, number>>((counts, sink) => {
+    counts[sink.pipeline_id] = (counts[sink.pipeline_id] || 0) + 1
+    return counts
+  }, {})
 
   useEffect(() => {
     const load = async () => {
@@ -121,10 +131,19 @@ export function PipelinesPage() {
   return (
     <section>
       <h2>Pipelines</h2>
+      <p className="muted">
+        Pipelines are the current control-plane records used to compose a gateway deployment. A single gateway runs one
+        active deployment/config at a time, and that deployment can include multiple adapters, validation rules, event
+        flow, aggregate settings, and multiple sinks.
+      </p>
       {error && <p className="error">{error}</p>}
 
       <form className="card" onSubmit={onCreate}>
-        <h3>Create Pipeline</h3>
+        <h3>Create Pipeline Record</h3>
+        <p className="muted">
+          This JSON editor is the low-level control-plane path. The deployment composer is the operator-facing route for
+          assembling gateway dataflow.
+        </p>
         <label>
           Name
           <input value={name} onChange={(event) => setName(event.target.value)} />
@@ -154,24 +173,37 @@ export function PipelinesPage() {
             <th>ID</th>
             <th>Name</th>
             <th>Gateway</th>
+            <th>Adapters</th>
+            <th>Sinks</th>
+            <th>Validation</th>
+            <th>Events</th>
+            <th>Aggregates</th>
             <th>Created</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
-          {items.map((item) => (
-            <tr key={item.id}>
-              <td>{item.id}</td>
-              <td>{item.name}</td>
-              <td>{item.gateway_id}</td>
-              <td>{formatDateTime(item.created_at, timezone, { includeTimezone: true })}</td>
-              <td>
-                <button className="btn btn-secondary" onClick={() => void onDelete(item.id)}>
-                  Delete
-                </button>
-              </td>
-            </tr>
-          ))}
+          {items.map((item) => {
+            const summary = summarizeDeployment(item.config, sinkCountByPipeline[item.id] || 0)
+            return (
+              <tr key={item.id}>
+                <td>{item.id}</td>
+                <td>{item.name}</td>
+                <td>{item.gateway_id}</td>
+                <td>{summary.adapterCount}</td>
+                <td>{summary.sinkCount}</td>
+                <td>{summary.validationEnabled ? 'Enabled' : 'Off'}</td>
+                <td>{summary.eventsConfigured ? 'Configured' : 'Off'}</td>
+                <td>{summary.aggregatesConfigured ? 'Configured' : 'Off'}</td>
+                <td>{formatDateTime(item.created_at, timezone, { includeTimezone: true })}</td>
+                <td>
+                  <button className="btn btn-secondary" onClick={() => void onDelete(item.id)}>
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </section>
