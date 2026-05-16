@@ -20,8 +20,8 @@ StreamForge is a protocol-agnostic streaming platform that bridges the gap betwe
 The system is composed of two distinct planes:
 
 ### Control Plane (Configuration & Orchestration)
-- **Config & Control API**: REST API for managing pipelines, gateways, and configurations
-- **UI**: Web interface for visual pipeline creation and monitoring
+- **Config & Control API**: REST API for managing gateways, deployments/pipelines, sinks, and related configuration
+- **UI**: Web interface for adapter, sink, and deployment management plus monitoring
 - **AI Copilot**: Intelligent assistant for optimization and troubleshooting
 - **Control Database**: PostgreSQL for configuration state and audit trails
 
@@ -38,6 +38,7 @@ streamforge/
 ├── docs/                      # Comprehensive documentation
 │   ├── ARCHITECTURE.md        # System architecture and design decisions
 │   ├── DATA_FLOW.md          # End-to-end data flow documentation
+│   ├── ADAPTERS_AND_DEPLOYMENTS_SPEC.md # Operator model and protocol configuration spec
 │   ├── DEPLOYMENT.md         # Deployment patterns and guides
 │   └── SECURITY.md           # Security model and best practices
 ├── control-plane/            # Configuration & control API (FastAPI)
