@@ -47,17 +47,17 @@ Edge Kafka (Local buffering)
 
 **Step 1: UI Configuration**
 
-User creates pipeline via UI:
+Operator configures adapters and sinks, then composes a deployment for the target gateway:
 ```
-Pipeline Name: offshore_well_12
-Protocol: XBee → Modbus Virtual
-Device: XBee Node ID 0013A200
-Parameters:
-  - Register 40001: Pressure (PSI)
-  - Register 40003: Temperature (Celsius)
-Classification: Telemetry
-Destination: telemetry.raw
-Poll Interval: 1000ms
+Gateway: gateway-offshore-01
+Adapter: xbee_modbus_offshore_12
+  Protocol: XBee → Modbus Virtual
+  Device: XBee Node ID 0013A200
+  Parameters:
+    - Register 40001: Pressure (PSI)
+    - Register 40003: Temperature (Celsius)
+Sink: timescaledb_offshore_primary
+Validation: enabled
 ```
 
 **Step 2: Generated Config (sent to Gateway)**

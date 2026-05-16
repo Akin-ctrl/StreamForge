@@ -16,6 +16,7 @@ Last updated: 2026-05-16
    - Create an adapter inventory/management page similar to sinks.
    - Let operators configure adapters independently before composing them into a gateway deployment.
    - Add lifecycle/status visibility for configured adapters.
+   - Back this with a real persisted adapter model instead of keeping adapter editing trapped inside deployment JSON.
 
 3. `P0` Rework the pipeline builder into a composition/deployment builder
    - Make the builder select from configured adapters and configured sinks instead of forcing everything through one mixed wizard.
@@ -26,12 +27,13 @@ Last updated: 2026-05-16
 4. `P0` Make adapter and sink configuration fully catalog-driven
    - Remove lingering hardcoded frontend assumptions where possible.
    - Drive available adapter and sink types from the control-plane catalog rather than UI-local lists.
-   - Extend catalog metadata as needed with help text, grouping, defaults, repeatable sections, and richer field hints.
+   - Extend catalog metadata as needed with help text, grouping, defaults, repeatable sections, nested protocol sections, constrained choices, and richer field hints.
 
 5. `P1` Add protocol-aware configuration UX
-   - Add dedicated authoring for Modbus RTU serial settings, MQTT subscriptions/field mappings, and OPC UA monitored items.
+   - Add dedicated authoring for Modbus point/event mapping, Modbus RTU serial settings, MQTT subscriptions/field mappings, and OPC UA monitored items.
    - Continue improving multi-parameter industrial-source configuration ergonomics.
    - Avoid forcing operators to think in generic `config_values` terms.
+   - Keep protocol defaults and runtime support honest: for example, Modbus TCP should default to port `502`, and OPC UA security options should only expose modes the runtime actually supports.
 
 6. `P1` Clarify object ownership and reuse in the UI
    - Make it clear whether adapters and sinks are reusable configured objects or deployment-local definitions.
@@ -73,10 +75,10 @@ Last updated: 2026-05-16
 - `P1` Gateway autonomy visibility: Implemented in gateway and health views
 - `P1` Health and metrics dashboard: Implemented against current runtime/control-plane metrics
 - `P2` Responsive navigation and information architecture: Implemented for currently shipped views
-- `P0` UI information architecture correction: Not implemented
-- `P0` Adapters section: Not implemented
+- `P0` UI information architecture correction: Partial
+- `P0` Adapters section: Partial
 - `P0` Deployment/composition builder rework: Not implemented
-- `P0` Catalog-driven adapter/sink rendering: Partial
+- `P0` Catalog-driven adapter/sink rendering: Partial and blocked by an overly flat catalog contract
 - `P1` Protocol-aware configuration UX: Partial
 - `P1` Object ownership/reuse clarity: Not implemented
 - `P1` Connection test and preflight UX: Not implemented
