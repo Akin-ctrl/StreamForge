@@ -1,211 +1,309 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import {
+  AdapterItem,
+  DeploymentItem,
   GatewayItem,
-  PipelineItem,
-  createPipeline,
-  deletePipeline,
-  listGateways,
-  listPipelines,
-  listSinks,
   SinkItem,
+  createDeployment,
+  deleteDeployment,
+  listAdapters,
+  listDeployments,
+  listGateways,
+  listSinks,
+  updateDeployment,
 } from '../../shared/api/client'
 import { summarizeDeployment } from '../../shared/config/deployments'
 import { formatDateTime } from '../../shared/format/datetime'
 import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 
-/**
- * Pipelines management page.
- * Supports list/create/delete with JSON config input.
- */
+function prettyJson(value: Record<string, unknown>): string {
+  return JSON.stringify(value, null, 2)
+}
+
+const DEFAULT_VALIDATION = prettyJson({
+  enabled: true,
+  raw_topic: 'telemetry.raw',
+  clean_topic: 'telemetry.clean',
+  dlq_topic: 'dlq.telemetry',
+})
+
+const DEFAULT_EVENTS = prettyJson({
+  enabled: true,
+  raw_topic: 'events.raw',
+  clean_topic: 'events.clean',
+  dlq_topic: 'dlq.events',
+})
+
+const DEFAULT_AGGREGATES = prettyJson({
+  enabled: true,
+  source_topic: 'telemetry.clean',
+  resolutions: {
+    '1s': { enabled: true, topic: 'telemetry.1s', window_seconds: 1 },
+    '1min': { enabled: true, topic: 'telemetry.1min', window_seconds: 60 },
+  },
+})
+
 export function PipelinesPage() {
   const { timezone } = useOperatorPreferences()
-  const [items, setItems] = useState<PipelineItem[]>([])
+  const [deployments, setDeployments] = useState<DeploymentItem[]>([])
   const [gateways, setGateways] = useState<GatewayItem[]>([])
+  const [adapters, setAdapters] = useState<AdapterItem[]>([])
   const [sinks, setSinks] = useState<SinkItem[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [name, setName] = useState('demo-pipeline-ui')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [deploymentId, setDeploymentId] = useState('deployment-demo-01')
+  const [name, setName] = useState('Demo Deployment')
   const [gatewayId, setGatewayId] = useState('gateway-demo-01')
-  // Seed JSON keeps create flow aligned with the dev demo topology.
-  const [configJson, setConfigJson] = useState(
-    JSON.stringify(
-      {
-        adapters: [
-          {
-            adapter_id: 'modbus-demo-01',
-            adapter_type: 'modbus_tcp',
-            config: {
-              host: 'modbus-simulator',
-              port: 5020,
-              unit_id: 1,
-              poll_interval_ms: 1000,
-              registers: [
-                {
-                  address: 40001,
-                  param: 'temperature',
-                  type: 'float32',
-                  unit: 'celsius',
-                },
-              ],
-              output: {
-                kafka_bootstrap: 'kafka:9092',
-                topic: 'telemetry.raw',
-                asset_id: 'demo_sensor_01',
-              },
-            },
-          },
-        ],
-        validation: {
-          enabled: true,
-          raw_topic: 'telemetry.raw',
-          clean_topic: 'telemetry.clean',
-          dlq_topic: 'dlq.telemetry',
-          ranges: {
-            temperature: { min: -50, max: 500 },
-          },
-          rate_of_change: { temperature: 20 },
-          gap_detection: { temperature: 5 },
-        },
-      },
-      null,
-      2,
-    ),
-  )
+  const [status, setStatus] = useState('active')
+  const [selectedAdapterIds, setSelectedAdapterIds] = useState<string[]>([])
+  const [selectedSinkIds, setSelectedSinkIds] = useState<string[]>([])
+  const [validationJson, setValidationJson] = useState(DEFAULT_VALIDATION)
+  const [eventsJson, setEventsJson] = useState(DEFAULT_EVENTS)
+  const [aggregatesJson, setAggregatesJson] = useState(DEFAULT_AGGREGATES)
 
-  // Pull pipelines and gateways together so form options always match current state.
   const refresh = async () => {
-    const [pipelineRows, gatewayRows, sinkRows] = await Promise.all([listPipelines(), listGateways(), listSinks()])
-    setItems(pipelineRows)
-    setGateways(gatewayRows)
-    setSinks(sinkRows)
-    if (gatewayRows.length > 0 && !gatewayRows.some((gateway) => gateway.gateway_id === gatewayId)) {
-      setGatewayId(gatewayRows[0].gateway_id)
+    setError(null)
+    try {
+      const [deploymentRows, gatewayRows, adapterRows, sinkRows] = await Promise.all([
+        listDeployments(),
+        listGateways(),
+        listAdapters(),
+        listSinks(),
+      ])
+      setDeployments(deploymentRows)
+      setGateways(gatewayRows)
+      setAdapters(adapterRows)
+      setSinks(sinkRows)
+      if (gatewayRows.length > 0 && !gatewayRows.some((gateway) => gateway.gateway_id === gatewayId)) {
+        setGatewayId(gatewayRows[0].gateway_id)
+      }
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Failed to load deployments')
     }
   }
-
-  const sinkCountByPipeline = sinks.reduce<Record<number, number>>((counts, sink) => {
-    counts[sink.pipeline_id] = (counts[sink.pipeline_id] || 0) + 1
-    return counts
-  }, {})
 
   useEffect(() => {
-    const load = async () => {
-      setError(null)
-      try {
-        await refresh()
-      } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : 'Failed to load pipelines')
-      }
-    }
-    void load()
+    void refresh()
   }, [])
 
-  // Parse JSON config, submit create request, then refresh list.
-  const onCreate = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
+  const gatewayOptions = useMemo(() => gateways.map((gateway) => gateway.gateway_id), [gateways])
+
+  const resetForm = () => {
+    setEditingId(null)
+    setDeploymentId('deployment-demo-01')
+    setName('Demo Deployment')
+    setGatewayId(gatewayOptions[0] || 'gateway-demo-01')
+    setStatus('active')
+    setSelectedAdapterIds([])
+    setSelectedSinkIds([])
+    setValidationJson(DEFAULT_VALIDATION)
+    setEventsJson(DEFAULT_EVENTS)
+    setAggregatesJson(DEFAULT_AGGREGATES)
+  }
+
+  const toggleSelection = (values: string[], nextValue: string) =>
+    values.includes(nextValue) ? values.filter((value) => value !== nextValue) : [...values, nextValue]
+
+  const startEdit = (deployment: DeploymentItem) => {
+    setEditingId(deployment.deployment_id)
+    setDeploymentId(deployment.deployment_id)
+    setName(deployment.name)
+    setGatewayId(deployment.gateway_id)
+    setStatus(deployment.status)
+    setSelectedAdapterIds(deployment.adapter_ids)
+    setSelectedSinkIds(deployment.sink_ids)
+    setValidationJson(prettyJson(deployment.validation_config))
+    setEventsJson(prettyJson(deployment.events_config))
+    setAggregatesJson(prettyJson(deployment.aggregates_config))
+  }
+
+  const onSubmit = async () => {
     setError(null)
     try {
-      const parsed = JSON.parse(configJson) as Record<string, unknown>
-      await createPipeline({
+      const payload = {
+        deployment_id: deploymentId,
         name,
         gateway_id: gatewayId,
-        config: parsed,
-      })
+        status,
+        adapter_ids: selectedAdapterIds,
+        sink_ids: selectedSinkIds,
+        validation_config: JSON.parse(validationJson) as Record<string, unknown>,
+        events_config: JSON.parse(eventsJson) as Record<string, unknown>,
+        aggregates_config: JSON.parse(aggregatesJson) as Record<string, unknown>,
+      }
+
+      if (editingId) {
+        await updateDeployment(editingId, payload)
+      } else {
+        await createDeployment(payload)
+      }
       await refresh()
-    } catch (createError) {
-      setError(createError instanceof Error ? createError.message : 'Failed to create pipeline')
+      resetForm()
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'Failed to save deployment')
     }
   }
 
-  // Delete selected pipeline and refresh table.
-  const onDelete = async (pipelineId: number) => {
+  const onDelete = async (targetDeploymentId: string) => {
     setError(null)
     try {
-      await deletePipeline(pipelineId)
+      await deleteDeployment(targetDeploymentId)
       await refresh()
+      if (editingId === targetDeploymentId) {
+        resetForm()
+      }
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : 'Failed to delete pipeline')
+      setError(deleteError instanceof Error ? deleteError.message : 'Failed to delete deployment')
     }
   }
 
   return (
     <section>
-      <h2>Pipelines</h2>
+      <div className="page-header">
+        <h2>Deployments</h2>
+        <button className="btn" onClick={() => void refresh()} type="button">
+          Refresh
+        </button>
+      </div>
+
       <p className="muted">
-        Pipelines are the current control-plane records used to compose a gateway deployment. A single gateway runs one
-        active deployment/config at a time, and that deployment can include multiple adapters, validation rules, event
-        flow, aggregate settings, and multiple sinks.
+        A deployment selects one gateway, attaches configured adapters and sinks, and defines the validation, event,
+        and aggregate rules that become the gateway&apos;s active runtime config.
       </p>
       {error && <p className="error">{error}</p>}
 
-      <form className="card" onSubmit={onCreate}>
-        <h3>Create Pipeline Record</h3>
-        <p className="muted">
-          This JSON editor is the low-level control-plane path. The deployment composer is the operator-facing route for
-          assembling gateway dataflow.
-        </p>
-        <label>
-          Name
-          <input value={name} onChange={(event) => setName(event.target.value)} />
-        </label>
-        <label>
-          Gateway
-          <select value={gatewayId} onChange={(event) => setGatewayId(event.target.value)}>
-            {gateways.map((gateway) => (
-              <option key={gateway.gateway_id} value={gateway.gateway_id}>
-                {gateway.gateway_id}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Pipeline Config (JSON)
-          <textarea rows={12} value={configJson} onChange={(event) => setConfigJson(event.target.value)} />
-        </label>
-        <button className="btn" type="submit">
-          Create Pipeline
-        </button>
-      </form>
+      <div className="overview-grid">
+        <article className="card">
+          <div className="page-header">
+            <h3>{editingId ? 'Edit Deployment' : 'Compose Deployment'}</h3>
+            {editingId && (
+              <button className="btn btn-secondary" onClick={() => resetForm()} type="button">
+                Cancel Edit
+              </button>
+            )}
+          </div>
+          <label>
+            Deployment ID
+            <input disabled={Boolean(editingId)} value={deploymentId} onChange={(event) => setDeploymentId(event.target.value)} />
+          </label>
+          <label>
+            Name
+            <input value={name} onChange={(event) => setName(event.target.value)} />
+          </label>
+          <label>
+            Gateway
+            <select value={gatewayId} onChange={(event) => setGatewayId(event.target.value)}>
+              {gateways.map((gateway) => (
+                <option key={gateway.gateway_id} value={gateway.gateway_id}>
+                  {gateway.gateway_id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Status
+            <select value={status} onChange={(event) => setStatus(event.target.value)}>
+              <option value="draft">draft</option>
+              <option value="active">active</option>
+              <option value="disabled">disabled</option>
+            </select>
+          </label>
 
-      <table className="table">
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Name</th>
-            <th>Gateway</th>
-            <th>Adapters</th>
-            <th>Sinks</th>
-            <th>Validation</th>
-            <th>Events</th>
-            <th>Aggregates</th>
-            <th>Created</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((item) => {
-            const summary = summarizeDeployment(item.config, sinkCountByPipeline[item.id] || 0)
-            return (
-              <tr key={item.id}>
-                <td>{item.id}</td>
-                <td>{item.name}</td>
-                <td>{item.gateway_id}</td>
-                <td>{summary.adapterCount}</td>
-                <td>{summary.sinkCount}</td>
-                <td>{summary.validationEnabled ? 'Enabled' : 'Off'}</td>
-                <td>{summary.eventsConfigured ? 'Configured' : 'Off'}</td>
-                <td>{summary.aggregatesConfigured ? 'Configured' : 'Off'}</td>
-                <td>{formatDateTime(item.created_at, timezone, { includeTimezone: true })}</td>
-                <td>
-                  <button className="btn btn-secondary" onClick={() => void onDelete(item.id)}>
-                    Delete
-                  </button>
-                </td>
+          <div className="card nested-card">
+            <h4>Adapters</h4>
+            {adapters.map((adapter) => (
+              <label key={adapter.adapter_id}>
+                <input
+                  type="checkbox"
+                  checked={selectedAdapterIds.includes(adapter.adapter_id)}
+                  onChange={() => setSelectedAdapterIds((current) => toggleSelection(current, adapter.adapter_id))}
+                />{' '}
+                {adapter.adapter_id} ({adapter.adapter_type})
+              </label>
+            ))}
+            {adapters.length === 0 && <p className="muted">Create adapters first.</p>}
+          </div>
+
+          <div className="card nested-card">
+            <h4>Sinks</h4>
+            {sinks.map((sink) => (
+              <label key={sink.sink_id}>
+                <input
+                  type="checkbox"
+                  checked={selectedSinkIds.includes(sink.sink_id)}
+                  onChange={() => setSelectedSinkIds((current) => toggleSelection(current, sink.sink_id))}
+                />{' '}
+                {sink.sink_id} ({sink.sink_type})
+              </label>
+            ))}
+            {sinks.length === 0 && <p className="muted">Create sinks first.</p>}
+          </div>
+
+          <label>
+            Validation Config (JSON)
+            <textarea rows={8} value={validationJson} onChange={(event) => setValidationJson(event.target.value)} />
+          </label>
+          <label>
+            Events Config (JSON)
+            <textarea rows={6} value={eventsJson} onChange={(event) => setEventsJson(event.target.value)} />
+          </label>
+          <label>
+            Aggregates Config (JSON)
+            <textarea rows={8} value={aggregatesJson} onChange={(event) => setAggregatesJson(event.target.value)} />
+          </label>
+          <button className="btn" onClick={() => void onSubmit()} type="button">
+            {editingId ? 'Update Deployment' : 'Create Deployment'}
+          </button>
+        </article>
+
+        <article className="card">
+          <h3>Deployments</h3>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Deployment ID</th>
+                <th>Gateway</th>
+                <th>Status</th>
+                <th>Adapters</th>
+                <th>Sinks</th>
+                <th>Created</th>
+                <th>Actions</th>
               </tr>
-            )
-          })}
-        </tbody>
-      </table>
+            </thead>
+            <tbody>
+              {deployments.map((deployment) => {
+                const summary = summarizeDeployment(deployment)
+                return (
+                  <tr key={deployment.deployment_id}>
+                    <td>{deployment.deployment_id}</td>
+                    <td>{deployment.gateway_id}</td>
+                    <td>{deployment.status}</td>
+                    <td>{summary.adapterCount}</td>
+                    <td>{summary.sinkCount}</td>
+                    <td>{formatDateTime(deployment.created_at, timezone, { includeTimezone: true })}</td>
+                    <td>
+                      <button className="btn btn-secondary" onClick={() => startEdit(deployment)} type="button">
+                        Edit
+                      </button>{' '}
+                      <button className="btn btn-secondary" onClick={() => void onDelete(deployment.deployment_id)} type="button">
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+              {deployments.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="muted">
+                    No deployments configured yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </article>
+      </div>
     </section>
   )
 }

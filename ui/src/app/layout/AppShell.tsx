@@ -9,7 +9,7 @@ const links = [
   { to: '/overview', label: 'Overview' },
   { to: '/gateways', label: 'Gateways' },
   { to: '/adapters', label: 'Adapters' },
-  { to: '/pipelines', label: 'Pipelines' },
+  { to: '/pipelines', label: 'Deployments' },
   { to: '/sinks', label: 'Sinks' },
   { to: '/alarms', label: 'Alarms' },
   { to: '/dlq', label: 'DLQ' },

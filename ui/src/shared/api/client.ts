@@ -1,12 +1,7 @@
 import { getAccessToken } from '../auth/session'
 
-// Empty default keeps all requests same-origin (served via nginx /api proxy).
 const CONTROL_PLANE_URL = import.meta.env.VITE_CONTROL_PLANE_URL?.toString() || ''
 
-/**
- * Shared fetch wrapper for authenticated control-plane API calls.
- * Adds bearer token when available and normalizes JSON parsing/errors.
- */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getAccessToken()
 
@@ -49,21 +44,40 @@ export type GatewayItem = {
   created_at: string
 }
 
-export type PipelineItem = {
-  id: number
+export type AdapterItem = {
+  adapter_id: string
   name: string
-  gateway_id: string
+  adapter_type: string
+  status: string
   config: Record<string, unknown>
+  description?: string | null
   created_at: string
+  updated_at: string
 }
 
 export type SinkItem = {
-  id: number
-  pipeline_id: number
+  sink_id: string
+  name: string
   sink_type: string
   config: Record<string, unknown>
   status: string
+  description?: string | null
   created_at: string
+  updated_at: string
+}
+
+export type DeploymentItem = {
+  deployment_id: string
+  name: string
+  gateway_id: string
+  status: string
+  adapter_ids: string[]
+  sink_ids: string[]
+  validation_config: Record<string, unknown>
+  events_config: Record<string, unknown>
+  aggregates_config: Record<string, unknown>
+  created_at: string
+  updated_at: string
 }
 
 export type AlarmSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO'
@@ -148,13 +162,30 @@ export type UserItem = {
   created_at: string
 }
 
+export type CatalogOption = {
+  value: string
+  label: string
+}
+
 export type CatalogField = {
   key: string
   label: string
-  input_type: 'text' | 'number'
+  input_type: string
   required: boolean
   default: string | number | boolean | null
   help_text?: string | null
+  advanced?: boolean
+  repeatable?: boolean
+  options?: CatalogOption[]
+  children?: CatalogField[]
+}
+
+export type CatalogSection = {
+  key: string
+  label: string
+  repeatable?: boolean
+  help_text?: string | null
+  fields: CatalogField[]
 }
 
 export type CatalogAdapterType = {
@@ -162,12 +193,14 @@ export type CatalogAdapterType = {
   label: string
   supports_registers: boolean
   fields: CatalogField[]
+  sections?: CatalogSection[]
 }
 
 export type CatalogSinkType = {
   sink_type: string
   label: string
   fields: CatalogField[]
+  sections?: CatalogSection[]
 }
 
 export type CatalogResponse = {
@@ -193,7 +226,6 @@ async function readError(response: Response, fallbackMessage: string): Promise<s
   }
 }
 
-/** Exchanges username/password for a JWT access token. */
 export async function login(username: string, password: string): Promise<UserTokenResponse> {
   const body = new URLSearchParams()
   body.set('username', username)
@@ -281,7 +313,6 @@ export function createGateway(payload: {
   })
 }
 
-/** Approves a discovered gateway for runtime orchestration. */
 export function approveGateway(gatewayId: string) {
   return request<{ gateway_id: string; status: string; approved: boolean }>(
     `/api/v1/gateways/${gatewayId}/approve`,
@@ -289,36 +320,41 @@ export function approveGateway(gatewayId: string) {
   )
 }
 
-export function listPipelines() {
-  return request<PipelineItem[]>('/api/v1/pipelines')
+export function listAdapters() {
+  return request<AdapterItem[]>('/api/v1/adapters')
 }
 
-export function createPipeline(payload: {
+export function createAdapter(payload: {
+  adapter_id: string
   name: string
-  gateway_id: string
+  adapter_type: string
+  status: string
   config: Record<string, unknown>
+  description?: string | null
 }) {
-  return request<PipelineItem>('/api/v1/pipelines', {
+  return request<AdapterItem>('/api/v1/adapters', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
 }
 
-export function updatePipeline(
-  pipelineId: number,
+export function updateAdapter(
+  adapterId: string,
   payload: {
     name?: string
+    status?: string
     config?: Record<string, unknown>
+    description?: string | null
   },
 ) {
-  return request<PipelineItem>(`/api/v1/pipelines/${pipelineId}`, {
+  return request<AdapterItem>(`/api/v1/adapters/${encodeURIComponent(adapterId)}`, {
     method: 'PUT',
     body: JSON.stringify(payload),
   })
 }
 
-export function deletePipeline(pipelineId: number) {
-  return request<{ deleted: boolean; pipeline_id: number }>(`/api/v1/pipelines/${pipelineId}`, {
+export function deleteAdapter(adapterId: string) {
+  return request<{ deleted: boolean; adapter_id: string }>(`/api/v1/adapters/${encodeURIComponent(adapterId)}`, {
     method: 'DELETE',
   })
 }
@@ -328,10 +364,12 @@ export function listSinks() {
 }
 
 export function createSink(payload: {
-  pipeline_id: number
+  sink_id: string
+  name: string
   sink_type: string
   config: Record<string, unknown>
   status: string
+  description?: string | null
 }) {
   return request<SinkItem>('/api/v1/sinks', {
     method: 'POST',
@@ -339,8 +377,69 @@ export function createSink(payload: {
   })
 }
 
-export function deleteSink(sinkId: number) {
-  return request<{ deleted: boolean; sink_id: number }>(`/api/v1/sinks/${sinkId}`, {
+export function updateSink(
+  sinkId: string,
+  payload: {
+    name?: string
+    sink_type?: string
+    config?: Record<string, unknown>
+    status?: string
+    description?: string | null
+  },
+) {
+  return request<SinkItem>(`/api/v1/sinks/${encodeURIComponent(sinkId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteSink(sinkId: string) {
+  return request<{ deleted: boolean; sink_id: string }>(`/api/v1/sinks/${encodeURIComponent(sinkId)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function listDeployments() {
+  return request<DeploymentItem[]>('/api/v1/deployments')
+}
+
+export function createDeployment(payload: {
+  deployment_id: string
+  name: string
+  gateway_id: string
+  status: string
+  adapter_ids: string[]
+  sink_ids: string[]
+  validation_config: Record<string, unknown>
+  events_config: Record<string, unknown>
+  aggregates_config: Record<string, unknown>
+}) {
+  return request<DeploymentItem>('/api/v1/deployments', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateDeployment(
+  deploymentId: string,
+  payload: {
+    name?: string
+    status?: string
+    adapter_ids?: string[]
+    sink_ids?: string[]
+    validation_config?: Record<string, unknown>
+    events_config?: Record<string, unknown>
+    aggregates_config?: Record<string, unknown>
+  },
+) {
+  return request<DeploymentItem>(`/api/v1/deployments/${encodeURIComponent(deploymentId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteDeployment(deploymentId: string) {
+  return request<{ deleted: boolean; deployment_id: string }>(`/api/v1/deployments/${encodeURIComponent(deploymentId)}`, {
     method: 'DELETE',
   })
 }

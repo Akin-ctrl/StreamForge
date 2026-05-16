@@ -1,27 +1,26 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import {
+  AdapterItem,
+  DeploymentItem,
   GatewayItem,
   HealthResponse,
-  PipelineItem,
   SinkItem,
   getHealth,
+  listAdapters,
+  listDeployments,
   listGateways,
-  listPipelines,
   listSinks,
 } from '../../shared/api/client'
 import { summarizeDeployment } from '../../shared/config/deployments'
 import { formatDateTime } from '../../shared/format/datetime'
 import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 
-/**
- * Main operations landing page.
- * Shows current gateways, pipelines, and sinks in one place.
- */
 export function OverviewPage() {
   const { timezone } = useOperatorPreferences()
   const [gateways, setGateways] = useState<GatewayItem[]>([])
-  const [pipelines, setPipelines] = useState<PipelineItem[]>([])
+  const [deployments, setDeployments] = useState<DeploymentItem[]>([])
+  const [adapters, setAdapters] = useState<AdapterItem[]>([])
   const [sinks, setSinks] = useState<SinkItem[]>([])
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -31,14 +30,16 @@ export function OverviewPage() {
     setLoading(true)
     setError(null)
     try {
-      const [gatewayRows, pipelineRows, sinkRows, healthRow] = await Promise.all([
+      const [gatewayRows, deploymentRows, adapterRows, sinkRows, healthRow] = await Promise.all([
         listGateways(),
-        listPipelines(),
+        listDeployments(),
+        listAdapters(),
         listSinks(),
         getHealth(),
       ])
       setGateways(gatewayRows)
-      setPipelines(pipelineRows)
+      setDeployments(deploymentRows)
+      setAdapters(adapterRows)
       setSinks(sinkRows)
       setHealth(healthRow)
     } catch (loadError) {
@@ -52,15 +53,7 @@ export function OverviewPage() {
     void refresh()
   }, [])
 
-  const approvedGateways = useMemo(() => gateways.filter((item) => item.approved).length, [gateways])
-  const sinkCountByPipeline = useMemo(
-    () =>
-      sinks.reduce<Record<number, number>>((counts, sink) => {
-        counts[sink.pipeline_id] = (counts[sink.pipeline_id] || 0) + 1
-        return counts
-      }, {}),
-    [sinks],
-  )
+  const approvedGateways = gateways.filter((item) => item.approved).length
 
   return (
     <section>
@@ -82,57 +75,49 @@ export function OverviewPage() {
         </article>
         <article className="card">
           <h3>Deployments</h3>
-          <p className="overview-kpi-value">{pipelines.length}</p>
-          <p className="muted">Gateway pipeline/deployment records</p>
+          <p className="overview-kpi-value">{deployments.length}</p>
+          <p className="muted">Active gateway compositions</p>
+        </article>
+        <article className="card">
+          <h3>Adapters</h3>
+          <p className="overview-kpi-value">{adapters.length}</p>
+          <p className="muted">Configured source connections</p>
         </article>
         <article className="card">
           <h3>Sinks</h3>
           <p className="overview-kpi-value">{sinks.length}</p>
-          <p className="muted">Pipeline output targets</p>
-        </article>
-        <article className="card">
-          <h3>Gateway Health</h3>
-          <p className="overview-kpi-value">{health?.gateway_states?.healthy ?? 0}</p>
-          <p className="muted">Degraded: {health?.gateway_states?.degraded ?? 0}</p>
+          <p className="muted">Configured delivery targets</p>
         </article>
       </div>
 
       <div className="overview-grid">
         <article className="card">
           <h3>Recent Deployments</h3>
-          <p className="muted">Current control-plane pipeline records that compose gateway adapters, sinks, and rules.</p>
           <table className="table">
             <thead>
               <tr>
-                <th>ID</th>
-                <th>Name</th>
+                <th>Deployment ID</th>
                 <th>Gateway</th>
+                <th>Status</th>
                 <th>Adapters</th>
                 <th>Sinks</th>
                 <th>Created</th>
               </tr>
             </thead>
             <tbody>
-              {pipelines.slice(0, 8).map((item) => {
-                const summary = summarizeDeployment(item.config, sinkCountByPipeline[item.id] || 0)
+              {deployments.slice(0, 8).map((item) => {
+                const summary = summarizeDeployment(item)
                 return (
-                  <tr key={item.id}>
-                    <td>{item.id}</td>
-                    <td>{item.name}</td>
+                  <tr key={item.deployment_id}>
+                    <td>{item.deployment_id}</td>
                     <td>{item.gateway_id}</td>
+                    <td>{item.status}</td>
                     <td>{summary.adapterCount}</td>
                     <td>{summary.sinkCount}</td>
                     <td>{formatDateTime(item.created_at, timezone, { includeTimezone: true })}</td>
                   </tr>
                 )
               })}
-              {pipelines.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="muted">
-                    No deployments yet.
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
         </article>
@@ -157,46 +142,24 @@ export function OverviewPage() {
                   <td>{formatDateTime(item.last_config_sync_at || null, timezone, { includeTimezone: true })}</td>
                 </tr>
               ))}
-              {gateways.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="muted">
-                    No gateways yet.
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
         </article>
 
         <article className="card">
-          <h3>Sinks</h3>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Pipeline</th>
-                <th>Type</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sinks.slice(0, 8).map((item) => (
-                <tr key={item.id}>
-                  <td>{item.id}</td>
-                  <td>{item.pipeline_id}</td>
-                  <td>{item.sink_type}</td>
-                  <td>{item.status}</td>
-                </tr>
-              ))}
-              {sinks.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="muted">
-                    No sinks yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+          <h3>Control Plane Health</h3>
+          <p>
+            <strong>Service:</strong> {health?.status || 'unknown'}
+          </p>
+          <p>
+            <strong>Database:</strong> {health?.dependencies?.database || 'unknown'}
+          </p>
+          <p>
+            <strong>Healthy Gateways:</strong> {health?.gateway_states?.healthy ?? 0}
+          </p>
+          <p>
+            <strong>Degraded Gateways:</strong> {health?.gateway_states?.degraded ?? 0}
+          </p>
         </article>
       </div>
     </section>

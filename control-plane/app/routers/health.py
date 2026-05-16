@@ -7,7 +7,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
-from app.db.models import Alarm, DlqMessage, Gateway, Pipeline, Sink, User
+from app.db.models import Adapter, Alarm, Deployment, DlqMessage, Gateway, Sink, User
 
 router = APIRouter()
 
@@ -19,7 +19,8 @@ def health(db: Session = Depends(get_db)) -> dict:
     counts = {
         "users": int(db.execute(select(func.count(User.id))).scalar_one()),
         "gateways": int(db.execute(select(func.count(Gateway.id))).scalar_one()),
-        "pipelines": int(db.execute(select(func.count(Pipeline.id))).scalar_one()),
+        "adapters": int(db.execute(select(func.count(Adapter.id))).scalar_one()),
+        "deployments": int(db.execute(select(func.count(Deployment.id))).scalar_one()),
         "sinks": int(db.execute(select(func.count(Sink.id))).scalar_one()),
         "alarms": int(db.execute(select(func.count(Alarm.id))).scalar_one()),
         "dlq_messages": int(db.execute(select(func.count(DlqMessage.id))).scalar_one()),

@@ -4,10 +4,41 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Table,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+
+deployment_adapters = Table(
+    "deployment_adapters",
+    Base.metadata,
+    Column("deployment_id", ForeignKey("deployments.id", ondelete="CASCADE"), primary_key=True),
+    Column("adapter_id", ForeignKey("adapters.id", ondelete="RESTRICT"), primary_key=True),
+    Column("position", Integer, nullable=False, default=0),
+)
+
+
+deployment_sinks = Table(
+    "deployment_sinks",
+    Base.metadata,
+    Column("deployment_id", ForeignKey("deployments.id", ondelete="CASCADE"), primary_key=True),
+    Column("sink_id", ForeignKey("sinks.id", ondelete="RESTRICT"), primary_key=True),
+    Column("position", Integer, nullable=False, default=0),
+)
 
 
 class Gateway(Base):
@@ -29,37 +60,91 @@ class Gateway(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    pipelines: Mapped[list[Pipeline]] = relationship("Pipeline", back_populates="gateway")
+    deployments: Mapped[list[Deployment]] = relationship("Deployment", back_populates="gateway")
 
 
-class Pipeline(Base):
-    """Pipeline definition bound to a gateway."""
+class Adapter(Base):
+    """First-class configured adapter instance."""
 
-    __tablename__ = "pipelines"
+    __tablename__ = "adapters"
+    __table_args__ = (UniqueConstraint("adapter_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    adapter_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(128), index=True)
-    gateway_id: Mapped[int] = mapped_column(ForeignKey("gateways.id", ondelete="CASCADE"), index=True)
+    adapter_type: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
     config: Mapped[dict] = mapped_column(JSON)
+    description: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    gateway: Mapped[Gateway] = relationship("Gateway", back_populates="pipelines")
-    sinks: Mapped[list[Sink]] = relationship("Sink", back_populates="pipeline")
+    deployments: Mapped[list[Deployment]] = relationship(
+        "Deployment",
+        secondary=deployment_adapters,
+        back_populates="adapters",
+    )
 
 
 class Sink(Base):
-    """Sink configuration attached to a pipeline."""
+    """First-class configured sink instance."""
 
     __tablename__ = "sinks"
+    __table_args__ = (UniqueConstraint("sink_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    pipeline_id: Mapped[int] = mapped_column(ForeignKey("pipelines.id", ondelete="CASCADE"), index=True)
+    sink_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(128), index=True)
     sink_type: Mapped[str] = mapped_column(String(64), index=True)
     config: Mapped[dict] = mapped_column(JSON)
-    status: Mapped[str] = mapped_column(String(32), default="active")
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    description: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    pipeline: Mapped[Pipeline] = relationship("Pipeline", back_populates="sinks")
+    deployments: Mapped[list[Deployment]] = relationship(
+        "Deployment",
+        secondary=deployment_sinks,
+        back_populates="sinks",
+    )
+
+
+class Deployment(Base):
+    """Composed gateway deployment containing adapters, sinks, and dataflow rules."""
+
+    __tablename__ = "deployments"
+    __table_args__ = (
+        UniqueConstraint("deployment_id"),
+        Index(
+            "uq_deployments_active_gateway",
+            "gateway_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    deployment_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(128), index=True)
+    gateway_id: Mapped[int] = mapped_column(ForeignKey("gateways.id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="draft", index=True)
+    validation_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    events_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    aggregates_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    gateway: Mapped[Gateway] = relationship("Gateway", back_populates="deployments")
+    adapters: Mapped[list[Adapter]] = relationship(
+        "Adapter",
+        secondary=deployment_adapters,
+        back_populates="deployments",
+    )
+    sinks: Mapped[list[Sink]] = relationship(
+        "Sink",
+        secondary=deployment_sinks,
+        back_populates="deployments",
+    )
 
 
 class User(Base):

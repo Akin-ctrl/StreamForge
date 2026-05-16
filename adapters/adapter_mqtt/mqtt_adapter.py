@@ -144,7 +144,11 @@ class MqttAdapter(BaseAdapter):
     def transform(self, raw: dict[str, Any]) -> dict[str, object]:
         """Map queued MQTT payloads into normalized telemetry or event messages."""
         now = datetime.now(timezone.utc).isoformat()
-        pipeline_id = str(self.config.get("output", {}).get("pipeline_id") or self.config.get("output", {}).get("asset_id") or self._adapter_id)
+        deployment_id = str(
+            self.config.get("output", {}).get("deployment_id")
+            or self.config.get("output", {}).get("asset_id")
+            or self._adapter_id
+        )
         if raw["message_type"] == "event":
             payload = raw["payload"]
             return {
@@ -162,7 +166,7 @@ class MqttAdapter(BaseAdapter):
                         },
                         "metadata": {
                             "adapter_id": self._adapter_id,
-                            "pipeline_id": pipeline_id,
+                            "deployment_id": deployment_id,
                         },
                     }
                 ],

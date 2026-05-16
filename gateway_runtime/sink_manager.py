@@ -23,6 +23,8 @@ class SinkManager:
         """Start all configured sinks in active status."""
         client = self._docker_client()
         network = self._resolve_network(client)
+        desired_ids = {config.sink_id for config in configs if config.status == "active"}
+        self._prune_orphaned_containers(client, desired_ids)
 
         for config in configs:
             if config.status != "active":
@@ -55,6 +57,7 @@ class SinkManager:
         labels = {
             "app": "streamforge",
             "component": "sink",
+            "streamforge.managed-by": "gateway_runtime",
             "sink_id": config.sink_id,
             "sink_type": config.sink_type,
         }
@@ -163,6 +166,51 @@ class SinkManager:
             restart_policy={"Name": "unless-stopped"},
         )
 
+    def _prune_orphaned_containers(self, client, desired_ids: set[str]) -> None:
+        """Remove managed sink containers that are not part of the desired sink set."""
+        for container in self._list_managed_containers(client):
+            sink_id = self._managed_sink_id(container)
+            if sink_id is None or sink_id in desired_ids:
+                continue
+            self._stop_container(client, container.id)
+
+    def _list_managed_containers(self, client) -> list[object]:
+        try:
+            return list(client.containers.list(all=True))
+        except Exception:
+            return []
+
+    def _managed_sink_id(self, container) -> str | None:
+        if not self._is_managed_container(container):
+            return None
+        labels = container.labels or {}
+        sink_id = labels.get("sink_id")
+        if isinstance(sink_id, str) and sink_id.strip():
+            return sink_id.strip()
+        name = getattr(container, "name", "").lstrip("/")
+        prefix = "sf-sink-"
+        if name.startswith(prefix):
+            return name[len(prefix) :]
+        return None
+
+    def _is_managed_container(self, container) -> bool:
+        labels = container.labels or {}
+        name = getattr(container, "name", "").lstrip("/")
+        if labels.get("component") != "sink":
+            return False
+        if labels.get("streamforge.managed-by") == "gateway_runtime":
+            return self._matches_project(labels)
+        if labels.get("app") == "streamforge":
+            return self._matches_project(labels)
+        return name.startswith("sf-sink-")
+
+    @staticmethod
+    def _matches_project(labels: Dict[str, str]) -> bool:
+        project = labels.get("com.docker.compose.project")
+        if not project:
+            return True
+        return project == SinkManager._compose_project()
+
     @staticmethod
     def _stop_container(client, container_id: str) -> None:
         try:
@@ -202,7 +250,7 @@ class SinkManager:
 
     @staticmethod
     def _compose_labels(sink_type: str) -> Dict[str, str]:
-        project = os.getenv("COMPOSE_PROJECT_NAME") or os.getenv("DOCKER_COMPOSE_PROJECT") or "deploy"
+        project = SinkManager._compose_project()
         service = "sink_timescaledb"
         if sink_type in {"kafka", "sink-kafka", "sink_kafka"}:
             service = "sink_kafka"
@@ -215,6 +263,10 @@ class SinkManager:
             "com.docker.compose.service": service,
             "com.docker.compose.oneoff": "False",
         }
+
+    @staticmethod
+    def _compose_project() -> str:
+        return os.getenv("COMPOSE_PROJECT_NAME") or os.getenv("DOCKER_COMPOSE_PROJECT") or "deploy"
 
     @staticmethod
     def _inject_shared_env(env: Dict[str, str], config: dict) -> None:

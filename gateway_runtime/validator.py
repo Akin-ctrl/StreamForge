@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import json
 import logging
@@ -61,6 +62,14 @@ class ValidatorModule:
                     "schema_path": _ALARM_SCHEMA_PATH,
                 }
             }
+        )
+        self._decode_retry_attempts = max(
+            int(self._rules.get("decode_retry_attempts", os.getenv("VALIDATOR_DECODE_RETRY_ATTEMPTS", "3"))),
+            1,
+        )
+        self._decode_retry_backoff_s = max(
+            float(self._rules.get("decode_retry_backoff_s", os.getenv("VALIDATOR_DECODE_RETRY_BACKOFF_S", "0.5"))),
+            0.0,
         )
         self._ingress_queue_size = max(int(self._rules.get("ingress_queue_size", os.getenv("VALIDATOR_INGRESS_QUEUE_SIZE", "500"))), 1)
         self._publish_queue_size = max(int(self._rules.get("publish_queue_size", os.getenv("VALIDATOR_PUBLISH_QUEUE_SIZE", "500"))), 1)
@@ -224,7 +233,7 @@ class ValidatorModule:
                 enable_auto_commit=False,
                 session_timeout_ms=30000,
                 request_timeout_ms=60000,
-                value_deserializer=self._raw_schema.decode,
+                value_deserializer=lambda value: value,
             )
             print(f"validator_module: consumer created successfully, subscription={self._consumer.subscription()}", flush=True)
 
@@ -259,9 +268,22 @@ class ValidatorModule:
 
                 for records in batch.values():
                     for record in records:
+                        try:
+                            message = self._decode_record_value(record.value)
+                        except Exception as exc:
+                            logger.exception(
+                                "validator failed to decode raw payload at %s[%s] offset %s",
+                                record.topic,
+                                record.partition,
+                                record.offset,
+                            )
+                            self._record_stage_error("ingress", exc)
+                            self._handle_decode_failure(record, record.value, exc)
+                            continue
+
                         envelope = {
                             "record": record,
-                            "message": record.value,
+                            "message": message,
                             "received_at": time.monotonic(),
                             "publish_attempts": 0,
                         }
@@ -275,6 +297,30 @@ class ValidatorModule:
                 logger.exception("validator ingress loop failed")
                 self._record_stage_error("ingress", exc)
                 time.sleep(1)
+
+    def _decode_record_value(self, payload: bytes) -> dict[str, object]:
+        last_error: Exception | None = None
+        for attempt in range(1, self._decode_retry_attempts + 1):
+            try:
+                return self._raw_schema.decode(payload)
+            except Exception as exc:
+                last_error = exc
+                if attempt >= self._decode_retry_attempts:
+                    break
+                if self._decode_retry_backoff_s > 0:
+                    time.sleep(self._decode_retry_backoff_s * attempt)
+        assert last_error is not None
+        raise RuntimeError(f"raw payload decode failed: {last_error}") from last_error
+
+    def _handle_decode_failure(self, record, payload: bytes, exc: Exception) -> None:
+        try:
+            self._emit_undecodable_dlq(record, payload, str(exc))
+        except Exception:
+            logger.exception("validator failed to emit undecodable payload to DLQ")
+        try:
+            self._commit_record(record)
+        except Exception:
+            logger.exception("validator failed to commit undecodable payload offset")
 
     def _validation_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -580,6 +626,52 @@ class ValidatorModule:
             "preview_payload": preview_payload,
         }
 
+    def _emit_undecodable_dlq(self, record, payload: bytes, reason: str) -> None:
+        assert self._dlq_producer is not None
+        message_id = str(uuid4())
+        schema_id = self._schema_id_from_payload(payload)
+        payload_stub = {
+            "encoding": "avro" if schema_id is not None else "unknown",
+            "payload_base64": base64.b64encode(payload).decode("ascii"),
+            "schema_id": schema_id,
+            "topic": record.topic,
+            "partition": record.partition,
+            "offset": record.offset,
+        }
+        preview_payload = {
+            "manual_intervention_required": True,
+            "dlq_resolution": {
+                "mode": "manual_decode_required",
+                "gateway_id": self._gateway_id,
+            },
+            "source_topic": record.topic,
+        }
+        dlq_reason = f"decode_failed:{reason}"[:255]
+        envelope = {
+            "message_id": message_id,
+            "gateway_id": self._gateway_id,
+            "reason": dlq_reason,
+            "failed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "original": payload_stub,
+        }
+        self._dlq_producer.send(self._dlq_topic, envelope)
+        self._dlq_producer.flush()
+        self._pending_dlq_syncs[message_id] = {
+            "message_id": message_id,
+            "source_topic": record.topic,
+            "clean_topic": self._clean_topic,
+            "reason": dlq_reason,
+            "failed_at": envelope["failed_at"],
+            "original_payload": payload_stub,
+            "preview_payload": preview_payload,
+        }
+
+    @staticmethod
+    def _schema_id_from_payload(payload: bytes) -> int | None:
+        if len(payload) >= 5 and payload[0] == 0:
+            return int.from_bytes(payload[1:5], "big")
+        return None
+
     def _build_reprocess_payload(self, message: dict) -> dict:
         payload = self._apply_quality(message, "GOOD", None)
         payload["dlq_resolution"] = {
@@ -829,7 +921,7 @@ class ValidatorModule:
             "message": message_text,
             "metadata": {
                 "adapter_id": str(self._rules.get("adapter_id") or "validator"),
-                "pipeline_id": str(self._rules.get("pipeline_id") or self._gateway_id),
+                "deployment_id": str(self._rules.get("deployment_id") or self._gateway_id),
             },
         }
 
