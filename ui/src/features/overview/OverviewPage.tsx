@@ -10,6 +10,7 @@ import {
   listPipelines,
   listSinks,
 } from '../../shared/api/client'
+import { summarizeDeployment } from '../../shared/config/deployments'
 import { formatDateTime } from '../../shared/format/datetime'
 import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 
@@ -52,6 +53,14 @@ export function OverviewPage() {
   }, [])
 
   const approvedGateways = useMemo(() => gateways.filter((item) => item.approved).length, [gateways])
+  const sinkCountByPipeline = useMemo(
+    () =>
+      sinks.reduce<Record<number, number>>((counts, sink) => {
+        counts[sink.pipeline_id] = (counts[sink.pipeline_id] || 0) + 1
+        return counts
+      }, {}),
+    [sinks],
+  )
 
   return (
     <section>
@@ -72,9 +81,9 @@ export function OverviewPage() {
           <p className="muted">Approved: {approvedGateways}</p>
         </article>
         <article className="card">
-          <h3>Pipelines</h3>
+          <h3>Deployments</h3>
           <p className="overview-kpi-value">{pipelines.length}</p>
-          <p className="muted">Configured in control plane</p>
+          <p className="muted">Gateway pipeline/deployment records</p>
         </article>
         <article className="card">
           <h3>Sinks</h3>
@@ -90,29 +99,37 @@ export function OverviewPage() {
 
       <div className="overview-grid">
         <article className="card">
-          <h3>Recent Pipelines</h3>
+          <h3>Recent Deployments</h3>
+          <p className="muted">Current control-plane pipeline records that compose gateway adapters, sinks, and rules.</p>
           <table className="table">
             <thead>
               <tr>
                 <th>ID</th>
                 <th>Name</th>
                 <th>Gateway</th>
+                <th>Adapters</th>
+                <th>Sinks</th>
                 <th>Created</th>
               </tr>
             </thead>
             <tbody>
-              {pipelines.slice(0, 8).map((item) => (
-                <tr key={item.id}>
-                  <td>{item.id}</td>
-                  <td>{item.name}</td>
-                  <td>{item.gateway_id}</td>
-                  <td>{formatDateTime(item.created_at, timezone, { includeTimezone: true })}</td>
-                </tr>
-              ))}
+              {pipelines.slice(0, 8).map((item) => {
+                const summary = summarizeDeployment(item.config, sinkCountByPipeline[item.id] || 0)
+                return (
+                  <tr key={item.id}>
+                    <td>{item.id}</td>
+                    <td>{item.name}</td>
+                    <td>{item.gateway_id}</td>
+                    <td>{summary.adapterCount}</td>
+                    <td>{summary.sinkCount}</td>
+                    <td>{formatDateTime(item.created_at, timezone, { includeTimezone: true })}</td>
+                  </tr>
+                )
+              })}
               {pipelines.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="muted">
-                    No pipelines yet.
+                  <td colSpan={6} className="muted">
+                    No deployments yet.
                   </td>
                 </tr>
               )}

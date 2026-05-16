@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 
 import { AppShell } from './app/layout/AppShell'
+import { AdaptersPage } from './features/adapters/AdaptersPage'
 import { AlarmsPage } from './features/alarms/AlarmsPage'
 import { DlqPage } from './features/dlq/DlqPage'
 import { LoginPage } from './features/auth/LoginPage'
@@ -33,6 +34,7 @@ function App() {
         <Route index element={<Navigate to="/overview" replace />} />
         <Route path="overview" element={<OverviewPage />} />
         <Route path="gateways" element={<GatewaysPage />} />
+        <Route path="adapters" element={<AdaptersPage />} />
         <Route path="pipelines" element={<PipelinesPage />} />
         <Route path="sinks" element={<SinksPage />} />
         <Route path="alarms" element={<AlarmsPage />} />

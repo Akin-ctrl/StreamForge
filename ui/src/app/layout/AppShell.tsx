@@ -8,11 +8,12 @@ import { useOperatorPreferences } from '../../shared/preferences/PreferencesProv
 const links = [
   { to: '/overview', label: 'Overview' },
   { to: '/gateways', label: 'Gateways' },
+  { to: '/adapters', label: 'Adapters' },
   { to: '/pipelines', label: 'Pipelines' },
   { to: '/sinks', label: 'Sinks' },
   { to: '/alarms', label: 'Alarms' },
   { to: '/dlq', label: 'DLQ' },
-  { to: '/create-pipeline', label: 'Create Pipeline' },
+  { to: '/create-pipeline', label: 'Compose Deployment' },
   { to: '/health', label: 'Health' },
   { to: '/users', label: 'Users' },
 ]

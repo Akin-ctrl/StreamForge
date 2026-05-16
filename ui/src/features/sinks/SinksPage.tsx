@@ -89,10 +89,15 @@ export function SinksPage() {
   return (
     <section>
       <h2>Sinks</h2>
+      <p className="muted">
+        Sinks are destination connectors attached to gateway deployments. In the current backend model, sink records are
+        owned by a pipeline/deployment record even though they are presented here as their own operator surface.
+      </p>
       {error && <p className="error">{error}</p>}
 
       <form className="card" onSubmit={onCreate}>
         <h3>Create Sink</h3>
+        <p className="muted">Use this low-level page to define a deployment sink target directly.</p>
         <label>
           Pipeline
           <select
@@ -128,12 +133,12 @@ export function SinksPage() {
 
       <table className="table">
         <thead>
-          <tr>
-            <th>ID</th>
-            <th>Pipeline ID</th>
-            <th>Type</th>
-            <th>Status</th>
-            <th>Actions</th>
+            <tr>
+              <th>ID</th>
+              <th>Deployment ID</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Actions</th>
           </tr>
         </thead>
         <tbody>
