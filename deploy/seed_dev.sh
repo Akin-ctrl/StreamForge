@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# seed_dev.sh — Seeds a demo pipeline + sink into the control plane for local development.
-# Safe to run multiple times: skips creation if the pipeline already exists for the gateway.
+# seed_dev.sh — Seeds a demo gateway deployment into the control plane for local development.
+# Safe to run multiple times: adapters, sinks, and deployment records are created or updated in place.
 #
 # Usage:
 #   ./seed_dev.sh [CONTROL_PLANE_URL]
@@ -11,6 +11,8 @@ set -euo pipefail
 
 BASE_URL="${1:-http://localhost:8001}"
 GATEWAY_ID="gateway-demo-01"
+DEPLOYMENT_ID="deployment-demo-01"
+DEPLOYMENT_NAME="Demo Deployment"
 ADMIN_USER="admin"
 ADMIN_PASS="admin123"
 
@@ -19,7 +21,100 @@ info()    { echo -e "${GREEN}[seed]${NC} $*"; }
 warn()    { echo -e "${YELLOW}[seed]${NC} $*"; }
 err()     { echo -e "${RED}[seed]${NC} $*" >&2; }
 
-# ── 1. Get admin token ────────────────────────────────────────────────────────
+CONFIG_JSON=$(cat <<'JSON'
+{
+  "adapters": [
+    {
+      "adapter_id": "modbus-demo-01",
+      "name": "Demo Modbus Adapter",
+      "adapter_type": "modbus_tcp",
+      "status": "active",
+      "config": {
+        "host": "modbus-simulator",
+        "port": 5020,
+        "unit_id": 1,
+        "poll_interval_ms": 1000,
+        "registers": [
+          {"address": 40001, "param": "temperature", "type": "float32", "unit": "celsius"}
+        ],
+        "coils": [
+          {"address": 1, "param": "motor_running", "event_type": "motor_state_change"}
+        ],
+        "output": {
+          "kafka_bootstrap": "kafka:9092",
+          "topic": "telemetry.raw",
+          "events_topic": "events.raw",
+          "asset_id": "demo_sensor_01"
+        }
+      }
+    }
+  ],
+  "validation": {
+    "enabled": true,
+    "raw_topic": "telemetry.raw",
+    "clean_topic": "telemetry.clean",
+    "dlq_topic": "dlq.telemetry",
+    "ranges": {
+      "temperature": {"min": -50, "max": 500}
+    },
+    "rate_of_change": {
+      "temperature": 20
+    },
+    "gap_detection": {
+      "temperature": 5
+    },
+    "alarm_topic": "alarms.raw",
+    "alarm_rules": [
+      {
+        "parameter": "temperature",
+        "condition": "value > 100",
+        "severity": "HIGH",
+        "type": "temperature_high",
+        "message": "Temperature exceeded configured threshold"
+      }
+    ]
+  },
+  "events": {
+    "enabled": true,
+    "raw_topic": "events.raw",
+    "clean_topic": "events.clean",
+    "dlq_topic": "dlq.events"
+  },
+  "aggregates": {
+    "enabled": true,
+    "source_topic": "telemetry.clean",
+    "resolutions": {
+      "1s": {
+        "enabled": true,
+        "topic": "telemetry.1s",
+        "window_seconds": 1
+      },
+      "1min": {
+        "enabled": true,
+        "topic": "telemetry.1min",
+        "window_seconds": 60
+      }
+    }
+  },
+  "sinks": [
+    {
+      "sink_id": "timescaledb-primary",
+      "name": "Primary TimescaleDB Sink",
+      "sink_type": "timescaledb",
+      "status": "active",
+      "config": {
+        "kafka_bootstrap": "kafka:9092",
+        "topic": "telemetry.clean",
+        "group_id": "sf-sink-timescaledb",
+        "db_dsn": "postgresql://streamforge:streamforge@timescaledb:5432/streamforge",
+        "table": "telemetry_clean"
+      }
+    }
+  ]
+}
+JSON
+)
+
 info "Requesting admin token from $BASE_URL ..."
 TOKEN_RESP=$(curl -sf -X POST "$BASE_URL/api/v1/auth/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
@@ -35,12 +130,10 @@ if [[ -z "$TOKEN" ]]; then
 fi
 info "Admin token acquired."
 
-AUTH="-H \"Authorization: Bearer $TOKEN\""
-
 _get()  { curl -sf -H "Authorization: Bearer $TOKEN" "$BASE_URL$1"; }
 _post() { curl -sf -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$2" "$BASE_URL$1"; }
+_put()  { curl -sf -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$2" "$BASE_URL$1"; }
 
-# ── 2. Ensure gateway exists ─────────────────────────────────────────────────
 info "Checking gateway '$GATEWAY_ID' ..."
 GW_LIST=$(_get "/api/v1/gateways")
 GW_EXISTS=$(echo "$GW_LIST" | python3 -c "
@@ -64,126 +157,99 @@ print(json.dumps(payload))
 fi
 info "Gateway '$GATEWAY_ID' found."
 
-# ── 3. Check if a pipeline already exists for this gateway ───────────────────
-info "Checking for existing pipelines ..."
-PIPELINES=$(_get "/api/v1/pipelines")
-EXISTING_PIPELINE_ID=$(echo "$PIPELINES" | python3 -c "
-import sys, json
-pipelines = json.load(sys.stdin)
-match = next((p for p in pipelines if p['gateway_id'] == '$GATEWAY_ID'), None)
-print(match['id'] if match else '')
-")
-
-if [[ -n "$EXISTING_PIPELINE_ID" ]]; then
-  warn "Pipeline already exists for '$GATEWAY_ID' (id=$EXISTING_PIPELINE_ID). Skipping pipeline creation."
-  PIPELINE_ID="$EXISTING_PIPELINE_ID"
-else
-  # ── 4. Create the pipeline ──────────────────────────────────────────────────
-  info "Creating pipeline for '$GATEWAY_ID' ..."
-  PIPELINE_PAYLOAD=$(python3 -c "
+info "Upserting adapters, sinks, and deployment ..."
+python3 - "$BASE_URL" "$TOKEN" "$GATEWAY_ID" "$DEPLOYMENT_ID" "$DEPLOYMENT_NAME" "$CONFIG_JSON" <<'PY'
 import json
-payload = {
-    'name': 'demo-pipeline',
-    'gateway_id': '$GATEWAY_ID',
-    'config': {
-        'adapters': [
-            {
-                'adapter_id': 'modbus-demo-01',
-                'adapter_type': 'modbus_tcp',
-                'config': {
-                    'host': 'modbus-simulator',
-                    'port': 5020,
-                    'unit_id': 1,
-                    'poll_interval_ms': 1000,
-                    'registers': [
-                        {'address': 40001, 'param': 'temperature', 'type': 'float32', 'unit': 'celsius'}
-                    ],
-                    'output': {
-                        'kafka_bootstrap': 'kafka:9092',
-                        'topic': 'telemetry.raw',
-                        'asset_id': 'demo_sensor_01'
-                    }
-                }
-            }
-        ],
-        'validation': {
-            'enabled': True,
-            'raw_topic': 'telemetry.raw',
-            'clean_topic': 'telemetry.clean',
-            'dlq_topic': 'dlq.telemetry',
-            'ranges': {
-                'temperature': {'min': -50, 'max': 500}
-            },
-            'rate_of_change': {
-                'temperature': 20
-            },
-            'gap_detection': {
-                'temperature': 5
-            },
-            'alarm_topic': 'alarms.raw',
-            'alarm_rules': [
-                {
-                    'parameter': 'temperature',
-                    'condition': 'value > 100',
-                    'severity': 'HIGH',
-                    'type': 'temperature_high',
-                    'message': 'Temperature exceeded configured threshold'
-                }
-            ]
-        }
+import sys
+from urllib import request
+
+base_url, token, gateway_id, deployment_id, deployment_name, raw_config = sys.argv[1:]
+config = json.loads(raw_config)
+
+def http_json(path: str, method: str = "GET", payload: dict | None = None):
+    headers = {"Accept": "application/json", "Authorization": f"Bearer {token}"}
+    data = None
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = request.Request(f"{base_url}{path}", data=data, headers=headers, method=method)
+    with request.urlopen(req, timeout=10) as response:
+        body = response.read().decode("utf-8")
+    return json.loads(body) if body else None
+
+adapters = {item["adapter_id"]: item for item in http_json("/api/v1/adapters")}
+adapter_ids = []
+for adapter in config.get("adapters", []):
+    payload = {
+        "adapter_id": adapter["adapter_id"],
+        "name": adapter.get("name") or adapter["adapter_id"],
+        "adapter_type": adapter["adapter_type"],
+        "status": adapter.get("status", "active"),
+        "config": adapter["config"],
+        "description": adapter.get("description"),
     }
-}
-print(json.dumps(payload))
-")
+    adapter_ids.append(payload["adapter_id"])
+    existing = adapters.get(payload["adapter_id"])
+    if existing is None:
+        http_json("/api/v1/adapters", method="POST", payload=payload)
+    elif any(existing.get(field) != payload[field] for field in ("name", "adapter_type", "status", "config", "description")):
+        http_json(f"/api/v1/adapters/{payload['adapter_id']}", method="PUT", payload=payload)
 
-  PIPELINE_RESP=$(_post "/api/v1/pipelines" "$PIPELINE_PAYLOAD")
-  PIPELINE_ID=$(echo "$PIPELINE_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
-  info "Pipeline created (id=$PIPELINE_ID)."
-fi
-
-# ── 5. Check if a sink already exists for this pipeline ──────────────────────
-info "Checking for existing sinks on pipeline $PIPELINE_ID ..."
-SINKS=$(_get "/api/v1/sinks")
-EXISTING_SINK=$(echo "$SINKS" | python3 -c "
-import sys, json
-sinks = json.load(sys.stdin)
-match = next((s for s in sinks if s['pipeline_id'] == $PIPELINE_ID), None)
-print(match['id'] if match else '')
-")
-
-if [[ -n "$EXISTING_SINK" ]]; then
-  warn "Sink already exists for pipeline $PIPELINE_ID (id=$EXISTING_SINK). Skipping sink creation."
-else
-  # ── 6. Create the sink ───────────────────────────────────────────────────────
-  info "Creating TimescaleDB sink for pipeline $PIPELINE_ID ..."
-  SINK_PAYLOAD=$(python3 -c "
-import json
-payload = {
-    'pipeline_id': $PIPELINE_ID,
-    'sink_type': 'timescaledb',
-    'status': 'active',
-    'config': {
-        'kafka_bootstrap': 'kafka:9092',
-        'topic': 'telemetry.clean',
-        'group_id': 'sf-sink-timescaledb',
-        'db_dsn': 'postgresql://streamforge:streamforge@timescaledb:5432/streamforge',
-        'table': 'telemetry_clean'
+sinks = {item["sink_id"]: item for item in http_json("/api/v1/sinks")}
+sink_ids = []
+for sink in config.get("sinks", []):
+    payload = {
+        "sink_id": sink["sink_id"],
+        "name": sink.get("name") or sink["sink_id"],
+        "sink_type": sink["sink_type"],
+        "status": sink.get("status", "active"),
+        "config": sink["config"],
+        "description": sink.get("description"),
     }
+    sink_ids.append(payload["sink_id"])
+    existing = sinks.get(payload["sink_id"])
+    if existing is None:
+        http_json("/api/v1/sinks", method="POST", payload=payload)
+    elif any(existing.get(field) != payload[field] for field in ("name", "sink_type", "status", "config", "description")):
+        http_json(f"/api/v1/sinks/{payload['sink_id']}", method="PUT", payload=payload)
+
+payload = {
+    "deployment_id": deployment_id,
+    "name": deployment_name,
+    "gateway_id": gateway_id,
+    "status": "active",
+    "adapter_ids": adapter_ids,
+    "sink_ids": sink_ids,
+    "validation_config": config.get("validation", {}),
+    "events_config": config.get("events", {}),
+    "aggregates_config": config.get("aggregates", {}),
 }
-print(json.dumps(payload))
-")
+deployments = {item["deployment_id"]: item for item in http_json("/api/v1/deployments")}
+existing = deployments.get(deployment_id)
+if existing is None:
+    http_json("/api/v1/deployments", method="POST", payload=payload)
+elif any(
+    existing.get(field) != payload[field]
+    for field in (
+        "name",
+        "gateway_id",
+        "status",
+        "adapter_ids",
+        "sink_ids",
+        "validation_config",
+        "events_config",
+        "aggregates_config",
+    )
+):
+    http_json(f"/api/v1/deployments/{deployment_id}", method="PUT", payload=payload)
+PY
 
-  SINK_RESP=$(_post "/api/v1/sinks" "$SINK_PAYLOAD")
-  SINK_ID=$(echo "$SINK_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
-  info "Sink created (id=$SINK_ID)."
-fi
-
-# ── 7. Summary ────────────────────────────────────────────────────────────────
 echo ""
 info "Done. Demo topology is seeded:"
-info "  Gateway  : $GATEWAY_ID"
-info "  Pipeline : $PIPELINE_ID (modbus-demo-01 → telemetry.raw → validator → telemetry.clean)"
-info "  Sink     : TimescaleDB (telemetry.clean → timescaledb:5432/streamforge.telemetry_clean)"
+info "  Gateway    : $GATEWAY_ID"
+info "  Deployment : $DEPLOYMENT_ID"
+info "  Adapter    : modbus-demo-01"
+info "  Sink       : timescaledb-primary"
 echo ""
 warn "If gateway_runtime is already running, it will pick up the new config within GATEWAY_POLL_INTERVAL seconds (default 30s)."
-warn "Or restart it now: docker compose -f docker-compose.dev.yml restart gateway_runtime"
+warn "Or restart it now: docker compose -f deploy/docker-compose.dev.yml restart gateway_runtime"

@@ -72,6 +72,25 @@ Each adapter instance should carry:
 - `created_at`
 - `updated_at`
 
+## Core Modeling Rule
+
+An adapter instance represents one source connection or session context and may contain many mapped signals inside it.
+
+That means:
+
+- one Modbus adapter instance may read temperature, pressure, humidity, and state points from the same PLC
+- one MQTT adapter instance may subscribe to one or more topics and map many payload fields
+- one OPC UA adapter instance may monitor many nodes from the same server session
+
+The product model must not assume one adapter per parameter.
+
+The correct operator mental model is:
+
+- one adapter instance per source connection/session context
+- many points, subscriptions, or monitored items inside that adapter
+
+This is the standard industrial case and should be treated as the default design assumption.
+
 ## Protocol Specs
 
 ### Modbus TCP
@@ -111,6 +130,8 @@ Point mapping should be a repeatable table with:
   - `event`
 - optional `event_type`
 
+One Modbus adapter instance is expected to carry many mapped PLC points. A PLC with temperature, pressure, humidity, tank level, and motor state should normally be modeled as one adapter instance with multiple point rows, not one adapter per parameter.
+
 Notes:
 
 - Protocol default TCP port is `502`
@@ -132,6 +153,8 @@ Operator-facing fields:
 - `poll_interval_ms`
 
 Point mapping should follow the same model as Modbus TCP.
+
+One RTU adapter instance is likewise expected to carry many mapped points from the same serial device context.
 
 Notes:
 
@@ -173,6 +196,8 @@ Mappings should be repeatable and include:
 - `data_type`
 - optional `quality_field`
 - optional `device_time_field`
+
+One MQTT adapter instance may include multiple subscriptions and many field mappings. It should be normal to map several telemetry parameters from one topic payload or several related topics under one adapter session.
 
 Event subscriptions should additionally support:
 
@@ -217,6 +242,8 @@ Monitored items should be repeatable and include:
 - `sampling_interval_ms`
 - `queue_size`
 - `monitoring_mode`
+
+One OPC UA adapter instance may monitor many nodes from the same OPC UA session. Operators should configure multiple monitored items inside one adapter rather than creating separate adapters for each parameter.
 
 Subscription-level settings:
 

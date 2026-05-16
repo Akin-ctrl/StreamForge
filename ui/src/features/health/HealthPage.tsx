@@ -132,7 +132,8 @@ export function HealthPage() {
             <article className="card">
               <h3>Inventory</h3>
               <p>Gateways: {health.counts?.gateways ?? 0}</p>
-              <p>Pipelines: {health.counts?.pipelines ?? 0}</p>
+              <p>Adapters: {health.counts?.adapters ?? 0}</p>
+              <p>Deployments: {health.counts?.deployments ?? 0}</p>
               <p>Sinks: {health.counts?.sinks ?? 0}</p>
               <p>Alarms: {health.counts?.alarms ?? 0}</p>
               <p>DLQ Messages: {health.counts?.dlq_messages ?? 0}</p>
@@ -236,7 +237,7 @@ export function HealthPage() {
                   {validator && (
                     <div className="section-grid">
                       <div>
-                        <strong>Validator Pipeline</strong>
+                        <strong>Validator Flow</strong>
                         <div className="component-grid">
                           <div className="component-pill">
                             <strong>Backpressure</strong>: {(validator.backpressure as { active?: boolean } | undefined)?.active ? 'active' : 'clear'}

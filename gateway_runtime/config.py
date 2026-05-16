@@ -36,6 +36,7 @@ class GatewayConfig:
     """Top-level configuration for the gateway runtime."""
 
     gateway_id: str
+    deployment_id: str | None
     adapters: List[AdapterConfig]
     sinks: List[SinkConfig]
     validation: dict
@@ -147,6 +148,7 @@ class ConfigRepository:
 
         return GatewayConfig(
             gateway_id=raw["gateway_id"],
+            deployment_id=str(raw["deployment_id"]) if raw.get("deployment_id") is not None else None,
             adapters=adapters,
             sinks=sinks,
             validation=raw.get("validation", {}),

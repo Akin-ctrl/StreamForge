@@ -195,6 +195,8 @@ Adapter configuration must be protocol-aware. Flat scalar field lists are not en
 - MQTT requires repeatable subscriptions and field mappings
 - OPC UA requires monitored-item definitions and subscription settings
 
+An adapter instance represents one source connection or session context and may contain many mapped signals inside it. Multi-parameter industrial sources such as PLCs, MQTT payloads, and OPC UA servers should normally be modeled as one adapter with repeatable point/subscription/monitored-item mappings, not as one adapter per parameter.
+
 See [Adapters And Deployments Spec](ADAPTERS_AND_DEPLOYMENTS_SPEC.md) for the locked operator-facing configuration contract.
 
 #### 3. Local Kafka

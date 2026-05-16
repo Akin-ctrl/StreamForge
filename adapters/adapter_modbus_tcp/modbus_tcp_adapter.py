@@ -179,7 +179,7 @@ class ModbusTcpAdapter(BaseAdapter):
         now = datetime.now(timezone.utc).isoformat()
         output = self.config["output"]
         asset_id = output["asset_id"]
-        pipeline_id = str(output.get("pipeline_id") or asset_id)
+        deployment_id = str(output.get("deployment_id") or asset_id)
 
         telemetry_message: Dict[str, object] = {
             "asset_id": asset_id,
@@ -219,7 +219,7 @@ class ModbusTcpAdapter(BaseAdapter):
                     },
                     "metadata": {
                         "adapter_id": self._adapter_id,
-                        "pipeline_id": pipeline_id,
+                        "deployment_id": deployment_id,
                     },
                 }
             )

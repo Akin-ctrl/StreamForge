@@ -15,7 +15,7 @@ GatewayAlarmState = Literal["ACTIVE", "CLEARED"]
 
 class AlarmMetadata(BaseModel):
     adapter_id: str | None = Field(default=None, min_length=1, max_length=128)
-    pipeline_id: str | None = Field(default=None, min_length=1, max_length=128)
+    deployment_id: str | None = Field(default=None, min_length=1, max_length=128)
 
     model_config = ConfigDict(extra="allow")
 

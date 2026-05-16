@@ -13,7 +13,8 @@ CONTROL_PLANE_URL = os.getenv("CONTROL_PLANE_URL", "http://control_plane:8000").
 DEV_ADMIN_USERNAME = os.getenv("DEV_ADMIN_USERNAME", "streamforge_admin")
 DEV_ADMIN_PASSWORD = os.getenv("DEV_ADMIN_PASSWORD", "StreamForge1234")
 GATEWAY_ID = os.getenv("CONTROL_PLANE_GATEWAY_ID", "gateway-demo-01")
-PIPELINE_NAME = os.getenv("DEV_PIPELINE_NAME", "demo-pipeline")
+DEPLOYMENT_ID = os.getenv("DEV_DEPLOYMENT_ID", "deployment-demo-01")
+DEPLOYMENT_NAME = os.getenv("DEV_DEPLOYMENT_NAME", "Demo Deployment")
 CONFIG_PATH = os.getenv("DEV_GATEWAY_CONFIG_PATH", "/app/deploy/gateway_config.sample.json")
 
 
@@ -93,55 +94,101 @@ def _ensure_gateway(token: str) -> None:
         _http_json(f"/api/v1/gateways/{GATEWAY_ID}/approve", method="POST", token=token)
 
 
-def _ensure_pipeline_and_sinks(token: str, raw_config: dict) -> None:
-    pipeline_config = {
-        "adapters": raw_config.get("adapters", []),
-        "validation": raw_config.get("validation", {}),
-        "events": raw_config.get("events", {}),
-        "aggregates": raw_config.get("aggregates", {}),
+def _adapter_payload(adapter_cfg: dict) -> dict:
+    adapter_id = str(adapter_cfg["adapter_id"])
+    return {
+        "adapter_id": adapter_id,
+        "name": str(adapter_cfg.get("name") or adapter_id),
+        "adapter_type": adapter_cfg["adapter_type"],
+        "status": adapter_cfg.get("status", "active"),
+        "config": adapter_cfg["config"],
+        "description": adapter_cfg.get("description"),
     }
 
-    pipelines = _http_json("/api/v1/pipelines", token=token)
-    pipeline = next(
-        (item for item in pipelines if item.get("gateway_id") == GATEWAY_ID and item.get("name") == PIPELINE_NAME),
-        None,
-    )
-    if pipeline is None:
-        pipeline = _http_json(
-            "/api/v1/pipelines",
-            method="POST",
-            token=token,
-            payload={"name": PIPELINE_NAME, "gateway_id": GATEWAY_ID, "config": pipeline_config},
-        )
-    elif pipeline.get("config") != pipeline_config:
-        pipeline = _http_json(
-            f"/api/v1/pipelines/{pipeline['id']}",
-            method="PUT",
-            token=token,
-            payload={"name": PIPELINE_NAME, "config": pipeline_config},
-        )
 
+def _sink_payload(sink_cfg: dict) -> dict:
+    sink_id = str(sink_cfg["sink_id"])
+    return {
+        "sink_id": sink_id,
+        "name": str(sink_cfg.get("name") or sink_id),
+        "sink_type": sink_cfg["sink_type"],
+        "status": sink_cfg.get("status", "active"),
+        "config": sink_cfg["config"],
+        "description": sink_cfg.get("description"),
+    }
+
+
+def _ensure_adapters(token: str, raw_config: dict) -> list[str]:
+    adapters = _http_json("/api/v1/adapters", token=token)
+    existing = {item["adapter_id"]: item for item in adapters}
+    adapter_ids: list[str] = []
+
+    for adapter_cfg in raw_config.get("adapters", []):
+        payload = _adapter_payload(adapter_cfg)
+        adapter_id = payload["adapter_id"]
+        adapter_ids.append(adapter_id)
+        current = existing.get(adapter_id)
+        if current is None:
+            _http_json("/api/v1/adapters", method="POST", token=token, payload=payload)
+            continue
+        if any(current.get(field) != payload[field] for field in ("name", "adapter_type", "status", "config", "description")):
+            _http_json(f"/api/v1/adapters/{adapter_id}", method="PUT", token=token, payload=payload)
+
+    return adapter_ids
+
+
+def _ensure_sinks(token: str, raw_config: dict) -> list[str]:
     sinks = _http_json("/api/v1/sinks", token=token)
-    pipeline_id = int(pipeline["id"])
+    existing = {item["sink_id"]: item for item in sinks}
+    sink_ids: list[str] = []
+
     for sink_cfg in raw_config.get("sinks", []):
-        existing = next(
-            (
-                item
-                for item in sinks
-                if int(item.get("pipeline_id")) == pipeline_id and item.get("sink_type") == sink_cfg.get("sink_type")
-            ),
-            None,
-        )
-        payload = {
-            "pipeline_id": pipeline_id,
-            "sink_type": sink_cfg["sink_type"],
-            "config": sink_cfg["config"],
-            "status": sink_cfg.get("status", "active"),
-        }
-        if existing is None:
+        payload = _sink_payload(sink_cfg)
+        sink_id = payload["sink_id"]
+        sink_ids.append(sink_id)
+        current = existing.get(sink_id)
+        if current is None:
             _http_json("/api/v1/sinks", method="POST", token=token, payload=payload)
-        elif existing.get("config") != payload["config"] or existing.get("status") != payload["status"]:
-            _http_json(f"/api/v1/sinks/{existing['id']}", method="PUT", token=token, payload=payload)
+            continue
+        if any(current.get(field) != payload[field] for field in ("name", "sink_type", "status", "config", "description")):
+            _http_json(f"/api/v1/sinks/{sink_id}", method="PUT", token=token, payload=payload)
+
+    return sink_ids
+
+
+def _ensure_deployment(token: str, raw_config: dict, adapter_ids: list[str], sink_ids: list[str]) -> None:
+    deployments = _http_json("/api/v1/deployments", token=token)
+    existing = next((item for item in deployments if item.get("deployment_id") == DEPLOYMENT_ID), None)
+    payload = {
+        "deployment_id": DEPLOYMENT_ID,
+        "name": DEPLOYMENT_NAME,
+        "gateway_id": GATEWAY_ID,
+        "status": "active",
+        "adapter_ids": adapter_ids,
+        "sink_ids": sink_ids,
+        "validation_config": raw_config.get("validation", {}),
+        "events_config": raw_config.get("events", {}),
+        "aggregates_config": raw_config.get("aggregates", {}),
+    }
+
+    if existing is None:
+        _http_json("/api/v1/deployments", method="POST", token=token, payload=payload)
+        return
+
+    if any(
+        existing.get(field) != payload[field]
+        for field in (
+            "name",
+            "gateway_id",
+            "status",
+            "adapter_ids",
+            "sink_ids",
+            "validation_config",
+            "events_config",
+            "aggregates_config",
+        )
+    ):
+        _http_json(f"/api/v1/deployments/{DEPLOYMENT_ID}", method="PUT", token=token, payload=payload)
 
 
 def main() -> int:
@@ -150,7 +197,9 @@ def main() -> int:
         token = _ensure_admin_token()
         raw_config = _read_json(CONFIG_PATH)
         _ensure_gateway(token)
-        _ensure_pipeline_and_sinks(token, raw_config)
+        adapter_ids = _ensure_adapters(token, raw_config)
+        sink_ids = _ensure_sinks(token, raw_config)
+        _ensure_deployment(token, raw_config, adapter_ids, sink_ids)
     except error.HTTPError as exc:
         sys.stderr.write(f"bootstrap failed with HTTP {exc.code}\n")
         return 1

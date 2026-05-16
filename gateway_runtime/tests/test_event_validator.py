@@ -35,7 +35,7 @@ class EventValidatorModuleTests(unittest.TestCase):
             },
             "metadata": {
                 "adapter_id": "modbus-demo-01",
-                "pipeline_id": "asset-1",
+                "deployment_id": "asset-1",
             },
         }
 
@@ -144,6 +144,49 @@ class EventValidatorModuleTests(unittest.TestCase):
         metadata = next(iter(committed.values()))
         self.assertEqual(metadata["offset"], 8)
         self.assertEqual(metadata["leader_epoch"], 3)
+
+    def test_decode_record_value_retries_before_succeeding(self) -> None:
+        validator = EventValidatorModule(
+            bootstrap="kafka:9092",
+            gateway_id="gw-edge-01",
+            rules={"decode_retry_attempts": 2, "decode_retry_backoff_s": 0},
+        )
+        calls = {"count": 0}
+
+        def flaky_decode(payload: bytes) -> dict[str, object]:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise RuntimeError("temporary schema miss")
+            return self._valid_event()
+
+        validator._raw_schema.decode = flaky_decode  # type: ignore[method-assign]
+
+        decoded = validator._decode_record_value(b"payload")
+
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(decoded["event_type"], "motor_state_change")
+
+    def test_handle_decode_failure_commits_and_mirrors_minimal_dlq_entry(self) -> None:
+        validator = EventValidatorModule(
+            bootstrap="kafka:9092",
+            gateway_id="gw-edge-01",
+        )
+        validator._dlq_producer = FakeProducer()
+        committed: list[SimpleNamespace] = []
+
+        def fake_commit(record) -> None:
+            committed.append(record)
+
+        validator._commit_record = fake_commit  # type: ignore[method-assign]
+        record = SimpleNamespace(topic="events.raw", partition=0, offset=7)
+
+        validator._handle_decode_failure(record, b"\x00\x00\x00\x00\x01payload", RuntimeError("schema missing"))
+
+        self.assertEqual(len(committed), 1)
+        pending = next(iter(validator._pending_dlq_syncs.values()))
+        self.assertEqual(pending["source_topic"], "events.raw")
+        self.assertEqual(pending["original_payload"]["schema_id"], 1)
+        self.assertTrue(pending["preview_payload"]["manual_intervention_required"])
 
 
 if __name__ == "__main__":
