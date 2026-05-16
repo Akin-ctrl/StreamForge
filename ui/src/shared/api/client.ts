@@ -304,6 +304,19 @@ export function createPipeline(payload: {
   })
 }
 
+export function updatePipeline(
+  pipelineId: number,
+  payload: {
+    name?: string
+    config?: Record<string, unknown>
+  },
+) {
+  return request<PipelineItem>(`/api/v1/pipelines/${pipelineId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
 export function deletePipeline(pipelineId: number) {
   return request<{ deleted: boolean; pipeline_id: number }>(`/api/v1/pipelines/${pipelineId}`, {
     method: 'DELETE',
