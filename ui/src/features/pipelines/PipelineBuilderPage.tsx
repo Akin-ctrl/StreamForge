@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useFieldArray, useForm } from 'react-hook-form'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 import {
   CatalogAdapterType,
@@ -12,13 +12,38 @@ import {
   getCatalog,
   listGateways,
   listSinks,
+  listPipelines,
+  PipelineItem,
+  updatePipeline,
 } from '../../shared/api/client'
+import { PipelineComposerState } from '../../shared/config/deployments'
 
 type RegisterInput = {
   address: number
   param: string
   type: string
   unit: string
+}
+
+type MqttSubscriptionInput = {
+  topic: string
+  message_type: string
+  payload_format: string
+  asset_id: string
+}
+
+type MqttMappingInput = {
+  topic: string
+  field: string
+  parameter: string
+  unit: string
+}
+
+type OpcuaMonitoredItemInput = {
+  node_id: string
+  parameter: string
+  unit: string
+  asset_id: string
 }
 
 type ValidationPerParam = {
@@ -39,6 +64,9 @@ type BuilderFormValues = {
     adapter_type: string
     config_values: Record<string, string | number>
     registers: RegisterInput[]
+    mqtt_subscriptions: MqttSubscriptionInput[]
+    mqtt_mappings: MqttMappingInput[]
+    opcua_monitored_items: OpcuaMonitoredItemInput[]
   }
   output: {
     create_new_sink: boolean
@@ -191,14 +219,57 @@ function nextRegisterAddress(registers: RegisterInput[]): number {
   return highestEnd + 1
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+  return value as Record<string, unknown>
+}
+
+function defaultBuilderValues(): BuilderFormValues {
+  return {
+    pipelineName: 'demo-pipeline-ui',
+    gatewayId: '',
+    adapter: {
+      adapter_id: 'adapter-01',
+      adapter_type: '',
+      config_values: {},
+      registers: [{ address: 40001, param: 'temperature', type: 'float32', unit: 'celsius' }],
+      mqtt_subscriptions: [{ topic: 'factory/line1/telemetry', message_type: 'telemetry', payload_format: 'json', asset_id: 'asset-01' }],
+      mqtt_mappings: [{ topic: 'factory/line1/telemetry', field: 'temperature', parameter: 'temperature', unit: 'celsius' }],
+      opcua_monitored_items: [{ node_id: 'ns=2;s=Line1.Temperature', parameter: 'temperature', unit: 'celsius', asset_id: 'asset-01' }],
+    },
+    output: {
+      create_new_sink: true,
+      sink_id: '',
+      sink_type: 'timescaledb',
+      sink_status: 'active',
+      kafka_bootstrap: 'kafka:9092',
+      topic: 'telemetry.raw',
+      asset_id: 'asset-01',
+      group_id: 'sf-sink-timescaledb',
+      db_dsn: 'postgresql://streamforge:streamforge@timescaledb:5432/streamforge',
+      table: 'telemetry_clean',
+    },
+    validationEnabled: true,
+    rawTopic: 'telemetry.raw',
+    cleanTopic: 'telemetry.clean',
+    dlqTopic: 'dlq.telemetry',
+    validationByParam: {},
+  }
+}
+
 /**
  * Step-based pipeline wizard.
  * Step 1: Adapter, Step 2: Sink, Step 3: Validation, Step 4: Review.
  */
 export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, availableSinks }: PipelineBuilderProps = {}) {
   const navigate = useNavigate()
+  const location = useLocation()
+  const composerState = location.state as PipelineComposerState | null
   const [step, setStep] = useState(1)
   const [gateways, setGateways] = useState<GatewayItem[]>([])
+  const [pipelines, setPipelines] = useState<PipelineItem[]>([])
   const [catalogAdapters, setCatalogAdapters] = useState<CatalogAdapterType[]>([])
   const [catalogSinks, setCatalogSinks] = useState<CatalogSinkType[]>([])
   const [fetchedSinks, setFetchedSinks] = useState<SinkItem[]>([])
@@ -213,40 +284,27 @@ export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, a
     watch,
     setValue,
     getValues,
+    reset,
     formState: { errors },
   } = useForm<BuilderFormValues>({
-    defaultValues: {
-      pipelineName: 'demo-pipeline-ui',
-      gatewayId: '',
-      adapter: {
-        adapter_id: 'adapter-01',
-        adapter_type: '',
-        config_values: {},
-        registers: [{ address: 40001, param: 'temperature', type: 'float32', unit: 'celsius' }],
-      },
-      output: {
-        create_new_sink: true,
-        sink_id: '',
-        sink_type: 'timescaledb',
-        sink_status: 'active',
-        kafka_bootstrap: 'kafka:9092',
-        topic: 'telemetry.raw',
-        asset_id: 'asset-01',
-        group_id: 'sf-sink-timescaledb',
-        db_dsn: 'postgresql://streamforge:streamforge@timescaledb:5432/streamforge',
-        table: 'telemetry_clean',
-      },
-      validationEnabled: true,
-      rawTopic: 'telemetry.raw',
-      cleanTopic: 'telemetry.clean',
-      dlqTopic: 'dlq.telemetry',
-      validationByParam: {},
-    },
+    defaultValues: defaultBuilderValues(),
   })
 
   const { fields, append, remove } = useFieldArray({
     control,
     name: 'adapter.registers',
+  })
+  const { fields: mqttSubscriptionFields, append: appendMqttSubscription, remove: removeMqttSubscription } = useFieldArray({
+    control,
+    name: 'adapter.mqtt_subscriptions',
+  })
+  const { fields: mqttMappingFields, append: appendMqttMapping, remove: removeMqttMapping } = useFieldArray({
+    control,
+    name: 'adapter.mqtt_mappings',
+  })
+  const { fields: opcuaItemFields, append: appendOpcuaItem, remove: removeOpcuaItem } = useFieldArray({
+    control,
+    name: 'adapter.opcua_monitored_items',
   })
 
   const adapters = availableAdapters || catalogAdapters || BUILT_IN_ADAPTERS
@@ -258,6 +316,8 @@ export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, a
   const selectedSinkId = watch('output.sink_id')
   const selectedSinkType = watch('output.sink_type')
   const selectedRegisters = watch('adapter.registers')
+  const selectedMqttMappings = watch('adapter.mqtt_mappings')
+  const selectedOpcuaItems = watch('adapter.opcua_monitored_items')
   const formSnapshot = watch()
 
   const selectedAdapter = useMemo(
@@ -281,21 +341,32 @@ export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, a
   )
 
   const parameterNames = useMemo(
-    () => Array.from(new Set((selectedRegisters || []).map((row) => row.param).filter((value) => value?.trim()))),
-    [selectedRegisters],
+    () =>
+      Array.from(
+        new Set(
+          [
+            ...(selectedRegisters || []).map((row) => row.param),
+            ...(selectedMqttMappings || []).map((row) => row.parameter),
+            ...(selectedOpcuaItems || []).map((row) => row.parameter),
+          ].filter((value) => value?.trim()),
+        ),
+      ),
+    [selectedRegisters, selectedMqttMappings, selectedOpcuaItems],
   )
 
   useEffect(() => {
     const load = async () => {
       setLoadError(null)
       try {
-        const [gatewayRows, sinkRows, catalog] = await Promise.all([
+        const [gatewayRows, sinkRows, pipelineRows, catalog] = await Promise.all([
           listGateways(),
           availableSinks ? Promise.resolve([] as SinkItem[]) : listSinks(),
+          listPipelines(),
           availableAdapters && availableSinkCatalog ? Promise.resolve(null) : getCatalog(),
         ])
 
         setGateways(gatewayRows)
+        setPipelines(pipelineRows)
         if (!availableSinks) {
           setFetchedSinks(sinkRows)
         }
@@ -314,6 +385,94 @@ export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, a
 
     void load()
   }, [availableAdapters, availableSinkCatalog, availableSinks, setValue])
+
+  useEffect(() => {
+    if (!composerState) {
+      return
+    }
+
+    const next = defaultBuilderValues()
+    const editPipeline = composerState.pipelineId ? pipelines.find((pipeline) => pipeline.id === composerState.pipelineId) : undefined
+    const pipelineConfig = editPipeline?.config || {}
+    const validation = asRecord(pipelineConfig.validation)
+    const firstSink = composerState.pipelineId ? sinks.find((sink) => sink.pipeline_id === composerState.pipelineId) : undefined
+
+    if (composerState.mode === 'edit' && editPipeline) {
+      next.pipelineName = editPipeline.name
+      next.gatewayId = editPipeline.gateway_id
+    } else {
+      next.pipelineName = composerState.pipelineName || next.pipelineName
+      next.gatewayId = composerState.gatewayId || next.gatewayId
+    }
+
+    next.adapter = {
+      adapter_id: composerState.adapterDraft.adapter_id || next.adapter.adapter_id,
+      adapter_type: composerState.adapterDraft.adapter_type || next.adapter.adapter_type,
+      config_values: composerState.adapterDraft.config_values || {},
+      registers: composerState.adapterDraft.registers.length > 0 ? composerState.adapterDraft.registers : next.adapter.registers,
+      mqtt_subscriptions:
+        composerState.adapterDraft.mqtt_subscriptions.length > 0 ? composerState.adapterDraft.mqtt_subscriptions : next.adapter.mqtt_subscriptions,
+      mqtt_mappings: composerState.adapterDraft.mqtt_mappings.length > 0 ? composerState.adapterDraft.mqtt_mappings : next.adapter.mqtt_mappings,
+      opcua_monitored_items:
+        composerState.adapterDraft.opcua_monitored_items.length > 0
+          ? composerState.adapterDraft.opcua_monitored_items
+          : next.adapter.opcua_monitored_items,
+    }
+
+    if (validation) {
+      next.validationEnabled = Boolean(validation.enabled)
+      next.rawTopic = typeof validation.raw_topic === 'string' ? validation.raw_topic : next.rawTopic
+      next.cleanTopic = typeof validation.clean_topic === 'string' ? validation.clean_topic : next.cleanTopic
+      next.dlqTopic = typeof validation.dlq_topic === 'string' ? validation.dlq_topic : next.dlqTopic
+      const ranges = asRecord(validation.ranges) || {}
+      const rateOfChange = asRecord(validation.rate_of_change) || {}
+      const gapDetection = asRecord(validation.gap_detection) || {}
+      const rules: Record<string, ValidationPerParam> = {}
+      for (const parameter of [
+        ...new Set([
+          ...Object.keys(ranges),
+          ...Object.keys(rateOfChange),
+          ...Object.keys(gapDetection),
+          ...next.adapter.registers.map((row) => row.param),
+          ...next.adapter.mqtt_mappings.map((row) => row.parameter),
+          ...next.adapter.opcua_monitored_items.map((row) => row.parameter),
+        ]),
+      ]) {
+        const range = asRecord(ranges[parameter]) || {}
+        rules[parameter] = {
+          ...DEFAULT_PARAM_RULES,
+          min: typeof range.min === 'number' ? range.min : DEFAULT_PARAM_RULES.min,
+          max: typeof range.max === 'number' ? range.max : DEFAULT_PARAM_RULES.max,
+          rate_of_change: typeof rateOfChange[parameter] === 'number' ? Number(rateOfChange[parameter]) : DEFAULT_PARAM_RULES.rate_of_change,
+          gap_detection: typeof gapDetection[parameter] === 'number' ? Number(gapDetection[parameter]) : DEFAULT_PARAM_RULES.gap_detection,
+        }
+      }
+      next.validationByParam = rules
+    }
+
+    if (firstSink) {
+      const sinkConfig = firstSink.config as Record<string, unknown>
+      next.output.create_new_sink = false
+      next.output.sink_id = String(firstSink.id)
+      next.output.sink_type = firstSink.sink_type
+      next.output.sink_status = firstSink.status
+      next.output.kafka_bootstrap = typeof sinkConfig.kafka_bootstrap === 'string' ? sinkConfig.kafka_bootstrap : next.output.kafka_bootstrap
+      next.output.group_id = typeof sinkConfig.group_id === 'string' ? sinkConfig.group_id : next.output.group_id
+      next.output.db_dsn = typeof sinkConfig.db_dsn === 'string' ? sinkConfig.db_dsn : next.output.db_dsn
+      next.output.table = typeof sinkConfig.table === 'string' ? sinkConfig.table : next.output.table
+      next.output.asset_id = typeof sinkConfig.asset_id === 'string' ? sinkConfig.asset_id : next.output.asset_id
+      next.cleanTopic = typeof sinkConfig.topic === 'string' ? sinkConfig.topic : next.cleanTopic
+    }
+
+    if (!next.gatewayId && gateways.length > 0) {
+      next.gatewayId = gateways[0].gateway_id
+    }
+
+    reset(next)
+    setStep(1)
+    setStepError(null)
+    setSubmitError(null)
+  }, [composerState, gateways, pipelines, reset, sinks])
 
   useEffect(() => {
     if (!selectedSink) {
@@ -392,6 +551,11 @@ export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, a
 
   const buildPayload = () => {
     const values = getValues()
+    const existingPipeline = composerState?.mode === 'edit' && composerState.pipelineId
+      ? pipelines.find((pipeline) => pipeline.id === composerState.pipelineId)
+      : undefined
+    const existingConfig = existingPipeline?.config || {}
+    const existingValidation = asRecord(existingConfig.validation) || {}
     const output = {
       sink_type: values.output.sink_type,
       kafka_bootstrap: values.output.kafka_bootstrap,
@@ -401,26 +565,74 @@ export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, a
     }
 
     const dynamicAdapterConfig = normalizeCatalogFieldValues(selectedAdapter?.fields || [], values.adapter.config_values || {})
-    const adapterConfig = selectedAdapter?.supports_registers
-      ? {
-          ...dynamicAdapterConfig,
-          registers: values.adapter.registers.map((row) => ({
-            address: Number(row.address),
-            param: row.param,
-            type: row.type,
-            unit: row.unit,
-          })),
-          output,
-        }
-      : {
-          ...dynamicAdapterConfig,
-          output,
-        }
+    let adapterConfig: Record<string, unknown> = {
+      ...dynamicAdapterConfig,
+      output,
+    }
 
-    const ranges: Record<string, { min: number; max: number }> = {}
-    const rateOfChange: Record<string, number> = {}
-    const gapDetection: Record<string, number> = {}
-    const alarmRules: Array<Record<string, string | number>> = []
+    if (selectedAdapter?.supports_registers) {
+      adapterConfig = {
+        ...adapterConfig,
+        registers: values.adapter.registers.map((row) => ({
+          address: Number(row.address),
+          param: row.param,
+          type: row.type,
+          unit: row.unit,
+        })),
+      }
+    }
+
+    if (values.adapter.adapter_type === 'mqtt') {
+      const mappingsByTopic = values.adapter.mqtt_mappings.reduce<Record<string, Array<Record<string, string>>>>((groups, mapping) => {
+        const topic = mapping.topic.trim()
+        if (!topic) {
+          return groups
+        }
+        groups[topic] = groups[topic] || []
+        groups[topic].push({
+          field: mapping.field,
+          parameter: mapping.parameter,
+          unit: mapping.unit,
+        })
+        return groups
+      }, {})
+
+      adapterConfig = {
+        ...adapterConfig,
+        subscriptions: values.adapter.mqtt_subscriptions.map((subscription) => ({
+          topic: subscription.topic,
+          message_type: subscription.message_type,
+          payload_format: subscription.payload_format,
+          asset_id: subscription.asset_id,
+          mappings: mappingsByTopic[subscription.topic] || [],
+        })),
+      }
+    }
+
+    if (values.adapter.adapter_type === 'opcua') {
+      adapterConfig = {
+        ...adapterConfig,
+        monitored_items: values.adapter.opcua_monitored_items.map((item) => ({
+          node_id: item.node_id,
+          parameter: item.parameter,
+          unit: item.unit,
+          asset_id: item.asset_id,
+        })),
+      }
+    }
+
+    const ranges = { ...((asRecord(existingValidation.ranges) || {}) as Record<string, { min: number; max: number }>) }
+    const rateOfChange = { ...((asRecord(existingValidation.rate_of_change) || {}) as Record<string, number>) }
+    const gapDetection = { ...((asRecord(existingValidation.gap_detection) || {}) as Record<string, number>) }
+    const existingAlarmRules = Array.isArray(existingValidation.alarm_rules) ? existingValidation.alarm_rules : []
+    const untouchedAlarmRules = existingAlarmRules.filter((rule) => {
+      const record = asRecord(rule)
+      const parameter = typeof record?.parameter === 'string' ? record.parameter : ''
+      return !Object.prototype.hasOwnProperty.call(values.validationByParam || {}, parameter)
+    })
+    const alarmRules: Array<Record<string, string | number>> = untouchedAlarmRules
+      .map((rule) => asRecord(rule))
+      .filter((rule): rule is Record<string, string | number> => Boolean(rule))
 
     for (const param of Object.keys(values.validationByParam || {})) {
       const rules = values.validationByParam[param]
@@ -442,17 +654,26 @@ export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, a
       }
     }
 
+    const currentAdapter = {
+      adapter_id: values.adapter.adapter_id,
+      adapter_type: values.adapter.adapter_type,
+      config: adapterConfig,
+    }
+
+    const existingAdapters = Array.isArray(existingConfig.adapters) ? existingConfig.adapters : []
+    const preservedAdapters =
+      composerState?.mode === 'edit'
+        ? existingAdapters.filter((adapter) => {
+            const record = asRecord(adapter)
+            return record?.adapter_id !== composerState.adapterDraft.adapter_id
+          })
+        : []
+
     return {
       name: values.pipelineName,
       gateway_id: values.gatewayId,
       config: {
-        adapters: [
-          {
-            adapter_id: values.adapter.adapter_id,
-            adapter_type: values.adapter.adapter_type,
-            config: adapterConfig,
-          },
-        ],
+        adapters: [...preservedAdapters, currentAdapter],
         validation: {
           enabled: Boolean(values.validationEnabled),
           raw_topic: values.rawTopic,
@@ -464,6 +685,8 @@ export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, a
           rate_of_change: rateOfChange,
           gap_detection: gapDetection,
         },
+        events: asRecord(existingConfig.events) || {},
+        aggregates: asRecord(existingConfig.aggregates) || {},
       },
     }
   }
@@ -507,6 +730,20 @@ export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, a
         setStepError('Add at least one register to continue.')
         return
       }
+      if (values.adapter.adapter_type === 'mqtt') {
+        if (values.adapter.mqtt_subscriptions.length === 0) {
+          setStepError('Add at least one MQTT subscription to continue.')
+          return
+        }
+        if (values.adapter.mqtt_mappings.length === 0) {
+          setStepError('Add at least one MQTT field mapping to continue.')
+          return
+        }
+      }
+      if (values.adapter.adapter_type === 'opcua' && values.adapter.opcua_monitored_items.length === 0) {
+        setStepError('Add at least one OPC UA monitored item to continue.')
+        return
+      }
     }
 
     if (step === 2) {
@@ -547,13 +784,23 @@ export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, a
     setIsSubmitting(true)
     try {
       const payload = buildPayload()
-      const pipeline = await createPipeline(payload)
-      if (getValues('output.create_new_sink')) {
-        await createSink(buildSinkPayload(pipeline.id))
+      if (composerState?.mode === 'edit' && composerState.pipelineId) {
+        await updatePipeline(composerState.pipelineId, {
+          name: payload.name,
+          config: payload.config,
+        })
+        if (getValues('output.create_new_sink')) {
+          await createSink(buildSinkPayload(composerState.pipelineId))
+        }
+      } else {
+        const pipeline = await createPipeline(payload)
+        if (getValues('output.create_new_sink')) {
+          await createSink(buildSinkPayload(pipeline.id))
+        }
       }
       navigate('/overview', { replace: true })
     } catch (createError) {
-      setSubmitError(createError instanceof Error ? createError.message : 'Failed to create pipeline')
+      setSubmitError(createError instanceof Error ? createError.message : `Failed to ${composerState?.mode === 'edit' ? 'update' : 'create'} deployment`)
     } finally {
       setIsSubmitting(false)
     }
@@ -570,7 +817,7 @@ export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, a
   return (
     <section>
       <div className="page-header">
-        <h2>Compose Deployment</h2>
+        <h2>{composerState?.mode === 'edit' ? 'Edit Deployment Adapter' : 'Compose Deployment'}</h2>
         <span className="muted">Step {step} of 4</span>
       </div>
       <p className="muted">
@@ -592,7 +839,10 @@ export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, a
       {step === 1 && (
         <article className="card builder-section">
           <h3>Step 1: Source Adapter</h3>
-          <p className="muted">Build the gateway-side adapter config directly from the supported adapter catalog.</p>
+          <p className="muted">
+            Build the gateway-side adapter config directly from the supported adapter catalog. This is the protocol-aware
+            part of the deployment, so the form changes shape based on the adapter type you select.
+          </p>
 
           <div className="inline-grid">
             <label>
@@ -687,6 +937,144 @@ export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, a
                 type="button"
               >
                 Add Register
+              </button>
+            </>
+          )}
+
+          {selectedAdapterType === 'mqtt' && (
+            <>
+              <h4>MQTT Subscriptions</h4>
+              <p className="muted">Define the topics this adapter subscribes to and how incoming JSON payloads should be classified.</p>
+              {mqttSubscriptionFields.map((field, index) => (
+                <div className="inline-grid" key={field.id}>
+                  <label>
+                    Topic
+                    <input {...register(`adapter.mqtt_subscriptions.${index}.topic` as const)} />
+                  </label>
+                  <label>
+                    Message Type
+                    <select {...register(`adapter.mqtt_subscriptions.${index}.message_type` as const)}>
+                      <option value="telemetry">telemetry</option>
+                      <option value="event">event</option>
+                    </select>
+                  </label>
+                  <label>
+                    Payload Format
+                    <select {...register(`adapter.mqtt_subscriptions.${index}.payload_format` as const)}>
+                      <option value="json">json</option>
+                    </select>
+                  </label>
+                  <label>
+                    Asset ID
+                    <input {...register(`adapter.mqtt_subscriptions.${index}.asset_id` as const)} />
+                  </label>
+                  <button className="btn btn-secondary" onClick={() => removeMqttSubscription(index)} type="button">
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <button
+                className="btn"
+                onClick={() =>
+                  appendMqttSubscription({
+                    topic: '',
+                    message_type: 'telemetry',
+                    payload_format: 'json',
+                    asset_id: getValues('output.asset_id') || 'asset-01',
+                  })
+                }
+                type="button"
+              >
+                Add MQTT Subscription
+              </button>
+
+              <h4>MQTT Field Mappings</h4>
+              <p className="muted">Map JSON fields from subscribed topics into normalized parameters.</p>
+              {mqttMappingFields.map((field, index) => (
+                <div className="inline-grid" key={field.id}>
+                  <label>
+                    Topic
+                    <input list="mqtt-topic-options" {...register(`adapter.mqtt_mappings.${index}.topic` as const)} />
+                    <datalist id="mqtt-topic-options">
+                      {(watch('adapter.mqtt_subscriptions') || []).map((subscription, subscriptionIndex) => (
+                        <option key={`${subscription.topic || 'subscription'}-${subscriptionIndex}`} value={subscription.topic} />
+                      ))}
+                    </datalist>
+                  </label>
+                  <label>
+                    JSON Field
+                    <input {...register(`adapter.mqtt_mappings.${index}.field` as const)} />
+                  </label>
+                  <label>
+                    Parameter
+                    <input {...register(`adapter.mqtt_mappings.${index}.parameter` as const)} />
+                  </label>
+                  <label>
+                    Unit
+                    <input {...register(`adapter.mqtt_mappings.${index}.unit` as const)} />
+                  </label>
+                  <button className="btn btn-secondary" onClick={() => removeMqttMapping(index)} type="button">
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <button
+                className="btn"
+                onClick={() =>
+                  appendMqttMapping({
+                    topic: getValues('adapter.mqtt_subscriptions.0.topic') || '',
+                    field: '',
+                    parameter: '',
+                    unit: '',
+                  })
+                }
+                type="button"
+              >
+                Add MQTT Mapping
+              </button>
+            </>
+          )}
+
+          {selectedAdapterType === 'opcua' && (
+            <>
+              <h4>OPC UA Monitored Items</h4>
+              <p className="muted">Map monitored OPC UA node changes into normalized parameters.</p>
+              {opcuaItemFields.map((field, index) => (
+                <div className="inline-grid" key={field.id}>
+                  <label>
+                    Node ID
+                    <input {...register(`adapter.opcua_monitored_items.${index}.node_id` as const)} />
+                  </label>
+                  <label>
+                    Parameter
+                    <input {...register(`adapter.opcua_monitored_items.${index}.parameter` as const)} />
+                  </label>
+                  <label>
+                    Unit
+                    <input {...register(`adapter.opcua_monitored_items.${index}.unit` as const)} />
+                  </label>
+                  <label>
+                    Asset ID
+                    <input {...register(`adapter.opcua_monitored_items.${index}.asset_id` as const)} />
+                  </label>
+                  <button className="btn btn-secondary" onClick={() => removeOpcuaItem(index)} type="button">
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <button
+                className="btn"
+                onClick={() =>
+                  appendOpcuaItem({
+                    node_id: '',
+                    parameter: '',
+                    unit: '',
+                    asset_id: getValues('output.asset_id') || 'asset-01',
+                  })
+                }
+                type="button"
+              >
+                Add OPC UA Monitored Item
               </button>
             </>
           )}
@@ -882,13 +1270,16 @@ export function PipelineBuilderPage({ availableAdapters, availableSinkCatalog, a
             <p>
               <strong>Sink Provisioning:</strong> {createNewSink ? 'Create new sink' : `Reuse sink ${selectedSinkId || 'None'}`}
             </p>
+            <p>
+              <strong>Mode:</strong> {composerState?.mode === 'edit' ? 'Edit existing deployment' : 'Create new deployment'}
+            </p>
           </div>
 
           <h4>Compiled Payload (Read-only)</h4>
           <pre className="json-preview">{JSON.stringify(reviewPayload, null, 2)}</pre>
 
           <button className="btn" onClick={() => void onConfirm()} type="button" disabled={isSubmitting}>
-            {isSubmitting ? 'Creating...' : 'Create Deployment'}
+            {isSubmitting ? (composerState?.mode === 'edit' ? 'Updating...' : 'Creating...') : composerState?.mode === 'edit' ? 'Update Deployment' : 'Create Deployment'}
           </button>
         </article>
       )}
