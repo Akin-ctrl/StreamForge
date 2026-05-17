@@ -36,6 +36,7 @@ function App() {
         <Route path="gateways" element={<GatewaysPage />} />
         <Route path="adapters" element={<AdaptersPage />} />
         <Route path="pipelines" element={<PipelinesPage />} />
+        <Route path="pipelines/:deploymentId/edit" element={<PipelineBuilderPage />} />
         <Route path="sinks" element={<SinksPage />} />
         <Route path="alarms" element={<AlarmsPage />} />
         <Route path="dlq" element={<DlqPage />} />
