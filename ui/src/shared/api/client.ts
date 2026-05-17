@@ -403,6 +403,10 @@ export function listDeployments() {
   return request<DeploymentItem[]>('/api/v1/deployments')
 }
 
+export function getDeployment(deploymentId: string) {
+  return request<DeploymentItem>(`/api/v1/deployments/${encodeURIComponent(deploymentId)}`)
+}
+
 export function createDeployment(payload: {
   deployment_id: string
   name: string
