@@ -1,55 +1,21 @@
 import { useEffect, useState } from 'react'
 
-import { CatalogSinkType, SinkItem, createSink, deleteSink, getCatalog, listSinks, updateSink } from '../../shared/api/client'
-
-function defaultSinkConfig(sinkType: string): Record<string, unknown> {
-  if (sinkType === 'kafka') {
-    return {
-      source_topic: 'telemetry.clean',
-      target_bootstrap: 'kafka:9092',
-      target_topic: 'telemetry.outbound',
-    }
-  }
-
-  if (sinkType === 'http') {
-    return {
-      source_topic: 'telemetry.clean',
-      url: 'http://example.local/telemetry',
-      method: 'POST',
-    }
-  }
-
-  if (sinkType === 'alert_router') {
-    return {
-      source_topic: 'alarms.raw',
-      route_type: 'webhook',
-      url: 'http://example.local/alerts',
-    }
-  }
-
-  return {
-    kafka_bootstrap: 'kafka:9092',
-    topic: 'telemetry.clean',
-    group_id: 'sf-sink-timescaledb',
-    db_dsn: 'postgresql://streamforge:streamforge@timescaledb:5432/streamforge',
-    table: 'telemetry_clean',
-  }
-}
-
-function prettyJson(value: Record<string, unknown>): string {
-  return JSON.stringify(value, null, 2)
-}
+import { type CatalogSinkType, type SinkItem, createSink, deleteSink, getCatalog, listSinks, updateSink } from '../../shared/api/client'
+import { summarizeSinkConfig } from '../../shared/config/deployments'
+import { applySinkConfigJson, buildDefaultSinkForm, buildSinkConfigJson, formToCreateSinkPayload, formToUpdateSinkPayload, sinkToForm, type SinkFormState } from './sinkForm'
+import { AlertRouterSinkSection } from './components/AlertRouterSinkSection'
+import { HttpSinkSection } from './components/HttpSinkSection'
+import { KafkaSinkSection } from './components/KafkaSinkSection'
+import { SinkBasicsSection } from './components/SinkBasicsSection'
+import { SinkReviewPanel } from './components/SinkReviewPanel'
+import { TimescaleSinkSection } from './components/TimescaleSinkSection'
 
 export function SinksPage() {
   const [catalogSinks, setCatalogSinks] = useState<CatalogSinkType[]>([])
   const [items, setItems] = useState<SinkItem[]>([])
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [sinkId, setSinkId] = useState('sink-01')
-  const [name, setName] = useState('Sink 01')
-  const [sinkType, setSinkType] = useState('timescaledb')
-  const [status, setStatus] = useState('active')
-  const [description, setDescription] = useState('')
-  const [configJson, setConfigJson] = useState(prettyJson(defaultSinkConfig('timescaledb')))
+  const [form, setForm] = useState<SinkFormState>(buildDefaultSinkForm('timescaledb'))
+  const [configJson, setConfigJson] = useState(buildSinkConfigJson(buildDefaultSinkForm('timescaledb')))
   const [error, setError] = useState<string | null>(null)
 
   const refresh = async () => {
@@ -67,44 +33,30 @@ export function SinksPage() {
     void refresh()
   }, [])
 
-  const resetForm = (nextType = sinkType) => {
+  useEffect(() => {
+    setConfigJson(buildSinkConfigJson(form))
+  }, [form])
+
+  const resetForm = (nextType = form.sinkType) => {
     setEditingId(null)
-    setSinkId('sink-01')
-    setName('Sink 01')
-    setSinkType(nextType)
-    setStatus('active')
-    setDescription('')
-    setConfigJson(prettyJson(defaultSinkConfig(nextType)))
+    setForm(buildDefaultSinkForm(nextType))
   }
 
   const startEdit = (item: SinkItem) => {
     setEditingId(item.sink_id)
-    setSinkId(item.sink_id)
-    setName(item.name)
-    setSinkType(item.sink_type)
-    setStatus(item.status)
-    setDescription(item.description || '')
-    setConfigJson(prettyJson(item.config))
+    setForm(sinkToForm(item))
   }
 
   const onSubmit = async () => {
     setError(null)
     try {
-      const parsed = JSON.parse(configJson) as Record<string, unknown>
       if (editingId) {
-        await updateSink(editingId, { name, sink_type: sinkType, status, config: parsed, description: description || null })
+        await updateSink(editingId, formToUpdateSinkPayload(form))
       } else {
-        await createSink({
-          sink_id: sinkId,
-          name,
-          sink_type: sinkType,
-          status,
-          config: parsed,
-          description: description || null,
-        })
+        await createSink(formToCreateSinkPayload(form))
       }
       await refresh()
-      resetForm(sinkType)
+      resetForm(form.sinkType)
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Failed to save sink')
     }
@@ -116,11 +68,27 @@ export function SinksPage() {
       await deleteSink(targetSinkId)
       await refresh()
       if (editingId === targetSinkId) {
-        resetForm(sinkType)
+        resetForm(form.sinkType)
       }
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : 'Failed to delete sink')
     }
+  }
+
+  const renderSinkSection = () => {
+    if (form.sinkType === 'kafka') {
+      return <KafkaSinkSection form={form} setForm={setForm} />
+    }
+
+    if (form.sinkType === 'http') {
+      return <HttpSinkSection form={form} setForm={setForm} />
+    }
+
+    if (form.sinkType === 'alert_router') {
+      return <AlertRouterSinkSection form={form} setForm={setForm} />
+    }
+
+    return <TimescaleSinkSection form={form} setForm={setForm} />
   }
 
   return (
@@ -139,65 +107,65 @@ export function SinksPage() {
 
       {error && <p className="error">{error}</p>}
 
-      <div className="overview-grid">
-        <article className="card">
-          <div className="page-header">
-            <h3>{editingId ? 'Edit Sink' : 'Create Sink'}</h3>
-            {editingId && (
-              <button className="btn btn-secondary" onClick={() => resetForm(sinkType)} type="button">
-                Cancel Edit
-              </button>
-            )}
-          </div>
-          <label>
-            Sink ID
-            <input disabled={Boolean(editingId)} value={sinkId} onChange={(event) => setSinkId(event.target.value)} />
-          </label>
-          <label>
-            Name
-            <input value={name} onChange={(event) => setName(event.target.value)} />
-          </label>
-          <label>
-            Type
-            <select
-              disabled={Boolean(editingId)}
-              value={sinkType}
-              onChange={(event) => {
-                const nextType = event.target.value
-                setSinkType(nextType)
-                if (!editingId) {
-                  setConfigJson(prettyJson(defaultSinkConfig(nextType)))
-                }
-              }}
-            >
-              {catalogSinks.map((sink) => (
-                <option key={sink.sink_type} value={sink.sink_type}>
-                  {sink.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Status
-            <select value={status} onChange={(event) => setStatus(event.target.value)}>
-              <option value="active">active</option>
-              <option value="paused">paused</option>
-              <option value="disabled">disabled</option>
-            </select>
-          </label>
-          <label>
-            Description
-            <input value={description} onChange={(event) => setDescription(event.target.value)} />
-          </label>
-          <label>
-            Config (JSON)
-            <textarea rows={14} value={configJson} onChange={(event) => setConfigJson(event.target.value)} />
-          </label>
-          <button className="btn" onClick={() => void onSubmit()} type="button">
-            {editingId ? 'Update Sink' : 'Create Sink'}
-          </button>
-        </article>
+      <div className="composer-layout">
+        <div className="builder-section">
+          <article className="card">
+            <div className="page-header">
+              <h3>{editingId ? 'Edit Sink' : 'Create Sink'}</h3>
+              {editingId && (
+                <button className="btn btn-secondary" onClick={() => resetForm(form.sinkType)} type="button">
+                  Cancel Edit
+                </button>
+              )}
+            </div>
+            <SinkBasicsSection
+              description={form.description}
+              editing={Boolean(editingId)}
+              name={form.name}
+              onDescriptionChange={(value) => setForm((current) => ({ ...current, description: value }))}
+              onNameChange={(value) => setForm((current) => ({ ...current, name: value }))}
+              onSinkIdChange={(value) => setForm((current) => ({ ...current, sinkId: value }))}
+              onSinkTypeChange={(value) => setForm(buildDefaultSinkForm(value))}
+              onStatusChange={(value) => setForm((current) => ({ ...current, status: value }))}
+              sinkId={form.sinkId}
+              sinkOptions={catalogSinks.map((sink) => ({ value: sink.sink_type, label: sink.label }))}
+              sinkType={form.sinkType}
+              status={form.status}
+            />
+            {renderSinkSection()}
+            <details className="card nested-card advanced-block">
+              <summary>Advanced JSON</summary>
+              <div className="builder-section">
+                <label>
+                  Sink Config JSON
+                  <textarea rows={12} value={configJson} onChange={(event) => setConfigJson(event.target.value)} />
+                </label>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    try {
+                      setForm((current) => applySinkConfigJson(current, configJson))
+                      setError(null)
+                    } catch (jsonError) {
+                      setError(jsonError instanceof Error ? jsonError.message : 'Invalid sink JSON')
+                    }
+                  }}
+                  type="button"
+                >
+                  Apply JSON
+                </button>
+              </div>
+            </details>
+            <button className="btn" onClick={() => void onSubmit()} type="button">
+              {editingId ? 'Update Sink' : 'Create Sink'}
+            </button>
+          </article>
+        </div>
 
+        <SinkReviewPanel form={form} />
+      </div>
+
+      <div className="overview-grid">
         <article className="card">
           <h3>Configured Sinks</h3>
           <table className="table">
@@ -207,6 +175,7 @@ export function SinksPage() {
                 <th>Name</th>
                 <th>Type</th>
                 <th>Status</th>
+                <th>Summary</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -217,6 +186,7 @@ export function SinksPage() {
                   <td>{item.name}</td>
                   <td>{item.sink_type}</td>
                   <td>{item.status}</td>
+                  <td>{summarizeSinkConfig(item.sink_type, item.config)}</td>
                   <td>
                     <button className="btn btn-secondary" onClick={() => startEdit(item)} type="button">
                       Edit
@@ -229,7 +199,7 @@ export function SinksPage() {
               ))}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="muted">
+                  <td colSpan={6} className="muted">
                     No sinks configured yet.
                   </td>
                 </tr>

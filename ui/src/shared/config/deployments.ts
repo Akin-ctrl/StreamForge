@@ -1,4 +1,4 @@
-import type { AdapterItem, DeploymentItem } from '../api/client'
+import type { AdapterItem, DeploymentItem, SinkItem } from '../api/client'
 
 export type DeploymentSummary = {
   adapterCount: number
@@ -10,6 +10,12 @@ export type DeploymentSummary = {
 
 export type AdapterUsage = {
   adapter: AdapterItem
+  deploymentIds: string[]
+  gatewayIds: string[]
+}
+
+export type SinkUsage = {
+  sink: SinkItem
   deploymentIds: string[]
   gatewayIds: string[]
 }
@@ -75,6 +81,45 @@ export function buildAdapterUsage(adapters: AdapterItem[], deployments: Deployme
     const matchingDeployments = deployments.filter((deployment) => deployment.adapter_ids.includes(adapter.adapter_id))
     return {
       adapter,
+      deploymentIds: matchingDeployments.map((deployment) => deployment.deployment_id),
+      gatewayIds: Array.from(new Set(matchingDeployments.map((deployment) => deployment.gateway_id))),
+    }
+  })
+}
+
+export function summarizeSinkConfig(sinkType: string, config: Record<string, unknown>): string {
+  if (sinkType === 'timescaledb') {
+    const table = asString(config.table, 'telemetry_clean')
+    const topic = asString(config.topic, 'telemetry.clean')
+    return `${table} ← ${topic}`
+  }
+
+  if (sinkType === 'kafka') {
+    const topic = asString(config.target_topic, 'telemetry.outbound')
+    const bootstrap = asString(config.target_bootstrap, 'kafka:9092')
+    return `${bootstrap} → ${topic}`
+  }
+
+  if (sinkType === 'http') {
+    const method = asString(config.method, 'POST')
+    const url = asString(config.url, 'http://example.local/telemetry')
+    return `${method} ${url}`
+  }
+
+  if (sinkType === 'alert_router') {
+    const routeType = asString(config.route_type, 'webhook')
+    const destination = asString(config.url || config.webhook_url, 'destination')
+    return `${routeType} → ${destination}`
+  }
+
+  return 'Configured sink'
+}
+
+export function buildSinkUsage(sinks: SinkItem[], deployments: DeploymentItem[]): SinkUsage[] {
+  return sinks.map((sink) => {
+    const matchingDeployments = deployments.filter((deployment) => deployment.sink_ids.includes(sink.sink_id))
+    return {
+      sink,
       deploymentIds: matchingDeployments.map((deployment) => deployment.deployment_id),
       gatewayIds: Array.from(new Set(matchingDeployments.map((deployment) => deployment.gateway_id))),
     }
