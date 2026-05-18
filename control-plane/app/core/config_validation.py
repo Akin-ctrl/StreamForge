@@ -180,7 +180,14 @@ def validate_sink_config(sink_type: str, config: dict) -> None:
 
     if sink_type == "alert_router":
         _require_string(config, "source_topic")
-        _require_string(config, "route_type")
+        route_type = _require_string(config, "route_type")
+        if route_type == "slack":
+            _require_string(config, "webhook_url")
+            return
+        if route_type == "webhook":
+            _require_string(config, "url")
+            return
+        raise HTTPException(status_code=422, detail="Alert router route_type must be 'webhook' or 'slack'")
 
 
 def validate_deployment_payload(adapter_ids: list[str], sink_ids: list[str]) -> None:

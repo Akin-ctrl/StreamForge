@@ -25,14 +25,21 @@ export function AlertRouterSinkSection({ form, setForm }: AlertRouterSinkSection
           <label>
             Slack Webhook URL
             <input
+              placeholder={form.slackWebhookUrlConfigured ? 'Leave blank to keep current webhook' : ''}
               value={form.slackWebhookUrl}
               onChange={(event) => setForm((current) => ({ ...current, slackWebhookUrl: event.target.value }))}
             />
+            {form.slackWebhookUrlConfigured && <span className="muted">A Slack webhook is already configured.</span>}
           </label>
         ) : (
           <label>
             Webhook URL
-            <input value={form.webhookUrl} onChange={(event) => setForm((current) => ({ ...current, webhookUrl: event.target.value }))} />
+            <input
+              placeholder={form.webhookUrlConfigured ? 'Leave blank to keep current webhook' : ''}
+              value={form.webhookUrl}
+              onChange={(event) => setForm((current) => ({ ...current, webhookUrl: event.target.value }))}
+            />
+            {form.webhookUrlConfigured && <span className="muted">A webhook destination is already configured.</span>}
           </label>
         )}
       </div>

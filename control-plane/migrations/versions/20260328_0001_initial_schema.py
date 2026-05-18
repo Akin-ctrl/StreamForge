@@ -151,6 +151,22 @@ def upgrade() -> None:
     op.create_index("ix_sinks_status", "sinks", ["status"], unique=False)
 
     op.create_table(
+        "config_secrets",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("owner_kind", sa.String(length=32), nullable=False),
+        sa.Column("owner_public_id", sa.String(length=128), nullable=False),
+        sa.Column("field_name", sa.String(length=128), nullable=False),
+        sa.Column("ciphertext", sa.String(length=4096), nullable=False),
+        sa.Column("key_version", sa.String(length=32), nullable=False),
+        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(), nullable=False),
+        sa.UniqueConstraint("owner_kind", "owner_public_id", "field_name"),
+    )
+    op.create_index("ix_config_secrets_id", "config_secrets", ["id"], unique=False)
+    op.create_index("ix_config_secrets_owner_kind", "config_secrets", ["owner_kind"], unique=False)
+    op.create_index("ix_config_secrets_owner_public_id", "config_secrets", ["owner_public_id"], unique=False)
+
+    op.create_table(
         "deployments",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("deployment_id", sa.String(length=128), nullable=False),
@@ -217,6 +233,11 @@ def downgrade() -> None:
     op.drop_index("ix_sinks_sink_id", table_name="sinks")
     op.drop_index("ix_sinks_id", table_name="sinks")
     op.drop_table("sinks")
+
+    op.drop_index("ix_config_secrets_owner_public_id", table_name="config_secrets")
+    op.drop_index("ix_config_secrets_owner_kind", table_name="config_secrets")
+    op.drop_index("ix_config_secrets_id", table_name="config_secrets")
+    op.drop_table("config_secrets")
 
     op.drop_index("ix_adapters_status", table_name="adapters")
     op.drop_index("ix_adapters_adapter_type", table_name="adapters")

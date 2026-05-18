@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     environment: str = "dev"
     database_url: str = "postgresql+psycopg://streamforge:streamforge@localhost:5432/streamforge"
     jwt_secret: str = "change-me"
+    config_secret_key: str = ""
     jwt_algorithm: str = "HS256"
     admin_username: str = "admin"
     admin_password: str = "admin123"

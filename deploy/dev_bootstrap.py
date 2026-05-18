@@ -17,6 +17,13 @@ DEPLOYMENT_ID = os.getenv("DEV_DEPLOYMENT_ID", "deployment-demo-01")
 DEPLOYMENT_NAME = os.getenv("DEV_DEPLOYMENT_NAME", "Demo Deployment")
 CONFIG_PATH = os.getenv("DEV_GATEWAY_CONFIG_PATH", "/app/deploy/gateway_config.sample.json")
 
+_SECRET_FIELDS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("adapter", "mqtt"): ("password",),
+    ("adapter", "opcua"): ("password",),
+    ("sink", "timescaledb"): ("db_dsn",),
+    ("sink", "alert_router"): ("url", "webhook_url"),
+}
+
 
 def _read_json(path: str) -> dict:
     with open(path, "r", encoding="utf-8") as handle:
@@ -36,6 +43,20 @@ def _http_json(path: str, method: str = "GET", payload: dict | None = None, toke
     with request.urlopen(req, timeout=10) as response:
         body = response.read().decode("utf-8")
     return json.loads(body) if body else None
+
+
+def _secret_fields_for(kind: str, object_type: str) -> tuple[str, ...]:
+    return _SECRET_FIELDS.get((kind, object_type), ())
+
+
+def _split_config_payload(kind: str, object_type: str, config: dict) -> tuple[dict, dict[str, str]]:
+    sanitized = dict(config)
+    secrets: dict[str, str] = {}
+    for field_name in _secret_fields_for(kind, object_type):
+        secret_value = sanitized.pop(field_name, None)
+        if isinstance(secret_value, str) and secret_value.strip():
+            secrets[field_name] = secret_value.strip()
+    return sanitized, secrets
 
 
 def _wait_for_health(timeout_s: int = 120) -> None:
@@ -96,24 +117,28 @@ def _ensure_gateway(token: str) -> None:
 
 def _adapter_payload(adapter_cfg: dict) -> dict:
     adapter_id = str(adapter_cfg["adapter_id"])
+    sanitized_config, secrets = _split_config_payload("adapter", str(adapter_cfg["adapter_type"]), adapter_cfg["config"])
     return {
         "adapter_id": adapter_id,
         "name": str(adapter_cfg.get("name") or adapter_id),
         "adapter_type": adapter_cfg["adapter_type"],
         "status": adapter_cfg.get("status", "active"),
-        "config": adapter_cfg["config"],
+        "config": sanitized_config,
+        **({"secrets": secrets} if secrets else {}),
         "description": adapter_cfg.get("description"),
     }
 
 
 def _sink_payload(sink_cfg: dict) -> dict:
     sink_id = str(sink_cfg["sink_id"])
+    sanitized_config, secrets = _split_config_payload("sink", str(sink_cfg["sink_type"]), sink_cfg["config"])
     return {
         "sink_id": sink_id,
         "name": str(sink_cfg.get("name") or sink_id),
         "sink_type": sink_cfg["sink_type"],
         "status": sink_cfg.get("status", "active"),
-        "config": sink_cfg["config"],
+        "config": sanitized_config,
+        **({"secrets": secrets} if secrets else {}),
         "description": sink_cfg.get("description"),
     }
 
@@ -131,7 +156,7 @@ def _ensure_adapters(token: str, raw_config: dict) -> list[str]:
         if current is None:
             _http_json("/api/v1/adapters", method="POST", token=token, payload=payload)
             continue
-        if any(current.get(field) != payload[field] for field in ("name", "adapter_type", "status", "config", "description")):
+        if any(current.get(field) != payload[field] for field in ("name", "adapter_type", "status", "config", "description")) or bool(payload.get("secrets")):
             _http_json(f"/api/v1/adapters/{adapter_id}", method="PUT", token=token, payload=payload)
 
     return adapter_ids
@@ -150,7 +175,7 @@ def _ensure_sinks(token: str, raw_config: dict) -> list[str]:
         if current is None:
             _http_json("/api/v1/sinks", method="POST", token=token, payload=payload)
             continue
-        if any(current.get(field) != payload[field] for field in ("name", "sink_type", "status", "config", "description")):
+        if any(current.get(field) != payload[field] for field in ("name", "sink_type", "status", "config", "description")) or bool(payload.get("secrets")):
             _http_json(f"/api/v1/sinks/{sink_id}", method="PUT", token=token, payload=payload)
 
     return sink_ids

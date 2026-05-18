@@ -62,6 +62,7 @@ export type AdapterFormState = {
   clientId: string
   username: string
   password: string
+  passwordConfigured: boolean
   qos: string
   keepaliveSeconds: string
   connectTimeoutSeconds: string
@@ -179,6 +180,7 @@ export function buildDefaultAdapterForm(adapterType: string): AdapterFormState {
     clientId: 'streamforge-mqtt',
     username: '',
     password: '',
+    passwordConfigured: false,
     qos: '1',
     keepaliveSeconds: '60',
     connectTimeoutSeconds: '5',
@@ -202,6 +204,8 @@ export function adapterToForm(adapter: AdapterItem): AdapterFormState {
   const output = asRecord(config.output) || {}
   const advanced = asRecord(config.advanced) || {}
   const subscriptionConfig = asRecord(config.subscription) || {}
+  const secretStatus = asRecord(adapter.secret_status) || {}
+  const passwordStatus = asRecord(secretStatus.password)
 
   return {
     ...defaults,
@@ -225,7 +229,10 @@ export function adapterToForm(adapter: AdapterItem): AdapterFormState {
     brokerPort: toStringValue(config.broker_port, defaults.brokerPort),
     clientId: asString(config.client_id, defaults.clientId),
     username: asString(config.username, defaults.username),
-    password: asString(config.password, defaults.password),
+    password: '',
+    passwordConfigured:
+      asBoolean(passwordStatus?.configured, false) ||
+      (typeof config.password === 'string' && config.password.trim().length > 0),
     qos: toStringValue(config.qos, defaults.qos),
     keepaliveSeconds: toStringValue(advanced.keepalive_seconds ?? config.keepalive_seconds, defaults.keepaliveSeconds),
     connectTimeoutSeconds: toStringValue(advanced.connect_timeout_seconds ?? config.connect_timeout_seconds, defaults.connectTimeoutSeconds),
@@ -352,7 +359,6 @@ function buildConfig(form: AdapterFormState): Record<string, unknown> {
       broker_port: parseNumber(form.brokerPort, 1883),
       client_id: form.clientId,
       username: form.username,
-      password: form.password,
       qos: parseNumber(form.qos, 1),
       subscriptions: form.subscriptions
         .filter((subscription) => subscription.topic_filter.trim())
@@ -388,7 +394,6 @@ function buildConfig(form: AdapterFormState): Record<string, unknown> {
     endpoint: form.endpoint,
     auth_mode: form.authMode,
     ...(form.username.trim() ? { username: form.username } : {}),
-    ...(form.password.trim() ? { password: form.password } : {}),
     subscription: {
       publishing_interval_ms: parseNumber(form.publishingIntervalMs, 1000),
     },
@@ -414,40 +419,62 @@ function buildConfig(form: AdapterFormState): Record<string, unknown> {
   }
 }
 
+function buildSecrets(form: AdapterFormState): Record<string, string | null> | undefined {
+  if (form.adapterType !== 'mqtt' && form.adapterType !== 'opcua') {
+    return undefined
+  }
+
+  if (!form.password.trim()) {
+    return undefined
+  }
+
+  return { password: form.password.trim() }
+}
+
 export function buildAdapterConfigJson(form: AdapterFormState): string {
   return JSON.stringify(buildConfig(form), null, 2)
 }
 
 export function applyAdapterConfigJson(form: AdapterFormState, text: string): AdapterFormState {
   const parsed = JSON.parse(text) as Record<string, unknown>
-  return adapterToForm({
+  const nextForm = adapterToForm({
     adapter_id: form.adapterId,
     name: form.name,
     adapter_type: form.adapterType,
     status: form.status,
     description: form.description || null,
     config: parsed,
+    secret_status: {},
     created_at: '',
     updated_at: '',
   })
+  return {
+    ...nextForm,
+    password: '',
+    passwordConfigured: form.passwordConfigured,
+  }
 }
 
 export function formToCreateAdapterPayload(form: AdapterFormState) {
+  const secrets = buildSecrets(form)
   return {
     adapter_id: form.adapterId.trim(),
     name: form.name.trim(),
     adapter_type: form.adapterType,
     status: form.status,
     config: buildConfig(form),
+    ...(secrets ? { secrets } : {}),
     description: form.description.trim() || null,
   }
 }
 
 export function formToUpdateAdapterPayload(form: AdapterFormState) {
+  const secrets = buildSecrets(form)
   return {
     name: form.name.trim(),
     status: form.status,
     config: buildConfig(form),
+    ...(secrets ? { secrets } : {}),
     description: form.description.trim() || null,
   }
 }

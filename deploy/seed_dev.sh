@@ -166,6 +166,13 @@ from urllib import request
 base_url, token, gateway_id, deployment_id, deployment_name, raw_config = sys.argv[1:]
 config = json.loads(raw_config)
 
+SECRET_FIELDS = {
+    ("adapter", "mqtt"): ("password",),
+    ("adapter", "opcua"): ("password",),
+    ("sink", "timescaledb"): ("db_dsn",),
+    ("sink", "alert_router"): ("url", "webhook_url"),
+}
+
 def http_json(path: str, method: str = "GET", payload: dict | None = None):
     headers = {"Accept": "application/json", "Authorization": f"Bearer {token}"}
     data = None
@@ -177,40 +184,61 @@ def http_json(path: str, method: str = "GET", payload: dict | None = None):
         body = response.read().decode("utf-8")
     return json.loads(body) if body else None
 
+
+def secret_fields_for(kind: str, object_type: str) -> tuple[str, ...]:
+    return SECRET_FIELDS.get((kind, object_type), ())
+
+
+def split_config_payload(kind: str, object_type: str, payload_config: dict) -> tuple[dict, dict[str, str]]:
+    sanitized = dict(payload_config)
+    secrets: dict[str, str] = {}
+    for field_name in secret_fields_for(kind, object_type):
+        secret_value = sanitized.pop(field_name, None)
+        if isinstance(secret_value, str) and secret_value.strip():
+            secrets[field_name] = secret_value.strip()
+    return sanitized, secrets
+
+
 adapters = {item["adapter_id"]: item for item in http_json("/api/v1/adapters")}
 adapter_ids = []
 for adapter in config.get("adapters", []):
+    sanitized_config, secrets = split_config_payload("adapter", adapter["adapter_type"], adapter["config"])
     payload = {
         "adapter_id": adapter["adapter_id"],
         "name": adapter.get("name") or adapter["adapter_id"],
         "adapter_type": adapter["adapter_type"],
         "status": adapter.get("status", "active"),
-        "config": adapter["config"],
+        "config": sanitized_config,
         "description": adapter.get("description"),
     }
+    if secrets:
+        payload["secrets"] = secrets
     adapter_ids.append(payload["adapter_id"])
     existing = adapters.get(payload["adapter_id"])
     if existing is None:
         http_json("/api/v1/adapters", method="POST", payload=payload)
-    elif any(existing.get(field) != payload[field] for field in ("name", "adapter_type", "status", "config", "description")):
+    elif any(existing.get(field) != payload[field] for field in ("name", "adapter_type", "status", "config", "description")) or bool(payload.get("secrets")):
         http_json(f"/api/v1/adapters/{payload['adapter_id']}", method="PUT", payload=payload)
 
 sinks = {item["sink_id"]: item for item in http_json("/api/v1/sinks")}
 sink_ids = []
 for sink in config.get("sinks", []):
+    sanitized_config, secrets = split_config_payload("sink", sink["sink_type"], sink["config"])
     payload = {
         "sink_id": sink["sink_id"],
         "name": sink.get("name") or sink["sink_id"],
         "sink_type": sink["sink_type"],
         "status": sink.get("status", "active"),
-        "config": sink["config"],
+        "config": sanitized_config,
         "description": sink.get("description"),
     }
+    if secrets:
+        payload["secrets"] = secrets
     sink_ids.append(payload["sink_id"])
     existing = sinks.get(payload["sink_id"])
     if existing is None:
         http_json("/api/v1/sinks", method="POST", payload=payload)
-    elif any(existing.get(field) != payload[field] for field in ("name", "sink_type", "status", "config", "description")):
+    elif any(existing.get(field) != payload[field] for field in ("name", "sink_type", "status", "config", "description")) or bool(payload.get("secrets")):
         http_json(f"/api/v1/sinks/{payload['sink_id']}", method="PUT", payload=payload)
 
 payload = {
