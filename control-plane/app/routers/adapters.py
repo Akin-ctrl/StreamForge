@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.audit import record_audit_event
 from app.core.config_validation import validate_adapter_config, validate_object_status
 from app.core.secrets import (
     build_secret_status,
@@ -15,9 +16,9 @@ from app.core.secrets import (
     split_config_and_secrets,
     upsert_secret_values,
 )
-from app.core.security import require_admin
+from app.core.security import require_permission
 from app.db.deps import get_db
-from app.db.models import Adapter
+from app.db.models import Adapter, User
 from app.schemas.adapters import AdapterCreateRequest, AdapterItem, AdapterUpdateRequest
 
 router = APIRouter()
@@ -40,7 +41,7 @@ def _to_item(row: Adapter, configured_fields: set[str]) -> AdapterItem:
 @router.get("", response_model=list[AdapterItem])
 def list_adapters(
     db: Session = Depends(get_db),
-    _: object = Depends(require_admin),
+    _: User = Depends(require_permission("configs:read")),
 ) -> list[AdapterItem]:
     rows = db.execute(select(Adapter).order_by(Adapter.created_at.desc())).scalars().all()
     configured = list_configured_secret_fields(db, "adapter", [row.adapter_id for row in rows])
@@ -51,7 +52,7 @@ def list_adapters(
 def get_adapter(
     adapter_id: str,
     db: Session = Depends(get_db),
-    _: object = Depends(require_admin),
+    _: User = Depends(require_permission("configs:read")),
 ) -> AdapterItem:
     row = db.execute(select(Adapter).where(Adapter.adapter_id == adapter_id)).scalar_one_or_none()
     if row is None:
@@ -64,7 +65,7 @@ def get_adapter(
 def create_adapter(
     payload: AdapterCreateRequest,
     db: Session = Depends(get_db),
-    _: object = Depends(require_admin),
+    current_user: User = Depends(require_permission("adapters:create")),
 ) -> AdapterItem:
     existing = db.execute(select(Adapter).where(Adapter.adapter_id == payload.adapter_id)).scalar_one_or_none()
     if existing is not None:
@@ -89,9 +90,19 @@ def create_adapter(
         status=payload.status,
         config=sanitized_config,
         description=payload.description,
+        created_by=current_user.username,
+        updated_by=current_user.username,
     )
     db.add(row)
     upsert_secret_values(db, "adapter", payload.adapter_id, secret_updates)
+    record_audit_event(
+        db,
+        actor=current_user,
+        action="adapter.created",
+        resource_type="adapter",
+        resource_public_id=payload.adapter_id,
+        details={"adapter_type": payload.adapter_type, "status": payload.status},
+    )
     db.commit()
     db.refresh(row)
     configured = list_configured_secret_fields(db, "adapter", [row.adapter_id])
@@ -103,7 +114,7 @@ def update_adapter(
     adapter_id: str,
     payload: AdapterUpdateRequest,
     db: Session = Depends(get_db),
-    _: object = Depends(require_admin),
+    current_user: User = Depends(require_permission("adapters:update")),
 ) -> AdapterItem:
     row = db.execute(select(Adapter).where(Adapter.adapter_id == adapter_id)).scalar_one_or_none()
     if row is None:
@@ -138,7 +149,16 @@ def update_adapter(
     if payload.description is not None:
         row.description = payload.description
 
+    row.updated_by = current_user.username
     db.add(row)
+    record_audit_event(
+        db,
+        actor=current_user,
+        action="adapter.updated",
+        resource_type="adapter",
+        resource_public_id=row.adapter_id,
+        details={"adapter_type": row.adapter_type, "status": row.status},
+    )
     db.commit()
     db.refresh(row)
     configured = list_configured_secret_fields(db, "adapter", [row.adapter_id])
@@ -149,7 +169,7 @@ def update_adapter(
 def delete_adapter(
     adapter_id: str,
     db: Session = Depends(get_db),
-    _: object = Depends(require_admin),
+    current_user: User = Depends(require_permission("adapters:delete")),
 ) -> dict:
     row = db.execute(
         select(Adapter)
@@ -162,6 +182,14 @@ def delete_adapter(
         deployment_ids = ", ".join(sorted(deployment.deployment_id for deployment in row.deployments))
         raise HTTPException(status_code=409, detail=f"Adapter is still attached to deployment(s): {deployment_ids}")
 
+    record_audit_event(
+        db,
+        actor=current_user,
+        action="adapter.deleted",
+        resource_type="adapter",
+        resource_public_id=row.adapter_id,
+        details={"adapter_type": row.adapter_type, "status": row.status},
+    )
     db.delete(row)
     db.commit()
     return {"deleted": True, "adapter_id": adapter_id}

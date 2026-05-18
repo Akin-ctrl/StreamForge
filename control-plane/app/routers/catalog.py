@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.core.security import get_current_user
+from app.core.security import require_permission
 from app.db.models import User
 from app.schemas.catalog import (
     CatalogAdapterType,
@@ -63,7 +63,7 @@ def _section(
 
 
 @router.get("", response_model=CatalogResponse)
-def get_catalog(_: User = Depends(get_current_user)) -> CatalogResponse:
+def get_catalog(_: User = Depends(require_permission("configs:read"))) -> CatalogResponse:
     memory_area_options = [
         CatalogOption(value="holding_register", label="Holding Register"),
         CatalogOption(value="input_register", label="Input Register"),

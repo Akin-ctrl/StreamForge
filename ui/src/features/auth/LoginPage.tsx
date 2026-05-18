@@ -6,7 +6,7 @@ import {
   getBootstrapStatus,
   login,
 } from '../../shared/api/client'
-import { setAccessToken } from '../../shared/auth/session'
+import { useAuthSession } from '../../shared/auth/AuthProvider'
 
 type LocationState = {
   from?: string
@@ -22,11 +22,18 @@ export function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const state = location.state as LocationState | null
+  const { isAuthenticated, isLoading: sessionLoading, refreshSession } = useAuthSession()
 
   const [mode, setMode] = useState<AuthMode>('loading')
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const nextRoute = state?.from && state.from !== '/' ? state.from : '/overview'
+
+  useEffect(() => {
+    if (!sessionLoading && isAuthenticated) {
+      navigate(nextRoute, { replace: true })
+    }
+  }, [isAuthenticated, navigate, nextRoute, sessionLoading])
 
   useEffect(() => {
     let active = true
@@ -65,11 +72,10 @@ export function LoginPage() {
         throw new Error('Passwords do not match')
       }
 
-      const token =
-        mode === 'bootstrap'
-          ? await bootstrapFirstUser(username, password)
-          : await login(username, password)
-      setAccessToken(token.access_token)
+      await (mode === 'bootstrap'
+        ? bootstrapFirstUser(username, password)
+        : login(username, password))
+      await refreshSession()
       navigate(nextRoute, { replace: true })
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Login failed')

@@ -13,8 +13,8 @@ BASE_URL="${1:-http://localhost:8001}"
 GATEWAY_ID="gateway-demo-01"
 DEPLOYMENT_ID="deployment-demo-01"
 DEPLOYMENT_NAME="Demo Deployment"
-ADMIN_USER="admin"
-ADMIN_PASS="admin123"
+ADMIN_USER="streamforge_admin"
+ADMIN_PASS="LocalAdminBootstrap42"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 info()    { echo -e "${GREEN}[seed]${NC} $*"; }
@@ -115,17 +115,38 @@ CONFIG_JSON=$(cat <<'JSON'
 JSON
 )
 
-info "Requesting admin token from $BASE_URL ..."
-TOKEN_RESP=$(curl -sf -X POST "$BASE_URL/api/v1/auth/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=$ADMIN_USER&password=$ADMIN_PASS") || {
+info "Checking bootstrap state at $BASE_URL ..."
+BOOTSTRAP_RESP=$(curl -sf "$BASE_URL/api/v1/auth/bootstrap/status") || {
   err "Could not reach control plane at $BASE_URL. Is it running?"
   exit 1
 }
+BOOTSTRAP_REQUIRED=$(echo "$BOOTSTRAP_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if d.get('bootstrap_required') else 'no')")
+
+if [[ "$BOOTSTRAP_REQUIRED" == "yes" ]]; then
+  info "Bootstrapping the first admin account ..."
+  BOOTSTRAP_PAYLOAD=$(python3 -c "
+import json
+print(json.dumps({'username': '$ADMIN_USER', 'password': '$ADMIN_PASS'}))
+")
+  TOKEN_RESP=$(curl -sf -X POST "$BASE_URL/api/v1/auth/bootstrap/first-user" \
+    -H "Content-Type: application/json" \
+    -d "$BOOTSTRAP_PAYLOAD") || {
+    err "First-user bootstrap failed."
+    exit 1
+  }
+else
+  info "Requesting admin token from $BASE_URL ..."
+  TOKEN_RESP=$(curl -sf -X POST "$BASE_URL/api/v1/auth/token" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "username=$ADMIN_USER&password=$ADMIN_PASS") || {
+    err "Could not authenticate with the configured admin credentials."
+    exit 1
+  }
+fi
 
 TOKEN=$(echo "$TOKEN_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('access_token',''))")
 if [[ -z "$TOKEN" ]]; then
-  err "Auth failed — check admin credentials."
+  err "Auth failed — check bootstrap or admin credentials."
   exit 1
 fi
 info "Admin token acquired."
