@@ -12,6 +12,26 @@ from gateway_runtime.adapter_factory import AdapterFactory
 from gateway_runtime.errors import AdapterStartError
 
 
+class FakeManagedContainer:
+    def __init__(self, name: str, labels: dict[str, str], container_id: str | None = None) -> None:
+        self.name = name
+        self.labels = labels
+        self.id = container_id or name
+
+
+class FakeContainerCollection:
+    def __init__(self, containers: list[FakeManagedContainer]) -> None:
+        self._containers = containers
+
+    def list(self, all: bool = False):  # noqa: FBT002
+        return list(self._containers)
+
+
+class FakeDockerClient:
+    def __init__(self, containers: list[FakeManagedContainer]) -> None:
+        self.containers = FakeContainerCollection(containers)
+
+
 class AdapterManagerMetadataTests(unittest.TestCase):
     def test_modbus_tcp_defaults_to_runtime_image_for_dev_stack(self) -> None:
         with patch.dict(os.environ, {}, clear=False):
@@ -130,6 +150,37 @@ class AdapterManagerMetadataTests(unittest.TestCase):
         self.assertEqual(request.full_url, "http://sf-adapter-modbus-demo-01:8080/control/throttle")
         self.assertEqual(manager._last_throttle_policy["mode"], "high")
         self.assertEqual(manager._throttle_state["modbus-demo-01"]["throttle_mode"], "high")
+
+    def test_prune_orphaned_containers_removes_unconfigured_streamforge_adapter(self) -> None:
+        manager = AdapterManager(AdapterFactory())
+        client = FakeDockerClient(
+            [
+                FakeManagedContainer(
+                    "sf-adapter-orphaned",
+                    {
+                        "app": "streamforge",
+                        "component": "adapter",
+                        "adapter_id": "orphaned",
+                        "com.docker.compose.project": "deploy",
+                    },
+                ),
+                FakeManagedContainer(
+                    "sf-adapter-keep",
+                    {
+                        "app": "streamforge",
+                        "component": "adapter",
+                        "adapter_id": "keep",
+                        "com.docker.compose.project": "deploy",
+                    },
+                ),
+            ]
+        )
+
+        with patch.object(manager, "_stop_container") as stop_mock:
+            manager._prune_orphaned_containers(client, {"keep"})
+
+        self.assertEqual(stop_mock.call_count, 1)
+        self.assertEqual(stop_mock.call_args.args[1], "sf-adapter-orphaned")
 
 
 if __name__ == "__main__":

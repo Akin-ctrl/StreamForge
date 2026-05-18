@@ -50,8 +50,23 @@ class UserRole(str, Enum):
 ROLE_PERMISSIONS: dict[UserRole, set[str]] = {
     UserRole.VIEWER: {"dashboards:read", "configs:read", "metrics:read"},
     UserRole.OPERATOR: {"alarms:ack", "logs:read", "dlq:approve"},
-    UserRole.ENGINEER: {"pipelines:create", "pipelines:update", "validation:update"},
-    UserRole.ADMIN: {"gateways:manage", "users:manage", "deploy:configs", "pipelines:delete"},
+    UserRole.ENGINEER: {
+        "adapters:create",
+        "adapters:update",
+        "sinks:create",
+        "sinks:update",
+        "deployments:create",
+        "deployments:update",
+        "validation:update",
+    },
+    UserRole.ADMIN: {
+        "gateways:manage",
+        "users:manage",
+        "deployments:activate",
+        "deployments:delete",
+        "adapters:delete",
+        "sinks:delete",
+    },
 }
 
 

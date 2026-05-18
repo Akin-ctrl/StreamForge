@@ -7,11 +7,11 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import AuthError, create_gateway_token, decode_gateway_token, require_admin
 from app.db.deps import get_db
-from app.db.models import Gateway, Pipeline, Sink
+from app.db.models import Deployment, Gateway
 from app.schemas.gateways import (
     GatewayApproveResponse,
     GatewayCreateRequest,
@@ -216,14 +216,26 @@ def get_gateway_config(gateway_id: str, token: str = Depends(oauth2_scheme), db:
     if not gateway.approved:
         raise HTTPException(status_code=403, detail="Gateway is pending approval")
 
-    pipeline = (
-        db.execute(select(Pipeline).where(Pipeline.gateway_id == gateway.id).order_by(Pipeline.created_at.desc()))
+    deployment = (
+        db.execute(
+            select(Deployment)
+            .options(
+                selectinload(Deployment.adapters),
+                selectinload(Deployment.sinks),
+            )
+            .where(
+                Deployment.gateway_id == gateway.id,
+                Deployment.status == "active",
+            )
+            .order_by(Deployment.updated_at.desc(), Deployment.created_at.desc())
+        )
         .scalars()
         .first()
     )
-    if pipeline is None:
+    if deployment is None:
         return {
             "gateway_id": gateway.gateway_id,
+            "deployment_id": None,
             "adapters": [],
             "sinks": [],
             "validation": {},
@@ -232,41 +244,43 @@ def get_gateway_config(gateway_id: str, token: str = Depends(oauth2_scheme), db:
             "version": "1",
         }
 
-    config = pipeline.config if isinstance(pipeline.config, dict) else {}
-    sink_rows = (
-        db.execute(
-            select(Sink)
-            .where(Sink.pipeline_id == pipeline.id)
-            .order_by(Sink.created_at.asc())
-        )
-        .scalars()
-        .all()
-    )
-
     sinks = [
         {
-            "sink_id": f"sink-{row.id}",
+            "sink_id": row.sink_id,
+            "name": row.name,
             "sink_type": row.sink_type,
             "config": row.config if isinstance(row.config, dict) else {},
             "status": row.status,
         }
-        for row in sink_rows
+        for row in sorted(deployment.sinks, key=lambda item: item.sink_id)
     ]
+    adapters = [
+        {
+            "adapter_id": row.adapter_id,
+            "name": row.name,
+            "adapter_type": row.adapter_type,
+            "config": row.config if isinstance(row.config, dict) else {},
+            "status": row.status,
+        }
+        for row in sorted(deployment.adapters, key=lambda item: item.adapter_id)
+    ]
+    version = deployment.updated_at.isoformat() if deployment.updated_at else str(deployment.id)
 
     gateway.last_config_sync_at = datetime.now(timezone.utc)
-    gateway.last_config_version = str(pipeline.id)
+    gateway.last_config_version = version
     gateway.last_seen_at = datetime.now(timezone.utc)
     db.add(gateway)
     db.commit()
 
     return {
         "gateway_id": gateway.gateway_id,
-        "adapters": config.get("adapters", []),
-        "validation": config.get("validation", {}),
-        "events": config.get("events", {}),
-        "aggregates": config.get("aggregates", {}),
+        "deployment_id": deployment.deployment_id,
+        "adapters": adapters,
+        "validation": deployment.validation_config if isinstance(deployment.validation_config, dict) else {},
+        "events": deployment.events_config if isinstance(deployment.events_config, dict) else {},
+        "aggregates": deployment.aggregates_config if isinstance(deployment.aggregates_config, dict) else {},
         "sinks": sinks,
-        "version": str(pipeline.id),
+        "version": version,
     }
 
 

@@ -3,7 +3,7 @@
 Initial FastAPI foundation for Control Plane deliverables:
 
 - Gateway registration and status APIs
-- Pipeline CRUD APIs
+- Adapter, sink, and deployment CRUD APIs
 - Alarm ingest and lifecycle APIs
 - DLQ ingest, review, and reprocess/discard APIs
 - PostgreSQL-backed models

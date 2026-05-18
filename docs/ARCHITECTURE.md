@@ -112,22 +112,34 @@ Gateways are fully self-contained:
 - **Database**: PostgreSQL (remote mode) or SQLite (local mode)
 - **Endpoints**:
   - `/api/v1/gateways` - Gateway registration and status
-  - `/api/v1/pipelines` - Pipeline management
+  - `/api/v1/pipelines` - Current deployment/pipeline management path
   - `/api/v1/sinks` - Sink configuration
   - `/api/v1/schemas` - Schema management
   - `/api/v1/alarms` - Alarm management
   - `/api/v1/health` - Aggregated health metrics
 
 #### 2. UI
-- **Technology**: React + TypeScript + TailwindCSS
+- **Technology**: React + TypeScript + CSS-based design system
 - **Features**:
-  - Visual pipeline builder
+  - Adapter, sink, and deployment management
+  - Protocol-aware configuration forms
   - Gateway fleet management
   - Real-time topology visualization
   - Health dashboards
   - Alarm management with ACK/SUPPRESS
   - DLQ viewer with reprocess workflow
   - Log viewer with filtering
+
+### Configuration Object Model
+
+The intended operator model is:
+
+- `Gateways` as deployment targets
+- `Adapters` as first-class configured source connectors
+- `Sinks` as first-class configured destination connectors
+- `Deployments` as composed gateway configurations that attach adapters and sinks to a gateway, alongside validation, event, and aggregate rules
+
+This distinction matters because the gateway runtime already supports one active gateway configuration containing multiple adapters and multiple sinks. The UI and control-plane configuration model should reflect that directly instead of implying a one-adapter-to-one-sink workflow.
 
 #### 3. MCP Server
 - **Technology**: Python + MCP protocol
@@ -176,6 +188,16 @@ Gateways are fully self-contained:
   - `adapter_mqtt` - MQTT subscriber
   - `adapter_xbee` - XBee wireless
   - `adapter_lora` - LoRa wireless
+
+Adapter configuration must be protocol-aware. Flat scalar field lists are not enough for the real configuration contracts:
+
+- Modbus adapters require repeatable point mappings, including registers and optional event/state points
+- MQTT requires repeatable subscriptions and field mappings
+- OPC UA requires monitored-item definitions and subscription settings
+
+An adapter instance represents one source connection or session context and may contain many mapped signals inside it. Multi-parameter industrial sources such as PLCs, MQTT payloads, and OPC UA servers should normally be modeled as one adapter with repeatable point/subscription/monitored-item mappings, not as one adapter per parameter.
+
+See [Adapters And Deployments Spec](ADAPTERS_AND_DEPLOYMENTS_SPEC.md) for the locked operator-facing configuration contract.
 
 #### 3. Local Kafka
 - **Deployment**: Embedded single-node KRaft mode

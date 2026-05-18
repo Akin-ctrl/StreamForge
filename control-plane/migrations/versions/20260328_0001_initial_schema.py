@@ -1,4 +1,4 @@
-"""Initial control-plane schema."""
+"""Canonical control-plane schema baseline."""
 
 from __future__ import annotations
 
@@ -21,6 +21,11 @@ def upgrade() -> None:
         sa.Column("hardware_info", sa.JSON(), nullable=True),
         sa.Column("status", sa.String(length=32), nullable=False),
         sa.Column("approved", sa.Boolean(), nullable=False),
+        sa.Column("last_config_sync_at", sa.DateTime(), nullable=True),
+        sa.Column("last_config_version", sa.String(length=64), nullable=True),
+        sa.Column("last_seen_at", sa.DateTime(), nullable=True),
+        sa.Column("runtime_health", sa.JSON(), nullable=True),
+        sa.Column("system_metrics", sa.JSON(), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.UniqueConstraint("gateway_id"),
@@ -108,43 +113,117 @@ def upgrade() -> None:
     op.create_index("ix_dlq_messages_failed_at", "dlq_messages", ["failed_at"], unique=False)
 
     op.create_table(
-        "pipelines",
+        "adapters",
         sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("adapter_id", sa.String(length=128), nullable=False),
         sa.Column("name", sa.String(length=128), nullable=False),
-        sa.Column("gateway_id", sa.Integer(), nullable=False),
+        sa.Column("adapter_type", sa.String(length=64), nullable=False),
+        sa.Column("status", sa.String(length=32), nullable=False),
         sa.Column("config", sa.JSON(), nullable=False),
+        sa.Column("description", sa.String(length=1024), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(["gateway_id"], ["gateways.id"], ondelete="CASCADE"),
+        sa.Column("updated_at", sa.DateTime(), nullable=False),
+        sa.UniqueConstraint("adapter_id"),
     )
-    op.create_index("ix_pipelines_id", "pipelines", ["id"], unique=False)
-    op.create_index("ix_pipelines_name", "pipelines", ["name"], unique=False)
-    op.create_index("ix_pipelines_gateway_id", "pipelines", ["gateway_id"], unique=False)
+    op.create_index("ix_adapters_id", "adapters", ["id"], unique=False)
+    op.create_index("ix_adapters_adapter_id", "adapters", ["adapter_id"], unique=False)
+    op.create_index("ix_adapters_name", "adapters", ["name"], unique=False)
+    op.create_index("ix_adapters_adapter_type", "adapters", ["adapter_type"], unique=False)
+    op.create_index("ix_adapters_status", "adapters", ["status"], unique=False)
 
     op.create_table(
         "sinks",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("pipeline_id", sa.Integer(), nullable=False),
+        sa.Column("sink_id", sa.String(length=128), nullable=False),
+        sa.Column("name", sa.String(length=128), nullable=False),
         sa.Column("sink_type", sa.String(length=64), nullable=False),
         sa.Column("config", sa.JSON(), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False),
+        sa.Column("description", sa.String(length=1024), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(["pipeline_id"], ["pipelines.id"], ondelete="CASCADE"),
+        sa.Column("updated_at", sa.DateTime(), nullable=False),
+        sa.UniqueConstraint("sink_id"),
     )
     op.create_index("ix_sinks_id", "sinks", ["id"], unique=False)
-    op.create_index("ix_sinks_pipeline_id", "sinks", ["pipeline_id"], unique=False)
+    op.create_index("ix_sinks_sink_id", "sinks", ["sink_id"], unique=False)
+    op.create_index("ix_sinks_name", "sinks", ["name"], unique=False)
     op.create_index("ix_sinks_sink_type", "sinks", ["sink_type"], unique=False)
+    op.create_index("ix_sinks_status", "sinks", ["status"], unique=False)
+
+    op.create_table(
+        "deployments",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("deployment_id", sa.String(length=128), nullable=False),
+        sa.Column("name", sa.String(length=128), nullable=False),
+        sa.Column("gateway_id", sa.Integer(), nullable=False),
+        sa.Column("status", sa.String(length=32), nullable=False),
+        sa.Column("validation_config", sa.JSON(), nullable=False),
+        sa.Column("events_config", sa.JSON(), nullable=False),
+        sa.Column("aggregates_config", sa.JSON(), nullable=False),
+        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(), nullable=False),
+        sa.ForeignKeyConstraint(["gateway_id"], ["gateways.id"], ondelete="CASCADE"),
+        sa.UniqueConstraint("deployment_id"),
+    )
+    op.create_index("ix_deployments_id", "deployments", ["id"], unique=False)
+    op.create_index("ix_deployments_deployment_id", "deployments", ["deployment_id"], unique=False)
+    op.create_index("ix_deployments_name", "deployments", ["name"], unique=False)
+    op.create_index("ix_deployments_gateway_id", "deployments", ["gateway_id"], unique=False)
+    op.create_index("ix_deployments_status", "deployments", ["status"], unique=False)
+    op.create_index(
+        "uq_deployments_active_gateway",
+        "deployments",
+        ["gateway_id"],
+        unique=True,
+        postgresql_where=sa.text("status = 'active'"),
+    )
+
+    op.create_table(
+        "deployment_adapters",
+        sa.Column("deployment_id", sa.Integer(), nullable=False),
+        sa.Column("adapter_id", sa.Integer(), nullable=False),
+        sa.Column("position", sa.Integer(), nullable=False, server_default="0"),
+        sa.ForeignKeyConstraint(["deployment_id"], ["deployments.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["adapter_id"], ["adapters.id"], ondelete="RESTRICT"),
+        sa.PrimaryKeyConstraint("deployment_id", "adapter_id"),
+    )
+
+    op.create_table(
+        "deployment_sinks",
+        sa.Column("deployment_id", sa.Integer(), nullable=False),
+        sa.Column("sink_id", sa.Integer(), nullable=False),
+        sa.Column("position", sa.Integer(), nullable=False, server_default="0"),
+        sa.ForeignKeyConstraint(["deployment_id"], ["deployments.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["sink_id"], ["sinks.id"], ondelete="RESTRICT"),
+        sa.PrimaryKeyConstraint("deployment_id", "sink_id"),
+    )
 
 
 def downgrade() -> None:
+    op.drop_table("deployment_sinks")
+    op.drop_table("deployment_adapters")
+
+    op.drop_index("uq_deployments_active_gateway", table_name="deployments")
+    op.drop_index("ix_deployments_status", table_name="deployments")
+    op.drop_index("ix_deployments_gateway_id", table_name="deployments")
+    op.drop_index("ix_deployments_name", table_name="deployments")
+    op.drop_index("ix_deployments_deployment_id", table_name="deployments")
+    op.drop_index("ix_deployments_id", table_name="deployments")
+    op.drop_table("deployments")
+
+    op.drop_index("ix_sinks_status", table_name="sinks")
     op.drop_index("ix_sinks_sink_type", table_name="sinks")
-    op.drop_index("ix_sinks_pipeline_id", table_name="sinks")
+    op.drop_index("ix_sinks_name", table_name="sinks")
+    op.drop_index("ix_sinks_sink_id", table_name="sinks")
     op.drop_index("ix_sinks_id", table_name="sinks")
     op.drop_table("sinks")
 
-    op.drop_index("ix_pipelines_gateway_id", table_name="pipelines")
-    op.drop_index("ix_pipelines_name", table_name="pipelines")
-    op.drop_index("ix_pipelines_id", table_name="pipelines")
-    op.drop_table("pipelines")
+    op.drop_index("ix_adapters_status", table_name="adapters")
+    op.drop_index("ix_adapters_adapter_type", table_name="adapters")
+    op.drop_index("ix_adapters_name", table_name="adapters")
+    op.drop_index("ix_adapters_adapter_id", table_name="adapters")
+    op.drop_index("ix_adapters_id", table_name="adapters")
+    op.drop_table("adapters")
 
     op.drop_index("ix_dlq_messages_failed_at", table_name="dlq_messages")
     op.drop_index("ix_dlq_messages_status", table_name="dlq_messages")

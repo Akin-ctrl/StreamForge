@@ -38,6 +38,8 @@ class AdapterManager:
         """Start all adapters defined in config."""
         client = self._docker_client()
         network = self._resolve_network(client)
+        desired_ids = {config.adapter_id for config in configs}
+        self._prune_orphaned_containers(client, desired_ids)
 
         for config in configs:
             if config.adapter_id in self._containers:
@@ -56,6 +58,7 @@ class AdapterManager:
             labels = {
                 "app": "streamforge",
                 "component": "adapter",
+                "streamforge.managed-by": "gateway_runtime",
                 "adapter_id": config.adapter_id,
                 "adapter_type": config.adapter_type,
             }
@@ -251,6 +254,51 @@ class AdapterManager:
             restart_policy={"Name": "unless-stopped"},
         )
 
+    def _prune_orphaned_containers(self, client, desired_ids: set[str]) -> None:
+        """Remove managed adapter containers that do not belong to the desired config set."""
+        for container in self._list_managed_containers(client):
+            adapter_id = self._managed_adapter_id(container)
+            if adapter_id is None or adapter_id in desired_ids:
+                continue
+            self._stop_container(client, container.id)
+
+    def _list_managed_containers(self, client) -> list[object]:
+        try:
+            return list(client.containers.list(all=True))
+        except Exception:
+            return []
+
+    def _managed_adapter_id(self, container) -> str | None:
+        if not self._is_managed_container(container):
+            return None
+        labels = container.labels or {}
+        adapter_id = labels.get("adapter_id")
+        if isinstance(adapter_id, str) and adapter_id.strip():
+            return adapter_id.strip()
+        name = getattr(container, "name", "").lstrip("/")
+        prefix = "sf-adapter-"
+        if name.startswith(prefix):
+            return name[len(prefix) :]
+        return None
+
+    def _is_managed_container(self, container) -> bool:
+        labels = container.labels or {}
+        name = getattr(container, "name", "").lstrip("/")
+        if labels.get("component") != "adapter":
+            return False
+        if labels.get("streamforge.managed-by") == "gateway_runtime":
+            return self._matches_project(labels)
+        if labels.get("app") == "streamforge":
+            return self._matches_project(labels)
+        return name.startswith("sf-adapter-")
+
+    @staticmethod
+    def _matches_project(labels: Dict[str, str]) -> bool:
+        project = labels.get("com.docker.compose.project")
+        if not project:
+            return True
+        return project == AdapterManager._compose_project()
+
     def _stop_container(self, client, container_id: str) -> None:
         try:
             container = client.containers.get(container_id)
@@ -291,7 +339,7 @@ class AdapterManager:
 
     @staticmethod
     def _compose_labels(adapter_type: str = "modbus_tcp") -> Dict[str, str]:
-        project = os.getenv("COMPOSE_PROJECT_NAME") or os.getenv("DOCKER_COMPOSE_PROJECT") or "deploy"
+        project = AdapterManager._compose_project()
         service = "adapter_modbus_tcp"
         if adapter_type == "modbus_rtu":
             service = "adapter_modbus_rtu"
@@ -304,6 +352,10 @@ class AdapterManager:
             "com.docker.compose.service": service,
             "com.docker.compose.oneoff": "False",
         }
+
+    @staticmethod
+    def _compose_project() -> str:
+        return os.getenv("COMPOSE_PROJECT_NAME") or os.getenv("DOCKER_COMPOSE_PROJECT") or "deploy"
 
     @staticmethod
     def _device_mappings(config: dict) -> list[str]:

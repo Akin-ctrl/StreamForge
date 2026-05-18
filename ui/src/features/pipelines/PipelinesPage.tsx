@@ -1,179 +1,146 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import {
-  GatewayItem,
-  PipelineItem,
-  createPipeline,
-  deletePipeline,
-  listGateways,
-  listPipelines,
+  DeploymentItem,
+  deleteDeployment,
+  listDeployments,
 } from '../../shared/api/client'
+import { summarizeDeployment } from '../../shared/config/deployments'
 import { formatDateTime } from '../../shared/format/datetime'
 import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 
-/**
- * Pipelines management page.
- * Supports list/create/delete with JSON config input.
- */
 export function PipelinesPage() {
   const { timezone } = useOperatorPreferences()
-  const [items, setItems] = useState<PipelineItem[]>([])
-  const [gateways, setGateways] = useState<GatewayItem[]>([])
+  const [deployments, setDeployments] = useState<DeploymentItem[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [name, setName] = useState('demo-pipeline-ui')
-  const [gatewayId, setGatewayId] = useState('gateway-demo-01')
-  // Seed JSON keeps create flow aligned with the dev demo topology.
-  const [configJson, setConfigJson] = useState(
-    JSON.stringify(
-      {
-        adapters: [
-          {
-            adapter_id: 'modbus-demo-01',
-            adapter_type: 'modbus_tcp',
-            config: {
-              host: 'modbus-simulator',
-              port: 5020,
-              unit_id: 1,
-              poll_interval_ms: 1000,
-              registers: [
-                {
-                  address: 40001,
-                  param: 'temperature',
-                  type: 'float32',
-                  unit: 'celsius',
-                },
-              ],
-              output: {
-                kafka_bootstrap: 'kafka:9092',
-                topic: 'telemetry.raw',
-                asset_id: 'demo_sensor_01',
-              },
-            },
-          },
-        ],
-        validation: {
-          enabled: true,
-          raw_topic: 'telemetry.raw',
-          clean_topic: 'telemetry.clean',
-          dlq_topic: 'dlq.telemetry',
-          ranges: {
-            temperature: { min: -50, max: 500 },
-          },
-          rate_of_change: { temperature: 20 },
-          gap_detection: { temperature: 5 },
-        },
-      },
-      null,
-      2,
-    ),
-  )
 
-  // Pull pipelines and gateways together so form options always match current state.
   const refresh = async () => {
-    const [pipelineRows, gatewayRows] = await Promise.all([listPipelines(), listGateways()])
-    setItems(pipelineRows)
-    setGateways(gatewayRows)
-    if (gatewayRows.length > 0 && !gatewayRows.some((gateway) => gateway.gateway_id === gatewayId)) {
-      setGatewayId(gatewayRows[0].gateway_id)
+    setError(null)
+    try {
+      const deploymentRows = await listDeployments()
+      setDeployments(deploymentRows)
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Failed to load deployments')
     }
   }
 
   useEffect(() => {
-    const load = async () => {
-      setError(null)
-      try {
-        await refresh()
-      } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : 'Failed to load pipelines')
-      }
-    }
-    void load()
+    void refresh()
   }, [])
 
-  // Parse JSON config, submit create request, then refresh list.
-  const onCreate = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
+  const onDelete = async (targetDeploymentId: string) => {
     setError(null)
     try {
-      const parsed = JSON.parse(configJson) as Record<string, unknown>
-      await createPipeline({
-        name,
-        gateway_id: gatewayId,
-        config: parsed,
-      })
+      await deleteDeployment(targetDeploymentId)
       await refresh()
-    } catch (createError) {
-      setError(createError instanceof Error ? createError.message : 'Failed to create pipeline')
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Failed to delete deployment')
     }
   }
 
-  // Delete selected pipeline and refresh table.
-  const onDelete = async (pipelineId: number) => {
-    setError(null)
-    try {
-      await deletePipeline(pipelineId)
-      await refresh()
-    } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : 'Failed to delete pipeline')
-    }
-  }
+  const activeCount = useMemo(() => deployments.filter((deployment) => deployment.status === 'active').length, [deployments])
+  const totalAttachedAdapters = useMemo(
+    () => deployments.reduce((count, deployment) => count + deployment.adapter_ids.length, 0),
+    [deployments],
+  )
+  const totalAttachedSinks = useMemo(
+    () => deployments.reduce((count, deployment) => count + deployment.sink_ids.length, 0),
+    [deployments],
+  )
 
   return (
     <section>
-      <h2>Pipelines</h2>
+      <div className="page-header">
+        <div>
+          <h2>Deployments</h2>
+          <p className="muted">
+            Review saved deployment compositions here, then open the composer when you need to create or revise one.
+          </p>
+        </div>
+        <div className="page-actions">
+          <button className="btn btn-secondary" onClick={() => void refresh()} type="button">
+            Refresh
+          </button>
+          <Link className="btn" to="/create-pipeline">
+            Compose Deployment
+          </Link>
+        </div>
+      </div>
+
       {error && <p className="error">{error}</p>}
 
-      <form className="card" onSubmit={onCreate}>
-        <h3>Create Pipeline</h3>
-        <label>
-          Name
-          <input value={name} onChange={(event) => setName(event.target.value)} />
-        </label>
-        <label>
-          Gateway
-          <select value={gatewayId} onChange={(event) => setGatewayId(event.target.value)}>
-            {gateways.map((gateway) => (
-              <option key={gateway.gateway_id} value={gateway.gateway_id}>
-                {gateway.gateway_id}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Pipeline Config (JSON)
-          <textarea rows={12} value={configJson} onChange={(event) => setConfigJson(event.target.value)} />
-        </label>
-        <button className="btn" type="submit">
-          Create Pipeline
-        </button>
-      </form>
+      <div className="overview-kpis">
+        <article className="card">
+          <h3>Total Deployments</h3>
+          <p className="overview-kpi-value">{deployments.length}</p>
+          <p className="muted">Saved deployment compositions</p>
+        </article>
+        <article className="card">
+          <h3>Active</h3>
+          <p className="overview-kpi-value">{activeCount}</p>
+          <p className="muted">Gateways currently pointed at an active deployment</p>
+        </article>
+        <article className="card">
+          <h3>Attached Adapters</h3>
+          <p className="overview-kpi-value">{totalAttachedAdapters}</p>
+          <p className="muted">Adapter attachments across all deployments</p>
+        </article>
+        <article className="card">
+          <h3>Attached Sinks</h3>
+          <p className="overview-kpi-value">{totalAttachedSinks}</p>
+          <p className="muted">Sink attachments across all deployments</p>
+        </article>
+      </div>
 
-      <table className="table">
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Name</th>
-            <th>Gateway</th>
-            <th>Created</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((item) => (
-            <tr key={item.id}>
-              <td>{item.id}</td>
-              <td>{item.name}</td>
-              <td>{item.gateway_id}</td>
-              <td>{formatDateTime(item.created_at, timezone, { includeTimezone: true })}</td>
-              <td>
-                <button className="btn btn-secondary" onClick={() => void onDelete(item.id)}>
-                  Delete
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="overview-grid">
+        <article className="card">
+          <h3>Deployment Inventory</h3>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Deployment ID</th>
+                <th>Gateway</th>
+                <th>Status</th>
+                <th>Adapters</th>
+                <th>Sinks</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {deployments.map((deployment) => {
+                const summary = summarizeDeployment(deployment)
+                return (
+                  <tr key={deployment.deployment_id}>
+                    <td>{deployment.deployment_id}</td>
+                    <td>{deployment.gateway_id}</td>
+                    <td>{deployment.status}</td>
+                    <td>{summary.adapterCount} attached</td>
+                    <td>{summary.sinkCount} attached</td>
+                    <td>{formatDateTime(deployment.created_at, timezone, { includeTimezone: true })}</td>
+                    <td>
+                      <Link className="btn btn-secondary" to={`/pipelines/${encodeURIComponent(deployment.deployment_id)}/edit`}>
+                        Edit
+                      </Link>{' '}
+                      <button className="btn btn-secondary" onClick={() => void onDelete(deployment.deployment_id)} type="button">
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+              {deployments.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="muted">
+                    No deployments configured yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </article>
+      </div>
     </section>
   )
 }

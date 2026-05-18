@@ -107,7 +107,9 @@ class GatewayRuntime:
             self._overflow.set_desired_adapters(config.adapters)
         print("gateway_runtime adapters started", flush=True)
 
-        validation_rules = config.validation if isinstance(config.validation, dict) else {}
+        validation_rules = dict(config.validation) if isinstance(config.validation, dict) else {}
+        if config.deployment_id and "deployment_id" not in validation_rules:
+            validation_rules["deployment_id"] = config.deployment_id
         if validation_rules.get("enabled", True):
             control_plane_repo = self._config_repo if isinstance(self._config_repo, ControlPlaneConfigRepository) else None
             self._validator = ValidatorModule(
@@ -117,7 +119,9 @@ class GatewayRuntime:
                 control_plane=control_plane_repo,
             )
             self._validator.start()
-        event_rules = config.events if isinstance(config.events, dict) else {}
+        event_rules = dict(config.events) if isinstance(config.events, dict) else {}
+        if config.deployment_id and "deployment_id" not in event_rules:
+            event_rules["deployment_id"] = config.deployment_id
         if event_rules.get("enabled", False):
             control_plane_repo = self._config_repo if isinstance(self._config_repo, ControlPlaneConfigRepository) else None
             self._event_validator = EventValidatorModule(
