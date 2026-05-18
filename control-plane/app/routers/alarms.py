@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
-from app.core.security import get_current_gateway, get_current_user
+from app.core.security import get_current_gateway, require_permission
 from app.db.deps import get_db
 from app.db.models import Alarm, Gateway, User
 from app.schemas.alarms import (
@@ -110,7 +110,7 @@ def list_alarms(
     active_only: bool = Query(default=False),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_permission("alarms:read")),
 ) -> list[AlarmListResponse]:
     query = _base_alarm_query()
 
@@ -133,7 +133,7 @@ def list_alarms(
 def get_alarm(
     alarm_id: str,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_permission("alarms:read")),
 ) -> AlarmItem:
     return _alarm_item(_get_alarm_or_404(db, alarm_id))
 
@@ -207,7 +207,7 @@ def acknowledge_alarm(
     alarm_id: str,
     payload: AlarmAcknowledgeRequest | None = None,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission("alarms:ack")),
 ) -> AlarmItem:
     alarm = _get_alarm_or_404(db, alarm_id)
     if alarm.state == "ACKNOWLEDGED":
@@ -230,7 +230,7 @@ def suppress_alarm(
     alarm_id: str,
     payload: AlarmSuppressRequest | None = None,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission("alarms:suppress")),
 ) -> AlarmItem:
     alarm = _get_alarm_or_404(db, alarm_id)
     if alarm.state == "SUPPRESSED":

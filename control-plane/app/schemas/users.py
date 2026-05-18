@@ -15,8 +15,9 @@ class UserTokenResponse(BaseModel):
 
 class UserProfileResponse(BaseModel):
     username: str
-    is_admin: bool
+    role: str
     roles: list[str]
+    permissions: list[str] = []
     created_at: datetime | None = None
 
 
@@ -32,7 +33,7 @@ class FirstUserBootstrapRequest(BaseModel):
 class UserCreateRequest(BaseModel):
     username: str = Field(min_length=3, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
     password: str = Field(min_length=12, max_length=255)
-    is_admin: bool = False
+    role: str = Field(default="Viewer", min_length=3, max_length=32)
 
 
 class UserDeleteResponse(BaseModel):

@@ -20,6 +20,7 @@ npm run dev
 ```
 
 By default, API requests use same-origin (`/api/...`) so local production-like runs should use the nginx reverse proxy setup.
+The browser UI now relies on an `HttpOnly` auth session cookie rather than storing bearer tokens in `localStorage`, so same-origin deployment remains the recommended path.
 
 ## Build
 

@@ -41,7 +41,7 @@ services:
         condition: service_healthy
     environment:
       SF_DATABASE_URL: postgresql+psycopg://streamforge:streamforge@postgres:5432/streamforge
-      SF_JWT_SECRET: streamforge-dev-secret
+      SF_JWT_SECRET: Q7m4J9p2L6x8V3c1N5b7H0r4T2y8K6d1S9w3F5g7P1z4
       SF_CONFIG_SECRET_KEY: VaLKC29arWaHqoljiNX-eVQ-dMkpeDbugFT7G_0G2is=
     healthcheck:
       test:
@@ -115,7 +115,7 @@ services:
       CONTROL_PLANE_URL: http://control_plane:8000
       CONTROL_PLANE_GATEWAY_ID: gateway-demo-01
       DEV_ADMIN_USERNAME: streamforge_admin
-      DEV_ADMIN_PASSWORD: StreamForge1234
+      DEV_ADMIN_PASSWORD: LocalAdminBootstrap42
       DEV_GATEWAY_CONFIG_PATH: /app/deploy/gateway_config.sample.json
     command: ["python", "/app/deploy/dev_bootstrap.py"]
 

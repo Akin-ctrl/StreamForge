@@ -1,21 +1,15 @@
-import { getAccessToken } from '../auth/session'
-
 const CONTROL_PLANE_URL = import.meta.env.VITE_CONTROL_PLANE_URL?.toString() || ''
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getAccessToken()
-
   const headers = new Headers(init?.headers)
   if (!headers.has('Content-Type') && init?.body) {
     headers.set('Content-Type', 'application/json')
-  }
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`)
   }
 
   const response = await fetch(`${CONTROL_PLANE_URL}${path}`, {
     ...init,
     cache: 'no-store',
+    credentials: 'include',
     headers,
   })
 
@@ -163,8 +157,9 @@ export type UserTokenResponse = {
 
 export type UserItem = {
   username: string
-  is_admin: boolean
+  role: string
   roles: string[]
+  permissions: string[]
   created_at: string
 }
 
@@ -240,6 +235,7 @@ export async function login(username: string, password: string): Promise<UserTok
   const response = await fetch(`${CONTROL_PLANE_URL}/api/v1/auth/token`, {
     method: 'POST',
     cache: 'no-store',
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
     },
@@ -254,7 +250,7 @@ export async function login(username: string, password: string): Promise<UserTok
 }
 
 export async function getBootstrapStatus(): Promise<BootstrapStatusResponse> {
-  const response = await fetch(`${CONTROL_PLANE_URL}/api/v1/auth/bootstrap/status`, { cache: 'no-store' })
+  const response = await fetch(`${CONTROL_PLANE_URL}/api/v1/auth/bootstrap/status`, { cache: 'no-store', credentials: 'include' })
   if (!response.ok) {
     throw new Error(await readError(response, 'Unable to determine bootstrap status'))
   }
@@ -265,6 +261,7 @@ export async function bootstrapFirstUser(username: string, password: string): Pr
   const response = await fetch(`${CONTROL_PLANE_URL}/api/v1/auth/bootstrap/first-user`, {
     method: 'POST',
     cache: 'no-store',
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
     },
@@ -278,6 +275,12 @@ export async function bootstrapFirstUser(username: string, password: string): Pr
   return (await response.json()) as UserTokenResponse
 }
 
+export function logout() {
+  return request<{ logged_out: boolean }>('/api/v1/auth/logout', {
+    method: 'POST',
+  })
+}
+
 export function listUsers() {
   return request<UserItem[]>('/api/v1/users')
 }
@@ -289,7 +292,7 @@ export function getCurrentUser() {
 export function createUser(payload: {
   username: string
   password: string
-  is_admin?: boolean
+  role?: string
 }) {
   return request<UserItem>('/api/v1/users', {
     method: 'POST',

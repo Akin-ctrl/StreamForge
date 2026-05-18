@@ -3,7 +3,8 @@
 from fastapi import FastAPI
 from sqlalchemy import func, select
 
-from app.core.security import hash_password
+from app.core.audit import record_audit_event
+from app.core.security import UserRole, hash_password
 from app.core.settings import settings
 from app.db.deps import SessionLocal
 from app.db import models  # noqa: F401
@@ -25,12 +26,8 @@ def _has_users() -> bool:
 
 @app.on_event("startup")
 def on_startup() -> None:
+    settings.validate_startup_security()
     ensure_schema_ready()
-
-    if settings.allow_dev_admin_bootstrap and not settings.is_dev_environment:
-        raise RuntimeError(
-            "SF_ALLOW_DEV_ADMIN_BOOTSTRAP can only be enabled in dev/local/test environments",
-        )
 
     if not settings.allow_dev_admin_bootstrap or _has_users():
         return
@@ -42,9 +39,18 @@ def on_startup() -> None:
             admin = User(
                 username=settings.admin_username,
                 password_hash=hash_password(settings.admin_password),
-                is_admin=True,
+                role=UserRole.ADMIN.value,
+                created_by=settings.admin_username,
             )
             db.add(admin)
+            record_audit_event(
+                db,
+                actor=None,
+                action="auth.dev_bootstrap_admin",
+                resource_type="user",
+                resource_public_id=admin.username,
+                details={"role": admin.role},
+            )
             db.commit()
     finally:
         db.close()

@@ -11,7 +11,7 @@ from urllib import error, parse, request
 
 CONTROL_PLANE_URL = os.getenv("CONTROL_PLANE_URL", "http://control_plane:8000").rstrip("/")
 DEV_ADMIN_USERNAME = os.getenv("DEV_ADMIN_USERNAME", "streamforge_admin")
-DEV_ADMIN_PASSWORD = os.getenv("DEV_ADMIN_PASSWORD", "StreamForge1234")
+DEV_ADMIN_PASSWORD = os.getenv("DEV_ADMIN_PASSWORD", "LocalAdminBootstrap42")
 GATEWAY_ID = os.getenv("CONTROL_PLANE_GATEWAY_ID", "gateway-demo-01")
 DEPLOYMENT_ID = os.getenv("DEV_DEPLOYMENT_ID", "deployment-demo-01")
 DEPLOYMENT_NAME = os.getenv("DEV_DEPLOYMENT_NAME", "Demo Deployment")

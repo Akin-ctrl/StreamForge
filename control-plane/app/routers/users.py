@@ -6,10 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.audit import record_audit_event
 from app.core.security import (
     get_current_user,
     hash_password,
-    require_admin,
+    normalize_user_role,
+    permission_set_for_user,
+    require_permission,
     roles_for_user,
     validate_password_strength,
 )
@@ -23,14 +26,15 @@ router = APIRouter()
 @router.get("", response_model=list[UserProfileResponse])
 def list_users(
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_permission("users:manage")),
 ) -> list[UserProfileResponse]:
     rows = db.execute(select(User).order_by(User.created_at.asc())).scalars().all()
     return [
         UserProfileResponse(
             username=row.username,
-            is_admin=row.is_admin,
-            roles=[role.value for role in roles_for_user(row.username, row.is_admin)],
+            role=row.role,
+            roles=[role.value for role in roles_for_user(row)],
+            permissions=sorted(permission_set_for_user(row)),
             created_at=row.created_at,
         )
         for row in rows
@@ -41,9 +45,13 @@ def list_users(
 def create_user(
     payload: UserCreateRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(require_permission("users:manage")),
 ) -> UserProfileResponse:
     username = payload.username.strip()
+    try:
+        role = normalize_user_role(payload.role.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     existing = db.execute(select(User).where(User.username == username)).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(status_code=409, detail="User already exists")
@@ -56,16 +64,26 @@ def create_user(
     user = User(
         username=username,
         password_hash=hash_password(payload.password),
-        is_admin=payload.is_admin,
+        role=role.value,
+        created_by=current_user.username,
     )
     db.add(user)
+    record_audit_event(
+        db,
+        actor=current_user,
+        action="user.created",
+        resource_type="user",
+        resource_public_id=user.username,
+        details={"role": user.role},
+    )
     db.commit()
     db.refresh(user)
 
     return UserProfileResponse(
         username=user.username,
-        is_admin=user.is_admin,
-        roles=[role.value for role in roles_for_user(user.username, user.is_admin)],
+        role=user.role,
+        roles=[role.value for role in roles_for_user(user)],
+        permissions=sorted(permission_set_for_user(user)),
         created_at=user.created_at,
     )
 
@@ -75,7 +93,7 @@ def delete_user(
     username: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_permission("users:manage")),
 ) -> UserDeleteResponse:
     user = db.execute(select(User).where(User.username == username)).scalar_one_or_none()
     if user is None:
@@ -83,6 +101,14 @@ def delete_user(
     if user.username == current_user.username:
         raise HTTPException(status_code=409, detail="You cannot delete the currently authenticated user")
 
+    record_audit_event(
+        db,
+        actor=current_user,
+        action="user.deleted",
+        resource_type="user",
+        resource_public_id=user.username,
+        details={"role": user.role},
+    )
     db.delete(user)
     db.commit()
     return UserDeleteResponse(deleted=True, username=username)

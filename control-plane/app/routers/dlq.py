@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
-from app.core.security import get_current_gateway, get_current_user
+from app.core.security import get_current_gateway, require_permission
 from app.db.deps import get_db
 from app.db.models import DlqMessage, Gateway, User
 from app.schemas.dlq import (
@@ -87,7 +87,7 @@ def list_dlq_messages(
     reason: str | None = Query(default=None, min_length=1, max_length=255),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_permission("dlq:read")),
 ) -> list[DlqItem]:
     query = _base_query()
     if status is not None:
@@ -105,7 +105,7 @@ def list_dlq_messages(
 def get_dlq_message(
     message_id: str,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_permission("dlq:read")),
 ) -> DlqItem:
     return _dlq_item(_get_record_or_404(db, message_id))
 
@@ -163,7 +163,7 @@ def approve_dlq_message(
     message_id: str,
     payload: DlqActionRequest | None = None,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission("dlq:approve")),
 ) -> DlqItem:
     record = _get_record_or_404(db, message_id)
     if record.status == "REPROCESS_REQUESTED":
@@ -180,7 +180,7 @@ def approve_dlq_message(
 def bulk_approve_dlq_messages(
     payload: DlqBulkApproveRequest,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission("dlq:approve")),
 ) -> list[DlqItem]:
     rows = db.execute(select(DlqMessage).where(DlqMessage.message_id.in_(payload.message_ids))).scalars().all()
     found_ids = {row.message_id for row in rows}
@@ -205,7 +205,7 @@ def discard_dlq_message(
     message_id: str,
     payload: DlqActionRequest | None = None,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission("dlq:approve")),
 ) -> DlqItem:
     record = _get_record_or_404(db, message_id)
     if record.status == "DISCARD_REQUESTED":

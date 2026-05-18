@@ -4,6 +4,8 @@ import { UserItem, createUser, deleteUser, getCurrentUser, listUsers } from '../
 import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 import { formatDateTime } from '../../shared/format/datetime'
 
+const ROLE_OPTIONS = ['Viewer', 'Operator', 'Engineer', 'Admin'] as const
+
 export function UsersPage() {
   const { timezone } = useOperatorPreferences()
   const [items, setItems] = useState<UserItem[]>([])
@@ -39,10 +41,14 @@ export function UsersPage() {
     const username = String(form.get('username') || '').trim()
     const password = String(form.get('password') || '')
     const confirmPassword = String(form.get('confirm_password') || '')
-    const isAdmin = form.get('is_admin') === 'on'
+    const role = String(form.get('role') || 'Viewer')
 
     if (!username) {
       setError('Username is required')
+      return
+    }
+    if (!ROLE_OPTIONS.includes(role as (typeof ROLE_OPTIONS)[number])) {
+      setError('Choose a valid role')
       return
     }
     if (password !== confirmPassword) {
@@ -57,10 +63,10 @@ export function UsersPage() {
       await createUser({
         username,
         password,
-        is_admin: isAdmin,
+        role,
       })
       formElement.reset()
-      setSuccess(`User ${username} created.`)
+      setSuccess(`User ${username} created with ${role} access.`)
       await refresh()
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : 'Failed to create user')
@@ -111,12 +117,18 @@ export function UsersPage() {
             Confirm Password
             <input autoComplete="new-password" name="confirm_password" type="password" />
           </label>
-          <label className="toggle-label">
-            <input name="is_admin" type="checkbox" />
-            Admin access
+          <label>
+            Role
+            <select defaultValue="Viewer" name="role">
+              {ROLE_OPTIONS.map((roleOption) => (
+                <option key={roleOption} value={roleOption}>
+                  {roleOption}
+                </option>
+              ))}
+            </select>
           </label>
         </div>
-        <p className="muted">Built-in passwords must be at least 12 characters long and include both letters and numbers.</p>
+        <p className="muted">Built-in passwords must be at least 12 characters long and include both letters and numbers. Default to the lowest role that lets the user do their job.</p>
         {error && <p className="error">{error}</p>}
         {success && <p className="success">{success}</p>}
         <button className="btn" disabled={creating} type="submit">
@@ -146,7 +158,7 @@ export function UsersPage() {
                       {item.username}
                       {isCurrentUser && <div className="muted">Current session</div>}
                     </td>
-                    <td>{item.is_admin ? 'Admin' : item.roles.join(', ')}</td>
+                    <td>{item.role}</td>
                     <td>{formatDateTime(item.created_at, timezone, { includeTimezone: true })}</td>
                     <td>
                       <button

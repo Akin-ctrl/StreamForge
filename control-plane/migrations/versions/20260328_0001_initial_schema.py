@@ -26,6 +26,9 @@ def upgrade() -> None:
         sa.Column("last_seen_at", sa.DateTime(), nullable=True),
         sa.Column("runtime_health", sa.JSON(), nullable=True),
         sa.Column("system_metrics", sa.JSON(), nullable=True),
+        sa.Column("created_by", sa.String(length=128), nullable=True),
+        sa.Column("updated_by", sa.String(length=128), nullable=True),
+        sa.Column("approved_by", sa.String(length=128), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.UniqueConstraint("gateway_id"),
@@ -38,7 +41,8 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("username", sa.String(length=128), nullable=False),
         sa.Column("password_hash", sa.String(length=255), nullable=False),
-        sa.Column("is_admin", sa.Boolean(), nullable=False),
+        sa.Column("role", sa.String(length=32), nullable=False),
+        sa.Column("created_by", sa.String(length=128), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.UniqueConstraint("username"),
     )
@@ -121,6 +125,8 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=32), nullable=False),
         sa.Column("config", sa.JSON(), nullable=False),
         sa.Column("description", sa.String(length=1024), nullable=True),
+        sa.Column("created_by", sa.String(length=128), nullable=True),
+        sa.Column("updated_by", sa.String(length=128), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.UniqueConstraint("adapter_id"),
@@ -140,6 +146,8 @@ def upgrade() -> None:
         sa.Column("config", sa.JSON(), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False),
         sa.Column("description", sa.String(length=1024), nullable=True),
+        sa.Column("created_by", sa.String(length=128), nullable=True),
+        sa.Column("updated_by", sa.String(length=128), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.UniqueConstraint("sink_id"),
@@ -176,6 +184,9 @@ def upgrade() -> None:
         sa.Column("validation_config", sa.JSON(), nullable=False),
         sa.Column("events_config", sa.JSON(), nullable=False),
         sa.Column("aggregates_config", sa.JSON(), nullable=False),
+        sa.Column("created_by", sa.String(length=128), nullable=True),
+        sa.Column("updated_by", sa.String(length=128), nullable=True),
+        sa.Column("activated_by", sa.String(length=128), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(["gateway_id"], ["gateways.id"], ondelete="CASCADE"),
@@ -214,8 +225,33 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("deployment_id", "sink_id"),
     )
 
+    op.create_table(
+        "audit_events",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("actor_username", sa.String(length=128), nullable=True),
+        sa.Column("action", sa.String(length=128), nullable=False),
+        sa.Column("resource_type", sa.String(length=64), nullable=False),
+        sa.Column("resource_public_id", sa.String(length=128), nullable=False),
+        sa.Column("details", sa.JSON(), nullable=False),
+        sa.Column("created_at", sa.DateTime(), nullable=False),
+    )
+    op.create_index("ix_audit_events_id", "audit_events", ["id"], unique=False)
+    op.create_index("ix_audit_events_actor_username", "audit_events", ["actor_username"], unique=False)
+    op.create_index("ix_audit_events_action", "audit_events", ["action"], unique=False)
+    op.create_index("ix_audit_events_resource_type", "audit_events", ["resource_type"], unique=False)
+    op.create_index("ix_audit_events_resource_public_id", "audit_events", ["resource_public_id"], unique=False)
+    op.create_index("ix_audit_events_created_at", "audit_events", ["created_at"], unique=False)
+
 
 def downgrade() -> None:
+    op.drop_index("ix_audit_events_created_at", table_name="audit_events")
+    op.drop_index("ix_audit_events_resource_public_id", table_name="audit_events")
+    op.drop_index("ix_audit_events_resource_type", table_name="audit_events")
+    op.drop_index("ix_audit_events_action", table_name="audit_events")
+    op.drop_index("ix_audit_events_actor_username", table_name="audit_events")
+    op.drop_index("ix_audit_events_id", table_name="audit_events")
+    op.drop_table("audit_events")
+
     op.drop_table("deployment_sinks")
     op.drop_table("deployment_adapters")
 
