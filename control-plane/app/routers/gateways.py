@@ -9,6 +9,7 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.secrets import apply_resolved_secrets, list_resolved_secret_values
 from app.core.security import AuthError, create_gateway_token, decode_gateway_token, require_admin
 from app.db.deps import get_db
 from app.db.models import Deployment, Gateway
@@ -244,12 +245,27 @@ def get_gateway_config(gateway_id: str, token: str = Depends(oauth2_scheme), db:
             "version": "1",
         }
 
+    adapter_secret_values = list_resolved_secret_values(
+        db,
+        "adapter",
+        [row.adapter_id for row in deployment.adapters],
+    )
+    sink_secret_values = list_resolved_secret_values(
+        db,
+        "sink",
+        [row.sink_id for row in deployment.sinks],
+    )
     sinks = [
         {
             "sink_id": row.sink_id,
             "name": row.name,
             "sink_type": row.sink_type,
-            "config": row.config if isinstance(row.config, dict) else {},
+            "config": apply_resolved_secrets(
+                "sink",
+                row.sink_type,
+                row.config,
+                sink_secret_values.get(row.sink_id),
+            ),
             "status": row.status,
         }
         for row in sorted(deployment.sinks, key=lambda item: item.sink_id)
@@ -259,7 +275,12 @@ def get_gateway_config(gateway_id: str, token: str = Depends(oauth2_scheme), db:
             "adapter_id": row.adapter_id,
             "name": row.name,
             "adapter_type": row.adapter_type,
-            "config": row.config if isinstance(row.config, dict) else {},
+            "config": apply_resolved_secrets(
+                "adapter",
+                row.adapter_type,
+                row.config,
+                adapter_secret_values.get(row.adapter_id),
+            ),
             "status": row.status,
         }
         for row in sorted(deployment.adapters, key=lambda item: item.adapter_id)

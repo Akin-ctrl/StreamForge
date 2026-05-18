@@ -108,8 +108,8 @@ export function summarizeSinkConfig(sinkType: string, config: Record<string, unk
 
   if (sinkType === 'alert_router') {
     const routeType = asString(config.route_type, 'webhook')
-    const destination = asString(config.url || config.webhook_url, 'destination')
-    return `${routeType} → ${destination}`
+    const destination = asString(config.url || config.webhook_url)
+    return destination ? `${routeType} → ${destination}` : `${routeType} configured`
   }
 
   return 'Configured sink'

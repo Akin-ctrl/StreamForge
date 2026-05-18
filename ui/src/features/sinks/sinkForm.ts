@@ -10,6 +10,7 @@ export type SinkFormState = {
   kafkaBootstrap: string
   kafkaGroupId: string
   dbDsn: string
+  dbDsnConfigured: boolean
   table: string
   targetBootstrap: string
   targetTopic: string
@@ -17,7 +18,9 @@ export type SinkFormState = {
   method: string
   routeType: string
   webhookUrl: string
+  webhookUrlConfigured: boolean
   slackWebhookUrl: string
+  slackWebhookUrlConfigured: boolean
 }
 
 function asString(value: unknown, fallback = ''): string {
@@ -34,21 +37,25 @@ export function buildDefaultSinkForm(sinkType: string): SinkFormState {
     sourceTopic: sinkType === 'alert_router' ? 'alarms.raw' : 'telemetry.clean',
     kafkaBootstrap: 'kafka:9092',
     kafkaGroupId: 'sf-sink-timescaledb',
-    dbDsn: 'postgresql://streamforge:streamforge@timescaledb:5432/streamforge',
+    dbDsn: '',
+    dbDsnConfigured: false,
     table: 'telemetry_clean',
     targetBootstrap: 'kafka:9092',
     targetTopic: 'mirror.telemetry.clean',
     url: 'http://receiver:8080/ingest',
     method: 'POST',
     routeType: 'webhook',
-    webhookUrl: 'http://example.local/alerts',
+    webhookUrl: '',
+    webhookUrlConfigured: false,
     slackWebhookUrl: '',
+    slackWebhookUrlConfigured: false,
   }
 }
 
 export function sinkToForm(sink: SinkItem): SinkFormState {
   const defaults = buildDefaultSinkForm(sink.sink_type)
   const config = sink.config || {}
+  const secretStatus = sink.secret_status || {}
   return {
     ...defaults,
     sinkId: sink.sink_id,
@@ -59,15 +66,24 @@ export function sinkToForm(sink: SinkItem): SinkFormState {
     sourceTopic: asString(config.source_topic || config.topic, defaults.sourceTopic),
     kafkaBootstrap: asString(config.kafka_bootstrap, defaults.kafkaBootstrap),
     kafkaGroupId: asString(config.group_id, defaults.kafkaGroupId),
-    dbDsn: asString(config.db_dsn, defaults.dbDsn),
+    dbDsn: '',
+    dbDsnConfigured:
+      Boolean(secretStatus.db_dsn?.configured) ||
+      (typeof config.db_dsn === 'string' && config.db_dsn.trim().length > 0),
     table: asString(config.table, defaults.table),
     targetBootstrap: asString(config.target_bootstrap, defaults.targetBootstrap),
     targetTopic: asString(config.target_topic, defaults.targetTopic),
     url: asString(config.url, defaults.url),
     method: asString(config.method, defaults.method),
     routeType: asString(config.route_type, defaults.routeType),
-    webhookUrl: asString(config.url, defaults.webhookUrl),
-    slackWebhookUrl: asString(config.webhook_url, defaults.slackWebhookUrl),
+    webhookUrl: '',
+    webhookUrlConfigured:
+      Boolean(secretStatus.url?.configured) ||
+      (typeof config.url === 'string' && config.url.trim().length > 0 && sink.sink_type === 'alert_router'),
+    slackWebhookUrl: '',
+    slackWebhookUrlConfigured:
+      Boolean(secretStatus.webhook_url?.configured) ||
+      (typeof config.webhook_url === 'string' && config.webhook_url.trim().length > 0),
   }
 }
 
@@ -77,7 +93,6 @@ function buildConfig(form: SinkFormState): Record<string, unknown> {
       kafka_bootstrap: form.kafkaBootstrap,
       topic: form.sourceTopic,
       group_id: form.kafkaGroupId,
-      db_dsn: form.dbDsn,
       table: form.table,
     }
   }
@@ -101,10 +116,31 @@ function buildConfig(form: SinkFormState): Record<string, unknown> {
   return {
     source_topic: form.sourceTopic,
     route_type: form.routeType,
-    ...(form.routeType === 'slack'
-      ? { webhook_url: form.slackWebhookUrl }
-      : { url: form.webhookUrl }),
   }
+}
+
+function buildSecrets(form: SinkFormState): Record<string, string | null> | undefined {
+  if (form.sinkType === 'timescaledb') {
+    if (!form.dbDsn.trim()) {
+      return undefined
+    }
+    return { db_dsn: form.dbDsn.trim() }
+  }
+
+  if (form.sinkType === 'alert_router') {
+    if (form.routeType === 'slack') {
+      if (!form.slackWebhookUrl.trim()) {
+        return undefined
+      }
+      return { webhook_url: form.slackWebhookUrl.trim() }
+    }
+    if (!form.webhookUrl.trim()) {
+      return undefined
+    }
+    return { url: form.webhookUrl.trim() }
+  }
+
+  return undefined
 }
 
 export function buildSinkConfigJson(form: SinkFormState): string {
@@ -113,35 +149,49 @@ export function buildSinkConfigJson(form: SinkFormState): string {
 
 export function applySinkConfigJson(form: SinkFormState, text: string): SinkFormState {
   const parsed = JSON.parse(text) as Record<string, unknown>
-  return sinkToForm({
+  const nextForm = sinkToForm({
     sink_id: form.sinkId,
     name: form.name,
     sink_type: form.sinkType,
     status: form.status,
     description: form.description || null,
     config: parsed,
+    secret_status: {},
     created_at: '',
     updated_at: '',
   })
+  return {
+    ...nextForm,
+    dbDsn: '',
+    dbDsnConfigured: form.dbDsnConfigured,
+    webhookUrl: '',
+    webhookUrlConfigured: form.webhookUrlConfigured,
+    slackWebhookUrl: '',
+    slackWebhookUrlConfigured: form.slackWebhookUrlConfigured,
+  }
 }
 
 export function formToCreateSinkPayload(form: SinkFormState) {
+  const secrets = buildSecrets(form)
   return {
     sink_id: form.sinkId.trim(),
     name: form.name.trim(),
     sink_type: form.sinkType,
     status: form.status,
     config: buildConfig(form),
+    ...(secrets ? { secrets } : {}),
     description: form.description.trim() || null,
   }
 }
 
 export function formToUpdateSinkPayload(form: SinkFormState) {
+  const secrets = buildSecrets(form)
   return {
     name: form.name.trim(),
     sink_type: form.sinkType,
     status: form.status,
     config: buildConfig(form),
+    ...(secrets ? { secrets } : {}),
     description: form.description.trim() || null,
   }
 }

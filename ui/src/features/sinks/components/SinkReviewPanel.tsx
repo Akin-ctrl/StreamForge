@@ -19,11 +19,28 @@ export function SinkReviewPanel({ form }: SinkReviewPanelProps) {
 
       <div className="builder-section">
         <h4>Destination</h4>
-        {form.sinkType === 'timescaledb' && <p className="muted">{form.table} via TimescaleDB</p>}
+        {form.sinkType === 'timescaledb' && (
+          <p className="muted">
+            {form.table} via TimescaleDB
+            {form.dbDsnConfigured ? ' · credentials configured' : form.dbDsn.trim() ? ' · credentials pending save' : ''}
+          </p>
+        )}
         {form.sinkType === 'kafka' && <p className="muted">{form.targetBootstrap} → {form.targetTopic}</p>}
         {form.sinkType === 'http' && <p className="muted">{form.method} {form.url}</p>}
         {form.sinkType === 'alert_router' && (
-          <p className="muted">{form.routeType === 'slack' ? form.slackWebhookUrl : form.webhookUrl}</p>
+          <p className="muted">
+            {form.routeType === 'slack'
+              ? form.slackWebhookUrlConfigured
+                ? 'Slack webhook configured'
+                : form.slackWebhookUrl.trim()
+                  ? 'Slack webhook pending save'
+                  : 'Slack webhook not configured'
+              : form.webhookUrlConfigured
+                ? 'Webhook configured'
+                : form.webhookUrl.trim()
+                  ? 'Webhook pending save'
+                  : 'Webhook not configured'}
+          </p>
         )}
       </div>
     </aside>
