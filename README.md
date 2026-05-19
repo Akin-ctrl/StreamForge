@@ -115,6 +115,15 @@ pip install -r requirements.txt
 python -m gateway_runtime.main
 ```
 
+### Standards Gates
+
+Run the repo standards gates before packaging changes:
+
+```bash
+bash scripts/check_standards_gates.sh
+```
+
+
 ## Use Cases
 
 ### Smart Manufacturing
