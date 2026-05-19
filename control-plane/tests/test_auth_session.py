@@ -29,6 +29,12 @@ def test_extract_user_token_falls_back_to_cookie() -> None:
     assert extract_user_token(request, None) == "cookie-token"
 
 
+def test_extract_user_token_returns_none_without_bearer_or_cookie() -> None:
+    request = build_request()
+
+    assert extract_user_token(request, None) is None
+
+
 def test_apply_user_auth_cookie_sets_http_only_cookie(monkeypatch) -> None:
     monkeypatch.setattr(settings, "auth_cookie_name", "sf_user_session")
     monkeypatch.setattr(settings, "auth_cookie_domain", "")
@@ -47,6 +53,25 @@ def test_apply_user_auth_cookie_sets_http_only_cookie(monkeypatch) -> None:
     assert "HttpOnly" in set_cookie
     assert "Path=/" in set_cookie
     assert "SameSite=lax" in set_cookie
+
+
+def test_apply_user_auth_cookie_respects_secure_cookie_and_domain(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "auth_cookie_name", "sf_user_session")
+    monkeypatch.setattr(settings, "auth_cookie_domain", "streamforge.test")
+    monkeypatch.setattr(settings, "auth_cookie_samesite", "strict")
+    monkeypatch.setattr(settings, "auth_cookie_secure", True)
+
+    response = Response()
+    apply_user_auth_cookie(
+        response,
+        "token-value",
+        datetime.now(timezone.utc) + timedelta(hours=12),
+    )
+
+    set_cookie = response.headers["set-cookie"]
+    assert "Secure" in set_cookie
+    assert "Domain=streamforge.test" in set_cookie
+    assert "SameSite=strict" in set_cookie
 
 
 def test_clear_user_auth_cookie_expires_cookie(monkeypatch) -> None:
