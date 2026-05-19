@@ -36,6 +36,7 @@ def test_validate_modbus_tcp_adapter_accepts_multi_point_config() -> None:
             ],
             "output": {
                 "asset_id": "line1_plc",
+                "kafka_bootstrap": "kafka:9092",
                 "topic": "telemetry.raw",
                 "events_topic": "events.raw",
             },
@@ -61,6 +62,7 @@ def test_validate_mqtt_adapter_rejects_empty_subscription_mappings() -> None:
                 ],
                 "output": {
                     "asset_id": "line1",
+                    "kafka_bootstrap": "kafka:9092",
                     "topic": "telemetry.raw",
                     "events_topic": "events.raw",
                 },
@@ -77,7 +79,7 @@ def test_validate_opcua_adapter_rejects_unsupported_security_mode() -> None:
             {
                 "endpoint": "opc.tcp://opcua-server:4840",
                 "monitored_items": [{"node_id": "ns=2;s=Line1.Temperature", "parameter": "temperature"}],
-                "output": {"asset_id": "line1", "topic": "telemetry.raw"},
+                "output": {"asset_id": "line1", "kafka_bootstrap": "kafka:9092", "topic": "telemetry.raw"},
                 "advanced": {"security_mode": "Sign", "security_policy": "Basic256Sha256"},
             },
         )
@@ -94,6 +96,82 @@ def test_validate_sink_config_accepts_alert_router() -> None:
             "webhook_url": "https://hooks.slack.com/services/example",
         },
     )
+
+
+def test_validate_modbus_adapter_rejects_legacy_registers() -> None:
+    with pytest.raises(HTTPException) as excinfo:
+        validate_adapter_config(
+            "modbus_tcp",
+            {
+                "host": "192.168.10.50",
+                "port": 502,
+                "unit_id": 1,
+                "poll_interval_ms": 1000,
+                "registers": [{"address": 40001, "param": "temperature", "type": "float32"}],
+                "output": {
+                    "asset_id": "line1_plc",
+                    "kafka_bootstrap": "kafka:9092",
+                    "topic": "telemetry.raw",
+                },
+            },
+        )
+
+    assert excinfo.value.status_code == 422
+
+
+def test_validate_mqtt_adapter_rejects_legacy_topic_alias() -> None:
+    with pytest.raises(HTTPException) as excinfo:
+        validate_adapter_config(
+            "mqtt",
+            {
+                "broker_host": "mqtt-broker",
+                "broker_port": 1883,
+                "client_id": "sf-line-1",
+                "subscriptions": [
+                    {
+                        "topic": "factory/line1/telemetry",
+                        "message_type": "telemetry",
+                        "payload_format": "json",
+                        "mappings": [{"json_field": "temperature", "parameter": "temperature"}],
+                    }
+                ],
+                "output": {
+                    "asset_id": "line1",
+                    "kafka_bootstrap": "kafka:9092",
+                    "topic": "telemetry.raw",
+                    "events_topic": "events.raw",
+                },
+            },
+        )
+
+    assert excinfo.value.status_code == 422
+
+
+def test_validate_adapter_output_requires_kafka_bootstrap() -> None:
+    with pytest.raises(HTTPException) as excinfo:
+        validate_adapter_config(
+            "modbus_tcp",
+            {
+                "host": "192.168.10.50",
+                "port": 502,
+                "unit_id": 1,
+                "poll_interval_ms": 1000,
+                "points": [
+                    {
+                        "point_name": "temperature",
+                        "memory_area": "holding_register",
+                        "address": 40001,
+                        "data_type": "float32",
+                    }
+                ],
+                "output": {
+                    "asset_id": "line1_plc",
+                    "topic": "telemetry.raw",
+                },
+            },
+        )
+
+    assert excinfo.value.status_code == 422
 
 
 def test_validate_deployment_requires_attached_objects() -> None:

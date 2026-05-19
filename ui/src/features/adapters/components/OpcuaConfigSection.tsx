@@ -1,8 +1,11 @@
 import type { Dispatch, SetStateAction } from 'react'
 
+import type { CatalogAdapterType } from '../../../shared/api/client'
+import { getCatalogOptions } from '../../../shared/config/catalog'
 import { createDefaultMonitoredItemForm, type AdapterFormState, type OpcuaMonitoredItemForm } from '../adapterForm'
 
 type OpcuaConfigSectionProps = {
+  contract?: CatalogAdapterType
   form: AdapterFormState
   setForm: Dispatch<SetStateAction<AdapterFormState>>
 }
@@ -15,7 +18,20 @@ function updateMonitoredItem(
   return items.map((item, itemIndex) => (itemIndex === index ? nextItem : item))
 }
 
-export function OpcuaConfigSection({ form, setForm }: OpcuaConfigSectionProps) {
+const fallbackAuthModes = [
+  { value: 'anonymous', label: 'Anonymous' },
+  { value: 'username_password', label: 'Username / Password' },
+]
+
+const fallbackMonitoringModes = [{ value: 'reporting', label: 'Reporting' }]
+const fallbackSecurityModes = [{ value: 'None', label: 'None' }]
+
+export function OpcuaConfigSection({ contract, form, setForm }: OpcuaConfigSectionProps) {
+  const authModes = getCatalogOptions(contract, 'connection', 'auth_mode')
+  const monitoringModes = getCatalogOptions(contract, 'monitored_items', 'monitoring_mode')
+  const securityModes = getCatalogOptions(contract, 'advanced', 'security_mode')
+  const securityPolicies = getCatalogOptions(contract, 'advanced', 'security_policy')
+
   return (
     <article className="card">
       <div className="page-header">
@@ -29,8 +45,11 @@ export function OpcuaConfigSection({ form, setForm }: OpcuaConfigSectionProps) {
         <label>
           Authentication
           <select value={form.authMode} onChange={(event) => setForm((current) => ({ ...current, authMode: event.target.value }))}>
-            <option value="anonymous">Anonymous</option>
-            <option value="username_password">Username / Password</option>
+            {(authModes.length > 0 ? authModes : fallbackAuthModes).map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </label>
         <label>
@@ -70,7 +89,9 @@ export function OpcuaConfigSection({ form, setForm }: OpcuaConfigSectionProps) {
           <h4>Monitored Items</h4>
           <button
             className="btn btn-secondary"
-            onClick={() => setForm((current) => ({ ...current, monitoredItems: [...current.monitoredItems, createDefaultMonitoredItemForm()] }))}
+            onClick={() =>
+              setForm((current) => ({ ...current, monitoredItems: [...current.monitoredItems, createDefaultMonitoredItemForm(contract)] }))
+            }
             type="button"
           >
             Add Item
@@ -153,7 +174,11 @@ export function OpcuaConfigSection({ form, setForm }: OpcuaConfigSectionProps) {
                     }))
                   }
                 >
-                  <option value="reporting">Reporting</option>
+                  {(monitoringModes.length > 0 ? monitoringModes : fallbackMonitoringModes).map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
                 <button
                   className="btn btn-secondary"
@@ -174,13 +199,21 @@ export function OpcuaConfigSection({ form, setForm }: OpcuaConfigSectionProps) {
           <label>
             Security Mode
             <select value={form.securityMode} onChange={(event) => setForm((current) => ({ ...current, securityMode: event.target.value }))}>
-              <option value="None">None</option>
+              {(securityModes.length > 0 ? securityModes : fallbackSecurityModes).map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </label>
           <label>
             Security Policy
             <select value={form.securityPolicy} onChange={(event) => setForm((current) => ({ ...current, securityPolicy: event.target.value }))}>
-              <option value="None">None</option>
+              {(securityPolicies.length > 0 ? securityPolicies : fallbackSecurityModes).map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </label>
           <label>

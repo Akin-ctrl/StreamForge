@@ -1,13 +1,20 @@
 import type { Dispatch, SetStateAction } from 'react'
 
+import type { CatalogSinkType } from '../../../shared/api/client'
+import { getCatalogOptions } from '../../../shared/config/catalog'
 import type { SinkFormState } from '../sinkForm'
 
 type HttpSinkSectionProps = {
+  contract?: CatalogSinkType
   form: SinkFormState
   setForm: Dispatch<SetStateAction<SinkFormState>>
 }
 
-export function HttpSinkSection({ form, setForm }: HttpSinkSectionProps) {
+const fallbackMethods = [{ value: 'POST', label: 'POST' }]
+
+export function HttpSinkSection({ contract, form, setForm }: HttpSinkSectionProps) {
+  const methodOptions = getCatalogOptions(contract, 'destination', 'method')
+
   return (
     <article className="card">
       <div className="page-header">
@@ -21,7 +28,11 @@ export function HttpSinkSection({ form, setForm }: HttpSinkSectionProps) {
         <label>
           Method
           <select value={form.method} onChange={(event) => setForm((current) => ({ ...current, method: event.target.value }))}>
-            <option value="POST">POST</option>
+            {(methodOptions.length > 0 ? methodOptions : fallbackMethods).map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </label>
       </div>

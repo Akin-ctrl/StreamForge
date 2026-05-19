@@ -10,27 +10,12 @@ from fastapi import HTTPException
 from sqlalchemy import delete, select, true
 from sqlalchemy.orm import Session
 
+from app.core.config_contracts import secret_fields_for
 from app.core.settings import settings
 from app.db.models import ConfigSecret
 
 
 OwnerKind = str
-
-_SECRET_FIELDS: dict[OwnerKind, dict[str, tuple[str, ...]]] = {
-    "adapter": {
-        "mqtt": ("password",),
-        "opcua": ("password",),
-    },
-    "sink": {
-        "timescaledb": ("db_dsn",),
-        "alert_router": ("url", "webhook_url"),
-    },
-}
-
-
-def secret_fields_for(kind: OwnerKind, object_type: str) -> tuple[str, ...]:
-    """Return the configured secret field names for one object type."""
-    return _SECRET_FIELDS.get(kind, {}).get(object_type, ())
 
 
 def redact_config(kind: OwnerKind, object_type: str, config: dict | None) -> dict:

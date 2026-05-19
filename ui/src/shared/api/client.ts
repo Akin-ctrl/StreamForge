@@ -177,6 +177,8 @@ export type CatalogField = {
   help_text?: string | null
   advanced?: boolean
   repeatable?: boolean
+  secret?: boolean
+  internal?: boolean
   options?: CatalogOption[]
   children?: CatalogField[]
 }

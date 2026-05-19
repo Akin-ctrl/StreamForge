@@ -49,14 +49,14 @@ export function summarizeAdapterConfig(adapterType: string, config: Record<strin
   if (adapterType === 'modbus_tcp') {
     const host = asString(config.host, 'unknown-host')
     const port = asNumber(config.port, 502)
-    const points = Array.isArray(config.points) ? config.points.length : Array.isArray(config.registers) ? config.registers.length : 0
+    const points = Array.isArray(config.points) ? config.points.length : 0
     return `${host}:${port} · ${points} point${points === 1 ? '' : 's'}`
   }
 
   if (adapterType === 'modbus_rtu') {
     const port = asString(config.serial_port || config.port, '/dev/ttyUSB0')
     const baudrate = asNumber(config.baudrate, 9600)
-    const points = Array.isArray(config.points) ? config.points.length : Array.isArray(config.registers) ? config.registers.length : 0
+    const points = Array.isArray(config.points) ? config.points.length : 0
     return `${port} @ ${baudrate} baud · ${points} point${points === 1 ? '' : 's'}`
   }
 

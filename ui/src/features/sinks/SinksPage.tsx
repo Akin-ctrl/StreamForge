@@ -33,18 +33,20 @@ export function SinksPage() {
     void refresh()
   }, [])
 
+  const currentContract = catalogSinks.find((sink) => sink.sink_type === form.sinkType)
+
   useEffect(() => {
-    setConfigJson(buildSinkConfigJson(form))
-  }, [form])
+    setConfigJson(buildSinkConfigJson(form, currentContract))
+  }, [form, currentContract])
 
   const resetForm = (nextType = form.sinkType) => {
     setEditingId(null)
-    setForm(buildDefaultSinkForm(nextType))
+    setForm(buildDefaultSinkForm(nextType, catalogSinks.find((sink) => sink.sink_type === nextType)))
   }
 
   const startEdit = (item: SinkItem) => {
     setEditingId(item.sink_id)
-    setForm(sinkToForm(item))
+    setForm(sinkToForm(item, catalogSinks.find((sink) => sink.sink_type === item.sink_type)))
   }
 
   const onSubmit = async () => {
@@ -77,18 +79,18 @@ export function SinksPage() {
 
   const renderSinkSection = () => {
     if (form.sinkType === 'kafka') {
-      return <KafkaSinkSection form={form} setForm={setForm} />
+      return <KafkaSinkSection contract={currentContract} form={form} setForm={setForm} />
     }
 
     if (form.sinkType === 'http') {
-      return <HttpSinkSection form={form} setForm={setForm} />
+      return <HttpSinkSection contract={currentContract} form={form} setForm={setForm} />
     }
 
     if (form.sinkType === 'alert_router') {
-      return <AlertRouterSinkSection form={form} setForm={setForm} />
+      return <AlertRouterSinkSection contract={currentContract} form={form} setForm={setForm} />
     }
 
-    return <TimescaleSinkSection form={form} setForm={setForm} />
+    return <TimescaleSinkSection contract={currentContract} form={form} setForm={setForm} />
   }
 
   return (
@@ -125,7 +127,9 @@ export function SinksPage() {
               onDescriptionChange={(value) => setForm((current) => ({ ...current, description: value }))}
               onNameChange={(value) => setForm((current) => ({ ...current, name: value }))}
               onSinkIdChange={(value) => setForm((current) => ({ ...current, sinkId: value }))}
-              onSinkTypeChange={(value) => setForm(buildDefaultSinkForm(value))}
+              onSinkTypeChange={(value) =>
+                setForm(buildDefaultSinkForm(value, catalogSinks.find((sink) => sink.sink_type === value)))
+              }
               onStatusChange={(value) => setForm((current) => ({ ...current, status: value }))}
               sinkId={form.sinkId}
               sinkOptions={catalogSinks.map((sink) => ({ value: sink.sink_type, label: sink.label }))}
@@ -144,7 +148,7 @@ export function SinksPage() {
                   className="btn btn-secondary"
                   onClick={() => {
                     try {
-                      setForm((current) => applySinkConfigJson(current, configJson))
+                      setForm((current) => applySinkConfigJson(current, configJson, currentContract))
                       setError(null)
                     } catch (jsonError) {
                       setError(jsonError instanceof Error ? jsonError.message : 'Invalid sink JSON')

@@ -19,6 +19,8 @@ class CatalogField(BaseModel):
     help_text: str | None = None
     advanced: bool = False
     repeatable: bool = False
+    secret: bool = False
+    internal: bool = False
     options: list[CatalogOption] = Field(default_factory=list)
     children: list["CatalogField"] = Field(default_factory=list)
 

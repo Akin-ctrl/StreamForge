@@ -1,8 +1,10 @@
 import type { Dispatch, SetStateAction } from 'react'
 
+import type { CatalogSinkType } from '../../../shared/api/client'
 import type { SinkFormState } from '../sinkForm'
 
 type KafkaSinkSectionProps = {
+  contract?: CatalogSinkType
   form: SinkFormState
   setForm: Dispatch<SetStateAction<SinkFormState>>
 }

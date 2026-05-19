@@ -3,11 +3,32 @@
   "port": 5020,
   "unit_id": 1,
   "poll_interval_ms": 1000,
-  "registers": [
-    {"address": 40001, "param": "temperature", "type": "float32", "unit": "celsius"}
-  ],
-  "coils": [
-    {"address": 1, "param": "motor_running", "event_type": "motor_state_change"}
+  "points": [
+    {
+      "point_name": "temperature",
+      "memory_area": "holding_register",
+      "address": 40001,
+      "data_type": "float32",
+      "byte_order": "big",
+      "word_order": "big",
+      "scale": 1.0,
+      "offset": 0.0,
+      "unit": "celsius",
+      "classification": "telemetry"
+    },
+    {
+      "point_name": "motor_running",
+      "memory_area": "coil",
+      "address": 1,
+      "data_type": "bool",
+      "byte_order": "big",
+      "word_order": "big",
+      "scale": 1.0,
+      "offset": 0.0,
+      "unit": "",
+      "classification": "event",
+      "event_type": "motor_state_change"
+    }
   ],
   "output": {
     "kafka_bootstrap": "kafka:9092",

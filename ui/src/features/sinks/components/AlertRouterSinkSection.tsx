@@ -1,13 +1,23 @@
 import type { Dispatch, SetStateAction } from 'react'
 
+import type { CatalogSinkType } from '../../../shared/api/client'
+import { getCatalogOptions } from '../../../shared/config/catalog'
 import type { SinkFormState } from '../sinkForm'
 
 type AlertRouterSinkSectionProps = {
+  contract?: CatalogSinkType
   form: SinkFormState
   setForm: Dispatch<SetStateAction<SinkFormState>>
 }
 
-export function AlertRouterSinkSection({ form, setForm }: AlertRouterSinkSectionProps) {
+const fallbackRouteTypes = [
+  { value: 'webhook', label: 'Webhook' },
+  { value: 'slack', label: 'Slack' },
+]
+
+export function AlertRouterSinkSection({ contract, form, setForm }: AlertRouterSinkSectionProps) {
+  const routeTypes = getCatalogOptions(contract, 'destination', 'route_type')
+
   return (
     <article className="card">
       <div className="page-header">
@@ -17,8 +27,11 @@ export function AlertRouterSinkSection({ form, setForm }: AlertRouterSinkSection
         <label>
           Route Type
           <select value={form.routeType} onChange={(event) => setForm((current) => ({ ...current, routeType: event.target.value }))}>
-            <option value="webhook">Webhook</option>
-            <option value="slack">Slack</option>
+            {(routeTypes.length > 0 ? routeTypes : fallbackRouteTypes).map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </label>
         {form.routeType === 'slack' ? (
