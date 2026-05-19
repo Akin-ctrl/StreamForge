@@ -149,6 +149,27 @@ class MqttAdapterTests(unittest.TestCase):
         self.assertEqual(health["parse_failures"], 1)
         self.assertEqual(health["parsed_messages"], 0)
 
+    def test_unsupported_payload_format_marks_adapter_degraded(self) -> None:
+        config = self._telemetry_config()
+        config["subscriptions"][0]["payload_format"] = "csv"
+        adapter = MqttAdapter(config)
+
+        adapter._ingest_message("factory/line1/telemetry", b"temperature,78.5")
+
+        health = adapter.health()
+        self.assertEqual(health["status"], "degraded")
+        self.assertEqual(health["parse_failures"], 1)
+        self.assertIn("Unsupported MQTT payload_format", str(health["last_error"]))
+
+    def test_unmatched_topic_is_counted_as_ignored(self) -> None:
+        adapter = MqttAdapter(self._telemetry_config())
+
+        adapter._ingest_message("factory/line1/unknown", b"{}")
+
+        health = adapter.health()
+        self.assertEqual(health["ignored_messages"], 1)
+        self.assertEqual(health["parsed_messages"], 0)
+
     def test_on_connect_subscribes_to_topics(self) -> None:
         adapter = MqttAdapter(self._telemetry_config())
         client = FakeMqttClient()

@@ -102,6 +102,19 @@ class OpcUaAdapterTests(unittest.TestCase):
         self.assertEqual(client.password, "secret")
         self.assertEqual(client.subscription.handles, ["handle:ns=2;s=Line1.Temperature"])
 
+    def test_disconnect_unsubscribes_monitored_items_and_clears_connection(self) -> None:
+        adapter = OpcUaAdapter(self._config())
+        client = FakeOpcUaClient()
+        adapter._create_client = lambda endpoint: client  # type: ignore[method-assign]
+
+        adapter.connect()
+        adapter.disconnect()
+
+        self.assertFalse(client.connected)
+        self.assertEqual(client.subscription.unsubscribed, ["handle:ns=2;s=Line1.Temperature"])
+        self.assertTrue(client.subscription.deleted)
+        self.assertEqual(adapter.health()["connected"], False)
+
     def test_datachange_maps_to_normalized_telemetry(self) -> None:
         adapter = OpcUaAdapter(self._config())
         adapter._ingest_datachange(
@@ -133,6 +146,13 @@ class OpcUaAdapterTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "supports only security_mode=None"):
             adapter.connect()
+
+    def test_requires_at_least_one_monitored_item(self) -> None:
+        config = self._config()
+        config["monitored_items"] = []
+
+        with self.assertRaisesRegex(RuntimeError, "requires at least one monitored_item"):
+            OpcUaAdapter(config)
 
 
 if __name__ == "__main__":

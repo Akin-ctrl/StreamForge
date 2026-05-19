@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from gateway_runtime.config import ConfigError, ControlPlaneConfigRepository, GatewayConfig
+from gateway_runtime.health import HealthReporter
 from gateway_runtime.runtime import GatewayRuntime
 
 
@@ -391,6 +392,49 @@ class GatewayRuntimePollingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(policy["mode"], "critical")
         self.assertEqual(policy["multiplier"], 10.0)
         self.assertEqual(policy["reason"], "overflow_blocked")
+
+    async def test_health_snapshot_includes_recent_logs_and_degraded_component_state(self) -> None:
+        class FakeDegradedValidator:
+            def health(self) -> dict[str, object]:
+                return {"status": "degraded", "last_error": "schema drift"}
+
+        repo = PollingControlPlaneRepo()
+        runtime = GatewayRuntime(
+            config_repo=repo,
+            kafka=FakeKafkaManager(),
+            adapters=FakeAdapterManager(),
+            sinks=FakeSinkManager(),
+            health=HealthReporter(),
+        )
+        runtime._current_config = _gateway_config("health")
+        runtime._validator = FakeDegradedValidator()
+
+        captured: dict[str, object] = {}
+
+        def fake_recent_log_entries(limit: int = 100, *, default_gateway_id: str | None = None) -> list[dict[str, object]]:
+            captured["limit"] = limit
+            captured["default_gateway_id"] = default_gateway_id
+            return [
+                {
+                    "timestamp": "2026-05-19T20:00:00+00:00",
+                    "level": "ERROR",
+                    "logger": "gateway_runtime.validator",
+                    "component": "validator",
+                    "message": "schema drift",
+                    "gateway_id": default_gateway_id,
+                }
+            ]
+
+        try:
+            with patch("gateway_runtime.runtime.recent_log_entries", side_effect=fake_recent_log_entries):
+                snapshot = runtime.health_snapshot()
+        finally:
+            repo.cleanup()
+
+        self.assertEqual(snapshot["status"], "degraded")
+        self.assertEqual(snapshot["components"]["validator"]["status"], "degraded")
+        self.assertEqual(snapshot["recent_logs"][0]["gateway_id"], "gw-edge-01")
+        self.assertEqual(captured["default_gateway_id"], "gw-edge-01")
 
 
 if __name__ == "__main__":
