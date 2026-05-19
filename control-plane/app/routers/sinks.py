@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.audit import record_audit_event
 from app.core.config_validation import validate_object_status, validate_sink_config
 from app.core.secrets import (
     build_secret_status,
@@ -17,9 +18,9 @@ from app.core.secrets import (
     split_config_and_secrets,
     upsert_secret_values,
 )
-from app.core.security import require_admin
+from app.core.security import require_permission
 from app.db.deps import get_db
-from app.db.models import Sink
+from app.db.models import Sink, User
 from app.schemas.sinks import SinkCreateRequest, SinkItem, SinkUpdateRequest
 
 router = APIRouter()
@@ -42,7 +43,7 @@ def _to_item(row: Sink, configured_fields: set[str]) -> SinkItem:
 @router.get("", response_model=list[SinkItem])
 def list_sinks(
     db: Session = Depends(get_db),
-    _: object = Depends(require_admin),
+    _: User = Depends(require_permission("configs:read")),
 ) -> list[SinkItem]:
     rows = db.execute(select(Sink).order_by(Sink.created_at.desc())).scalars().all()
     configured = list_configured_secret_fields(db, "sink", [row.sink_id for row in rows])
@@ -53,7 +54,7 @@ def list_sinks(
 def get_sink(
     sink_id: str,
     db: Session = Depends(get_db),
-    _: object = Depends(require_admin),
+    _: User = Depends(require_permission("configs:read")),
 ) -> SinkItem:
     sink = db.execute(select(Sink).where(Sink.sink_id == sink_id)).scalar_one_or_none()
     if sink is None:
@@ -67,7 +68,7 @@ def get_sink(
 def create_sink(
     payload: SinkCreateRequest,
     db: Session = Depends(get_db),
-    _: object = Depends(require_admin),
+    current_user: User = Depends(require_permission("sinks:create")),
 ) -> SinkItem:
     existing = db.execute(select(Sink).where(Sink.sink_id == payload.sink_id)).scalar_one_or_none()
     if existing is not None:
@@ -92,9 +93,19 @@ def create_sink(
         config=sanitized_config,
         status=payload.status,
         description=payload.description,
+        created_by=current_user.username,
+        updated_by=current_user.username,
     )
     db.add(sink)
     upsert_secret_values(db, "sink", payload.sink_id, secret_updates)
+    record_audit_event(
+        db,
+        actor=current_user,
+        action="sink.created",
+        resource_type="sink",
+        resource_public_id=payload.sink_id,
+        details={"sink_type": payload.sink_type, "status": payload.status},
+    )
     db.commit()
     db.refresh(sink)
 
@@ -107,7 +118,7 @@ def update_sink(
     sink_id: str,
     payload: SinkUpdateRequest,
     db: Session = Depends(get_db),
-    _: object = Depends(require_admin),
+    current_user: User = Depends(require_permission("sinks:update")),
 ) -> SinkItem:
     sink = db.execute(select(Sink).where(Sink.sink_id == sink_id)).scalar_one_or_none()
     if sink is None:
@@ -149,7 +160,16 @@ def update_sink(
     if next_type != current_type:
         delete_secret_fields_not_in(db, "sink", sink.sink_id, set(secret_fields_for("sink", next_type)))
 
+    sink.updated_by = current_user.username
     db.add(sink)
+    record_audit_event(
+        db,
+        actor=current_user,
+        action="sink.updated",
+        resource_type="sink",
+        resource_public_id=sink.sink_id,
+        details={"sink_type": sink.sink_type, "status": sink.status},
+    )
     db.commit()
     db.refresh(sink)
 
@@ -161,7 +181,7 @@ def update_sink(
 def delete_sink(
     sink_id: str,
     db: Session = Depends(get_db),
-    _: object = Depends(require_admin),
+    current_user: User = Depends(require_permission("sinks:delete")),
 ) -> dict:
     sink = db.execute(
         select(Sink)
@@ -174,6 +194,14 @@ def delete_sink(
         deployment_ids = ", ".join(sorted(deployment.deployment_id for deployment in sink.deployments))
         raise HTTPException(status_code=409, detail=f"Sink is still attached to deployment(s): {deployment_ids}")
 
+    record_audit_event(
+        db,
+        actor=current_user,
+        action="sink.deleted",
+        resource_type="sink",
+        resource_public_id=sink.sink_id,
+        details={"sink_type": sink.sink_type, "status": sink.status},
+    )
     db.delete(sink)
     db.commit()
     return {"deleted": True, "sink_id": sink_id}

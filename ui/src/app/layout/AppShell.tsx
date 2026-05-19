@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 
-import { clearAccessToken } from '../../shared/auth/session'
+import { useAuthSession } from '../../shared/auth/AuthProvider'
 import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 
 // Primary navigation for MVP operator screens.
@@ -24,6 +24,7 @@ const links = [
  */
 export function AppShell() {
   const navigate = useNavigate()
+  const { logout } = useAuthSession()
   const { timezone, setTimezone, timezoneOptions } = useOperatorPreferences()
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const stored = window.localStorage.getItem('sf-theme')
@@ -35,9 +36,9 @@ export function AppShell() {
     window.localStorage.setItem('sf-theme', theme)
   }, [theme])
 
-  // Clear token first to guarantee subsequent guarded routes redirect to login.
-  const onLogout = () => {
-    clearAccessToken()
+  // Clear the browser session first to guarantee guarded routes redirect to login.
+  const onLogout = async () => {
+    await logout()
     navigate('/login', { replace: true })
   }
 
@@ -76,7 +77,7 @@ export function AppShell() {
         <button className="btn btn-secondary" onClick={onToggleTheme} type="button">
           {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
         </button>
-        <button className="btn btn-secondary" onClick={onLogout}>
+        <button className="btn btn-secondary" onClick={() => void onLogout()}>
           Logout
         </button>
       </aside>

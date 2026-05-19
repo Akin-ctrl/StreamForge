@@ -42,6 +42,26 @@ _AGGREGATE_SCHEMA_PATH = str(Path(__file__).resolve().parents[2] / "schemas" / "
 _EVENT_SCHEMA_PATH = str(Path(__file__).resolve().parents[2] / "schemas" / "event.avsc")
 
 
+def _kafka_runtime_error_types() -> tuple[type[BaseException], ...]:
+    """Return the consumer-side exceptions expected during sink shutdown."""
+    error_types: list[type[BaseException]] = [RuntimeError, OSError, ValueError]
+    try:
+        from kafka.errors import KafkaError  # type: ignore
+    except ModuleNotFoundError:
+        return tuple(error_types)
+    return tuple(error_types + [KafkaError])
+
+
+def _db_optional_error_types() -> tuple[type[BaseException], ...]:
+    """Return the DB exceptions tolerated when hypertables are optional."""
+    error_types: list[type[BaseException]] = [RuntimeError, OSError, ValueError]
+    try:
+        import psycopg  # type: ignore
+    except ModuleNotFoundError:
+        return tuple(error_types)
+    return tuple(error_types + [psycopg.Error])
+
+
 def _load_config() -> dict:
     raw = os.getenv("SINK_CONFIG", "{}")
     config = json.loads(raw)
@@ -87,7 +107,7 @@ def _ensure_telemetry_table(cursor, table: str) -> None:
         );
         """
     )
-    with suppress(Exception):
+    with suppress(RuntimeError, OSError, ValueError):
         cursor.execute(
             "SELECT create_hypertable(%s, 'gateway_time', if_not_exists => TRUE);",
             (table,),
@@ -130,7 +150,7 @@ def _ensure_aggregate_table(cursor, table: str) -> None:
         );
         """
     )
-    with suppress(Exception):
+    with suppress(*_db_optional_error_types()):
         cursor.execute(
             "SELECT create_hypertable(%s, 'window_start', if_not_exists => TRUE);",
             (table,),
@@ -169,7 +189,7 @@ def _ensure_event_table(cursor, table: str) -> None:
         );
         """
     )
-    with suppress(Exception):
+    with suppress(*_db_optional_error_types()):
         cursor.execute(
             "SELECT create_hypertable(%s, 'gateway_time', if_not_exists => TRUE);",
             (table,),
@@ -443,12 +463,14 @@ def _writer_loop() -> None:
                     _STATS["consumer_lag"] = 0
                     _DB_BREAKER.record_success()
         except Exception as exc:
+            # Deliberate service-boundary catch: DB outages should trip the
+            # breaker and retry instead of killing the sink thread.
             _STATS["errors"] += 1
             _STATS["last_error"] = str(exc)
             _DB_BREAKER.record_failure(exc)
             _STOP.wait(timeout=max(_DB_BREAKER.remaining_open_seconds(), 3.0))
         finally:
-            with suppress(Exception):
+            with suppress(*_kafka_runtime_error_types()):
                 if consumer is not None:
                     consumer.close()
 

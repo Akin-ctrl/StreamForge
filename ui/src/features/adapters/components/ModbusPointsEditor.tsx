@@ -1,8 +1,11 @@
 import type { Dispatch, SetStateAction } from 'react'
 
+import type { CatalogAdapterType } from '../../../shared/api/client'
+import { getCatalogOptionsForValue } from '../../../shared/config/catalog'
 import { createDefaultPointForm, type AdapterFormState, type ModbusPointForm } from '../adapterForm'
 
 type ModbusPointsEditorProps = {
+  contract?: CatalogAdapterType
   form: AdapterFormState
   setForm: Dispatch<SetStateAction<AdapterFormState>>
 }
@@ -11,14 +14,14 @@ function updatePoint(points: ModbusPointForm[], index: number, nextPoint: Modbus
   return points.map((point, pointIndex) => (pointIndex === index ? nextPoint : point))
 }
 
-export function ModbusPointsEditor({ form, setForm }: ModbusPointsEditorProps) {
+export function ModbusPointsEditor({ contract, form, setForm }: ModbusPointsEditorProps) {
   return (
     <div className="nested-card card builder-section">
       <div className="page-header">
         <h4>Points</h4>
         <button
           className="btn btn-secondary"
-          onClick={() => setForm((current) => ({ ...current, points: [...current.points, createDefaultPointForm()] }))}
+          onClick={() => setForm((current) => ({ ...current, points: [...current.points, createDefaultPointForm(contract)] }))}
           type="button"
         >
           Add Point
@@ -49,10 +52,11 @@ export function ModbusPointsEditor({ form, setForm }: ModbusPointsEditorProps) {
                   }))
                 }
               >
-                <option value="holding_register">Holding Register</option>
-                <option value="input_register">Input Register</option>
-                <option value="coil">Coil</option>
-                <option value="discrete_input">Discrete Input</option>
+                {getCatalogOptionsForValue(contract, 'points', 'memory_area', point.memory_area).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
               <input
                 placeholder="Address"
@@ -73,13 +77,11 @@ export function ModbusPointsEditor({ form, setForm }: ModbusPointsEditorProps) {
                   }))
                 }
               >
-                <option value="bool">Boolean</option>
-                <option value="int16">int16</option>
-                <option value="uint16">uint16</option>
-                <option value="int32">int32</option>
-                <option value="uint32">uint32</option>
-                <option value="float32">float32</option>
-                <option value="float64">float64</option>
+                {getCatalogOptionsForValue(contract, 'points', 'data_type', point.data_type).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
             </div>
             <div className="inline-grid">
@@ -92,8 +94,11 @@ export function ModbusPointsEditor({ form, setForm }: ModbusPointsEditorProps) {
                   }))
                 }
               >
-                <option value="big">Byte Order: Big</option>
-                <option value="little">Byte Order: Little</option>
+                {getCatalogOptionsForValue(contract, 'points', 'byte_order', point.byte_order).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    Byte Order: {option.label}
+                  </option>
+                ))}
               </select>
               <select
                 value={point.word_order}
@@ -104,8 +109,11 @@ export function ModbusPointsEditor({ form, setForm }: ModbusPointsEditorProps) {
                   }))
                 }
               >
-                <option value="big">Word Order: Big</option>
-                <option value="little">Word Order: Little</option>
+                {getCatalogOptionsForValue(contract, 'points', 'word_order', point.word_order).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    Word Order: {option.label}
+                  </option>
+                ))}
               </select>
               <input
                 placeholder="Scale"
@@ -148,8 +156,11 @@ export function ModbusPointsEditor({ form, setForm }: ModbusPointsEditorProps) {
                   }))
                 }
               >
-                <option value="telemetry">Telemetry</option>
-                <option value="event">Event</option>
+                {getCatalogOptionsForValue(contract, 'points', 'classification', point.classification).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
               <input
                 placeholder="Event type (optional)"

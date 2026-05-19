@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from adapters.adapter_modbus_tcp.modbus_tcp_adapter import ModbusTcpAdapter
+from adapters.adapter_modbus_tcp.modbus_tcp_adapter import ModbusClientLike, ModbusTcpAdapter
 
 
 class ModbusRtuAdapter(ModbusTcpAdapter):
@@ -64,7 +64,7 @@ class ModbusRtuAdapter(ModbusTcpAdapter):
         parity: str,
         stopbits: int,
         timeout: float,
-    ):
+    ) -> ModbusClientLike:
         """Construct a Modbus RTU serial client."""
         try:
             from pymodbus.client import ModbusSerialClient  # type: ignore

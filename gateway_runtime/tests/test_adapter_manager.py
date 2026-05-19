@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from gateway_runtime.adapter_manager import AdapterManager
 from gateway_runtime.adapter_factory import AdapterFactory
+from gateway_runtime.config import AdapterConfig
 from gateway_runtime.errors import AdapterStartError
 
 
@@ -150,6 +151,36 @@ class AdapterManagerMetadataTests(unittest.TestCase):
         self.assertEqual(request.full_url, "http://sf-adapter-modbus-demo-01:8080/control/throttle")
         self.assertEqual(manager._last_throttle_policy["mode"], "high")
         self.assertEqual(manager._throttle_state["modbus-demo-01"]["throttle_mode"], "high")
+
+    def test_start_adapter_uses_managed_runtime_label(self) -> None:
+        manager = AdapterManager(AdapterFactory())
+        captured: dict[str, object] = {}
+        config = AdapterConfig(
+            adapter_id="modbus-demo-01",
+            adapter_type="modbus_tcp",
+            config={"host": "10.0.0.5", "port": 502, "output": {"topic": "telemetry.raw"}},
+        )
+
+        def fake_ensure_container(**kwargs):
+            captured.update(kwargs)
+            return FakeManagedContainer(
+                name="sf-adapter-modbus-demo-01",
+                labels=kwargs["labels"],
+                container_id="container-1",
+            )
+
+        with (
+            patch.object(manager, "_docker_client", return_value=object()),
+            patch.object(manager, "_resolve_network", return_value="deploy_default"),
+            patch.object(manager, "_ensure_container", side_effect=fake_ensure_container),
+        ):
+            manager.start_adapter(config)
+
+        labels = captured["labels"]
+        self.assertEqual(labels["streamforge.managed-by"], "gateway_runtime")
+        self.assertEqual(labels["adapter_id"], "modbus-demo-01")
+        self.assertEqual(manager._containers["modbus-demo-01"], "container-1")
+        self.assertEqual(manager._container_names["modbus-demo-01"], "sf-adapter-modbus-demo-01")
 
     def test_prune_orphaned_containers_removes_unconfigured_streamforge_adapter(self) -> None:
         manager = AdapterManager(AdapterFactory())

@@ -1,8 +1,10 @@
 import type { Dispatch, SetStateAction } from 'react'
 
+import type { CatalogSinkType } from '../../../shared/api/client'
 import type { SinkFormState } from '../sinkForm'
 
 type KafkaSinkSectionProps = {
+  contract?: CatalogSinkType
   form: SinkFormState
   setForm: Dispatch<SetStateAction<SinkFormState>>
 }
@@ -23,13 +25,7 @@ export function KafkaSinkSection({ form, setForm }: KafkaSinkSectionProps) {
           <input value={form.targetTopic} onChange={(event) => setForm((current) => ({ ...current, targetTopic: event.target.value }))} />
         </label>
       </div>
-      <details className="card nested-card advanced-block">
-        <summary>Advanced</summary>
-        <label>
-          Source Topic
-          <input value={form.sourceTopic} onChange={(event) => setForm((current) => ({ ...current, sourceTopic: event.target.value }))} />
-        </label>
-      </details>
+      <p className="muted">Source-topic routing is managed by the platform for Kafka forwarder sinks.</p>
     </article>
   )
 }

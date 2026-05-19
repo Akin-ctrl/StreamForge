@@ -1,8 +1,11 @@
 import type { Dispatch, SetStateAction } from 'react'
 
+import type { CatalogAdapterType } from '../../../shared/api/client'
+import { getCatalogOptionsForValue, getCatalogSection } from '../../../shared/config/catalog'
 import { createDefaultMonitoredItemForm, type AdapterFormState, type OpcuaMonitoredItemForm } from '../adapterForm'
 
 type OpcuaConfigSectionProps = {
+  contract?: CatalogAdapterType
   form: AdapterFormState
   setForm: Dispatch<SetStateAction<AdapterFormState>>
 }
@@ -15,7 +18,16 @@ function updateMonitoredItem(
   return items.map((item, itemIndex) => (itemIndex === index ? nextItem : item))
 }
 
-export function OpcuaConfigSection({ form, setForm }: OpcuaConfigSectionProps) {
+export function OpcuaConfigSection({ contract, form, setForm }: OpcuaConfigSectionProps) {
+  const securityModeOptions = getCatalogOptionsForValue(contract, 'advanced', 'security_mode', form.securityMode)
+  const securityPolicyOptions = getCatalogOptionsForValue(contract, 'advanced', 'security_policy', form.securityPolicy)
+  const advancedHelpText = getCatalogSection(contract, 'advanced')?.help_text
+  const runtimeSecurityIsFixed =
+    securityModeOptions.length <= 1 &&
+    securityPolicyOptions.length <= 1 &&
+    securityModeOptions.every((option) => option.value === 'None') &&
+    securityPolicyOptions.every((option) => option.value === 'None')
+
   return (
     <article className="card">
       <div className="page-header">
@@ -29,8 +41,11 @@ export function OpcuaConfigSection({ form, setForm }: OpcuaConfigSectionProps) {
         <label>
           Authentication
           <select value={form.authMode} onChange={(event) => setForm((current) => ({ ...current, authMode: event.target.value }))}>
-            <option value="anonymous">Anonymous</option>
-            <option value="username_password">Username / Password</option>
+            {getCatalogOptionsForValue(contract, 'connection', 'auth_mode', form.authMode).map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </label>
         <label>
@@ -70,7 +85,9 @@ export function OpcuaConfigSection({ form, setForm }: OpcuaConfigSectionProps) {
           <h4>Monitored Items</h4>
           <button
             className="btn btn-secondary"
-            onClick={() => setForm((current) => ({ ...current, monitoredItems: [...current.monitoredItems, createDefaultMonitoredItemForm()] }))}
+            onClick={() =>
+              setForm((current) => ({ ...current, monitoredItems: [...current.monitoredItems, createDefaultMonitoredItemForm(contract)] }))
+            }
             type="button"
           >
             Add Item
@@ -153,7 +170,11 @@ export function OpcuaConfigSection({ form, setForm }: OpcuaConfigSectionProps) {
                     }))
                   }
                 >
-                  <option value="reporting">Reporting</option>
+                  {getCatalogOptionsForValue(contract, 'monitored_items', 'monitoring_mode', item.monitoring_mode).map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
                 <button
                   className="btn btn-secondary"
@@ -170,24 +191,33 @@ export function OpcuaConfigSection({ form, setForm }: OpcuaConfigSectionProps) {
 
       <details className="card nested-card advanced-block">
         <summary>Advanced</summary>
-        <div className="inline-grid">
-          <label>
-            Security Mode
-            <select value={form.securityMode} onChange={(event) => setForm((current) => ({ ...current, securityMode: event.target.value }))}>
-              <option value="None">None</option>
-            </select>
-          </label>
-          <label>
-            Security Policy
-            <select value={form.securityPolicy} onChange={(event) => setForm((current) => ({ ...current, securityPolicy: event.target.value }))}>
-              <option value="None">None</option>
-            </select>
-          </label>
-          <label>
-            Telemetry Topic
-            <input value={form.outputTopic} onChange={(event) => setForm((current) => ({ ...current, outputTopic: event.target.value }))} />
-          </label>
-        </div>
+        {runtimeSecurityIsFixed ? (
+          <p className="muted">{advancedHelpText || 'Current runtime supports only Security Mode None and Security Policy None.'}</p>
+        ) : (
+          <div className="inline-grid">
+            <label>
+              Security Mode
+              <select value={form.securityMode} onChange={(event) => setForm((current) => ({ ...current, securityMode: event.target.value }))}>
+                {securityModeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Security Policy
+              <select value={form.securityPolicy} onChange={(event) => setForm((current) => ({ ...current, securityPolicy: event.target.value }))}>
+                {securityPolicyOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
+        <p className="muted">Internal telemetry routing is managed by the platform for OPC UA adapters.</p>
       </details>
     </article>
   )

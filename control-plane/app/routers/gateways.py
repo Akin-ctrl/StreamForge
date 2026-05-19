@@ -9,10 +9,11 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.audit import record_audit_event
 from app.core.secrets import apply_resolved_secrets, list_resolved_secret_values
-from app.core.security import AuthError, create_gateway_token, decode_gateway_token, require_admin
+from app.core.security import AuthError, create_gateway_token, decode_gateway_token, require_permission
 from app.db.deps import get_db
-from app.db.models import Deployment, Gateway
+from app.db.models import Deployment, Gateway, User
 from app.schemas.gateways import (
     GatewayApproveResponse,
     GatewayCreateRequest,
@@ -61,7 +62,7 @@ def _reconcile_gateway_state(
 @router.get("", response_model=list[GatewayItem])
 def list_gateways(
     db: Session = Depends(get_db),
-    _: object = Depends(require_admin),
+    _: User = Depends(require_permission("configs:read")),
 ) -> list[GatewayItem]:
     rows = db.execute(select(Gateway).order_by(Gateway.created_at.desc())).scalars().all()
     return [
@@ -85,7 +86,7 @@ def list_gateways(
 def create_gateway(
     payload: GatewayCreateRequest,
     db: Session = Depends(get_db),
-    _: object = Depends(require_admin),
+    current_user: User = Depends(require_permission("gateways:manage")),
 ) -> GatewayItem:
     existing = db.execute(select(Gateway).where(Gateway.gateway_id == payload.gateway_id)).scalar_one_or_none()
     if existing is not None:
@@ -98,8 +99,28 @@ def create_gateway(
         hardware_info=payload.hardware_info,
         status="approved" if approved else "pending",
         approved=approved,
+        created_by=current_user.username,
+        updated_by=current_user.username,
+        approved_by=current_user.username if approved else None,
     )
     db.add(gateway)
+    record_audit_event(
+        db,
+        actor=current_user,
+        action="gateway.created",
+        resource_type="gateway",
+        resource_public_id=gateway.gateway_id,
+        details={"status": gateway.status, "approved": gateway.approved},
+    )
+    if approved:
+        record_audit_event(
+            db,
+            actor=current_user,
+            action="gateway.approved",
+            resource_type="gateway",
+            resource_public_id=gateway.gateway_id,
+            details={"status": gateway.status, "approved": gateway.approved},
+        )
     db.commit()
     db.refresh(gateway)
 
@@ -121,7 +142,7 @@ def create_gateway(
 def get_gateway(
     gateway_id: str,
     db: Session = Depends(get_db),
-    _: object = Depends(require_admin),
+    _: User = Depends(require_permission("configs:read")),
 ) -> GatewayItem:
     gateway = db.execute(select(Gateway).where(Gateway.gateway_id == gateway_id)).scalar_one_or_none()
     if gateway is None:
@@ -153,7 +174,7 @@ def register_gateway(payload: GatewayRegisterRequest, db: Session = Depends(get_
 def approve_gateway(
     gateway_id: str,
     db: Session = Depends(get_db),
-    _: object = Depends(require_admin),
+    current_user: User = Depends(require_permission("gateways:manage")),
 ) -> GatewayApproveResponse:
     gateway = db.execute(select(Gateway).where(Gateway.gateway_id == gateway_id)).scalar_one_or_none()
     if gateway is None:
@@ -161,8 +182,18 @@ def approve_gateway(
 
     gateway.approved = True
     gateway.status = "approved"
+    gateway.approved_by = current_user.username
+    gateway.updated_by = current_user.username
     gateway.updated_at = datetime.now(timezone.utc)
     db.add(gateway)
+    record_audit_event(
+        db,
+        actor=current_user,
+        action="gateway.approved",
+        resource_type="gateway",
+        resource_public_id=gateway.gateway_id,
+        details={"status": gateway.status, "approved": gateway.approved},
+    )
     db.commit()
     db.refresh(gateway)
 
@@ -174,7 +205,10 @@ def approve_gateway(
 
 
 @router.post("/token", response_model=GatewayTokenResponse)
-def issue_gateway_token(payload: GatewayTokenRequest, db: Session = Depends(get_db)) -> GatewayTokenResponse:
+def issue_gateway_token(
+    payload: GatewayTokenRequest,
+    db: Session = Depends(get_db),
+) -> GatewayTokenResponse:
     gateway = db.execute(select(Gateway).where(Gateway.gateway_id == payload.gateway_id)).scalar_one_or_none()
     if gateway is None:
         raise HTTPException(status_code=404, detail="Gateway not found")
@@ -353,12 +387,13 @@ def update_gateway(
     gateway_id: str,
     payload: GatewayUpdateRequest,
     db: Session = Depends(get_db),
-    _: object = Depends(require_admin),
+    current_user: User = Depends(require_permission("gateways:manage")),
 ) -> GatewayItem:
     gateway = db.execute(select(Gateway).where(Gateway.gateway_id == gateway_id)).scalar_one_or_none()
     if gateway is None:
         raise HTTPException(status_code=404, detail="Gateway not found")
 
+    was_approved = gateway.approved
     if payload.hostname is not None:
         gateway.hostname = payload.hostname
     if payload.hardware_info is not None:
@@ -370,8 +405,28 @@ def update_gateway(
         approved=payload.approved,
     )
 
+    gateway.updated_by = current_user.username
+    if not was_approved and gateway.approved:
+        gateway.approved_by = current_user.username
     gateway.updated_at = datetime.now(timezone.utc)
     db.add(gateway)
+    record_audit_event(
+        db,
+        actor=current_user,
+        action="gateway.updated",
+        resource_type="gateway",
+        resource_public_id=gateway.gateway_id,
+        details={"status": gateway.status, "approved": gateway.approved},
+    )
+    if not was_approved and gateway.approved:
+        record_audit_event(
+            db,
+            actor=current_user,
+            action="gateway.approved",
+            resource_type="gateway",
+            resource_public_id=gateway.gateway_id,
+            details={"status": gateway.status, "approved": gateway.approved},
+        )
     db.commit()
     db.refresh(gateway)
 
@@ -393,12 +448,20 @@ def update_gateway(
 def delete_gateway(
     gateway_id: str,
     db: Session = Depends(get_db),
-    _: object = Depends(require_admin),
+    current_user: User = Depends(require_permission("gateways:manage")),
 ) -> dict:
     gateway = db.execute(select(Gateway).where(Gateway.gateway_id == gateway_id)).scalar_one_or_none()
     if gateway is None:
         raise HTTPException(status_code=404, detail="Gateway not found")
 
+    record_audit_event(
+        db,
+        actor=current_user,
+        action="gateway.deleted",
+        resource_type="gateway",
+        resource_public_id=gateway.gateway_id,
+        details={"status": gateway.status, "approved": gateway.approved},
+    )
     db.delete(gateway)
     db.commit()
     return {"deleted": True, "gateway_id": gateway_id}

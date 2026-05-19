@@ -1,13 +1,16 @@
 import type { Dispatch, SetStateAction } from 'react'
 
+import type { CatalogSinkType } from '../../../shared/api/client'
+import { getCatalogOptionsForValue } from '../../../shared/config/catalog'
 import type { SinkFormState } from '../sinkForm'
 
 type AlertRouterSinkSectionProps = {
+  contract?: CatalogSinkType
   form: SinkFormState
   setForm: Dispatch<SetStateAction<SinkFormState>>
 }
 
-export function AlertRouterSinkSection({ form, setForm }: AlertRouterSinkSectionProps) {
+export function AlertRouterSinkSection({ contract, form, setForm }: AlertRouterSinkSectionProps) {
   return (
     <article className="card">
       <div className="page-header">
@@ -17,8 +20,11 @@ export function AlertRouterSinkSection({ form, setForm }: AlertRouterSinkSection
         <label>
           Route Type
           <select value={form.routeType} onChange={(event) => setForm((current) => ({ ...current, routeType: event.target.value }))}>
-            <option value="webhook">Webhook</option>
-            <option value="slack">Slack</option>
+            {getCatalogOptionsForValue(contract, 'destination', 'route_type', form.routeType).map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </label>
         {form.routeType === 'slack' ? (
@@ -43,13 +49,7 @@ export function AlertRouterSinkSection({ form, setForm }: AlertRouterSinkSection
           </label>
         )}
       </div>
-      <details className="card nested-card advanced-block">
-        <summary>Advanced</summary>
-        <label>
-          Source Topic
-          <input value={form.sourceTopic} onChange={(event) => setForm((current) => ({ ...current, sourceTopic: event.target.value }))} />
-        </label>
-      </details>
+      <p className="muted">Alarm ingress routing is managed by the platform for alert-router sinks.</p>
     </article>
   )
 }

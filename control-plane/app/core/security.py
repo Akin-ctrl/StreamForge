@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi.security import OAuth2PasswordBearer
@@ -21,8 +21,6 @@ class AuthError(Exception):
     """Raised for authentication/token errors."""
 
 
-INSECURE_DEFAULT_ADMIN_USERNAME = "admin"
-INSECURE_DEFAULT_ADMIN_PASSWORD = "admin123"
 COMMON_WEAK_PASSWORDS = {
     "password",
     "password123",
@@ -33,10 +31,18 @@ COMMON_WEAK_PASSWORDS = {
     "qwerty123",
     "streamforge",
 }
+COMMON_WEAK_SHARED_SECRETS = {
+    "change-me",
+    "changeme",
+    "default",
+    "secret",
+    "streamforge",
+    "streamforge-dev-secret",
+}
 
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-user_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
+user_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token", auto_error=False)
 gateway_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/gateways/token")
 
 
@@ -48,8 +54,8 @@ class UserRole(str, Enum):
 
 
 ROLE_PERMISSIONS: dict[UserRole, set[str]] = {
-    UserRole.VIEWER: {"dashboards:read", "configs:read", "metrics:read"},
-    UserRole.OPERATOR: {"alarms:ack", "logs:read", "dlq:approve"},
+    UserRole.VIEWER: {"dashboards:read", "configs:read", "metrics:read", "alarms:read", "dlq:read"},
+    UserRole.OPERATOR: {"alarms:ack", "alarms:suppress", "logs:read", "dlq:approve"},
     UserRole.ENGINEER: {
         "adapters:create",
         "adapters:update",
@@ -68,6 +74,16 @@ ROLE_PERMISSIONS: dict[UserRole, set[str]] = {
         "sinks:delete",
     },
 }
+
+
+def normalize_user_role(role: str | UserRole) -> UserRole:
+    """Parse one persisted role value into the documented RBAC enum."""
+    if isinstance(role, UserRole):
+        return role
+    try:
+        return UserRole(role)
+    except ValueError as exc:
+        raise ValueError(f"Unsupported user role '{role}'") from exc
 
 
 def create_gateway_token(gateway_id: str, expires_days: int = 365) -> tuple[str, datetime]:
@@ -121,15 +137,29 @@ def validate_password_strength(password: str, username: str | None = None) -> No
             raise ValueError("Password must not match or contain the username")
 
 
-def create_user_token(username: str, is_admin: bool, expires_hours: int = 12) -> tuple[str, datetime]:
+def validate_shared_secret_strength(secret: str, *, field_name: str) -> None:
+    """Enforce a baseline policy for shared secrets such as JWT signing keys."""
+    normalized = secret.strip()
+    if not normalized:
+        raise ValueError(f"{field_name} must be set")
+    if len(normalized) < 32:
+        raise ValueError(f"{field_name} must be at least 32 characters long")
+    if not any(char.isalpha() for char in normalized) or not any(char.isdigit() for char in normalized):
+        raise ValueError(f"{field_name} must include at least one letter and one number")
+    if normalized.casefold() in COMMON_WEAK_SHARED_SECRETS:
+        raise ValueError(f"{field_name} uses a weak or predictable value")
+
+
+def create_user_token(username: str, role: str | UserRole, expires_hours: int = 12) -> tuple[str, datetime]:
     """Create a signed JWT for a user identity."""
     expires_at = datetime.now(timezone.utc) + timedelta(hours=expires_hours)
-    user_roles = [role.value for role in roles_for_user(username, is_admin=is_admin)]
+    resolved_role = normalize_user_role(role)
+    user_roles = [resolved_role.value]
     payload = {
         "sub": username,
         "scope": "user",
         "roles": user_roles,
-        "permissions": sorted(permission_set_for_roles([UserRole(role) for role in user_roles])),
+        "permissions": sorted(permission_set_for_roles([resolved_role])),
         "exp": int(expires_at.timestamp()),
         "iat": int(datetime.now(timezone.utc).timestamp()),
         "iss": settings.app_name,
@@ -149,14 +179,25 @@ def decode_user_token(token: str) -> dict:
         raise AuthError("Invalid token") from exc
 
 
-def roles_for_user(username: str, is_admin: bool) -> list[UserRole]:
-    """Map the current built-in user model to the documented RBAC ladder."""
-    if is_admin:
-        return [UserRole.ADMIN]
-    return [UserRole.ENGINEER]
+def extract_user_token(request: Request, bearer_token: str | None) -> str | None:
+    """Resolve the user session token from either a bearer header or auth cookie."""
+    if bearer_token:
+        return bearer_token
+
+    cookie_token = request.cookies.get(settings.auth_cookie_name)
+    if isinstance(cookie_token, str) and cookie_token.strip():
+        return cookie_token
+
+    return None
+
+
+def roles_for_user(user: User) -> list[UserRole]:
+    """Return the persisted role ladder for the current user."""
+    return [normalize_user_role(user.role)]
 
 
 def permission_set_for_roles(roles: list[UserRole]) -> set[str]:
+    """Expand one or more roles into their effective permission set."""
     permissions: set[str] = set()
     for role in roles:
         permissions.update(ROLE_PERMISSIONS[role])
@@ -172,10 +213,23 @@ def permission_set_for_roles(roles: list[UserRole]) -> set[str]:
     return permissions
 
 
-def get_current_user(token: str = Depends(user_oauth2_scheme), db: Session = Depends(get_db)) -> User:
+def permission_set_for_user(user: User) -> set[str]:
+    """Return the effective permission set for one persisted user."""
+    return permission_set_for_roles(roles_for_user(user))
+
+
+def get_current_user(
+    request: Request,
+    token: str | None = Depends(user_oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> User:
     """Resolve authenticated user from bearer token."""
+    resolved_token = extract_user_token(request, token)
+    if not resolved_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
     try:
-        claims = decode_user_token(token)
+        claims = decode_user_token(resolved_token)
     except AuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
@@ -210,7 +264,7 @@ def get_current_gateway(token: str = Depends(gateway_oauth2_scheme), db: Session
 
 def require_admin(user: User = Depends(get_current_user)) -> User:
     """Ensure the authenticated user has admin privileges."""
-    if not user.is_admin:
+    if normalize_user_role(user.role) != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="Admin privileges required")
     return user
 
@@ -219,8 +273,7 @@ def require_permission(permission: str):
     """Ensure the authenticated user has the required permission."""
 
     def dependency(user: User = Depends(get_current_user)) -> User:
-        roles = roles_for_user(user.username, user.is_admin)
-        permissions = permission_set_for_roles(roles)
+        permissions = permission_set_for_user(user)
         if permission not in permissions:
             raise HTTPException(status_code=403, detail=f"Missing permission: {permission}")
         return user

@@ -1,14 +1,16 @@
 import type { Dispatch, SetStateAction } from 'react'
 
+import type { CatalogAdapterType } from '../../../shared/api/client'
 import type { AdapterFormState } from '../adapterForm'
 import { ModbusPointsEditor } from './ModbusPointsEditor'
 
 type ModbusTcpConfigSectionProps = {
+  contract?: CatalogAdapterType
   form: AdapterFormState
   setForm: Dispatch<SetStateAction<AdapterFormState>>
 }
 
-export function ModbusTcpConfigSection({ form, setForm }: ModbusTcpConfigSectionProps) {
+export function ModbusTcpConfigSection({ contract, form, setForm }: ModbusTcpConfigSectionProps) {
   return (
     <article className="card">
       <div className="page-header">
@@ -36,20 +38,8 @@ export function ModbusTcpConfigSection({ form, setForm }: ModbusTcpConfigSection
         Default Asset ID
         <input value={form.defaultAssetId} onChange={(event) => setForm((current) => ({ ...current, defaultAssetId: event.target.value }))} />
       </label>
-      <ModbusPointsEditor form={form} setForm={setForm} />
-      <details className="card nested-card advanced-block">
-        <summary>Advanced</summary>
-        <div className="inline-grid">
-          <label>
-            Telemetry Topic
-            <input value={form.outputTopic} onChange={(event) => setForm((current) => ({ ...current, outputTopic: event.target.value }))} />
-          </label>
-          <label>
-            Events Topic
-            <input value={form.eventsTopic} onChange={(event) => setForm((current) => ({ ...current, eventsTopic: event.target.value }))} />
-          </label>
-        </div>
-      </details>
+      <ModbusPointsEditor contract={contract} form={form} setForm={setForm} />
+      <p className="muted">Internal telemetry and event routing topics are managed by the platform for Modbus adapters.</p>
     </article>
   )
 }

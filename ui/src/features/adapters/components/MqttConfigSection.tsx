@@ -1,5 +1,7 @@
 import type { Dispatch, SetStateAction } from 'react'
 
+import type { CatalogAdapterType } from '../../../shared/api/client'
+import { getCatalogOptionsForValue } from '../../../shared/config/catalog'
 import {
   createDefaultMqttMappingForm,
   createDefaultMqttSubscriptionForm,
@@ -9,6 +11,7 @@ import {
 } from '../adapterForm'
 
 type MqttConfigSectionProps = {
+  contract?: CatalogAdapterType
   form: AdapterFormState
   setForm: Dispatch<SetStateAction<AdapterFormState>>
 }
@@ -25,7 +28,7 @@ function updateMapping(mappings: MqttMappingForm[], index: number, nextMapping: 
   return mappings.map((mapping, mappingIndex) => (mappingIndex === index ? nextMapping : mapping))
 }
 
-export function MqttConfigSection({ form, setForm }: MqttConfigSectionProps) {
+export function MqttConfigSection({ contract, form, setForm }: MqttConfigSectionProps) {
   return (
     <article className="card">
       <div className="page-header">
@@ -75,7 +78,9 @@ export function MqttConfigSection({ form, setForm }: MqttConfigSectionProps) {
           <h4>Subscriptions</h4>
           <button
             className="btn btn-secondary"
-            onClick={() => setForm((current) => ({ ...current, subscriptions: [...current.subscriptions, createDefaultMqttSubscriptionForm()] }))}
+            onClick={() =>
+              setForm((current) => ({ ...current, subscriptions: [...current.subscriptions, createDefaultMqttSubscriptionForm(contract)] }))
+            }
             type="button"
           >
             Add Subscription
@@ -112,8 +117,11 @@ export function MqttConfigSection({ form, setForm }: MqttConfigSectionProps) {
                     }))
                   }
                 >
-                  <option value="telemetry">Telemetry</option>
-                  <option value="event">Event</option>
+                  {getCatalogOptionsForValue(contract, 'subscriptions', 'message_type', subscription.message_type).map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
                 <select
                   value={subscription.payload_format}
@@ -127,7 +135,11 @@ export function MqttConfigSection({ form, setForm }: MqttConfigSectionProps) {
                     }))
                   }
                 >
-                  <option value="json">JSON</option>
+                  {getCatalogOptionsForValue(contract, 'subscriptions', 'payload_format', subscription.payload_format).map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
                 <input
                   placeholder="Asset override"
@@ -174,7 +186,7 @@ export function MqttConfigSection({ form, setForm }: MqttConfigSectionProps) {
                         ...current,
                         subscriptions: updateSubscription(current.subscriptions, subscriptionIndex, {
                           ...subscription,
-                          mappings: [...subscription.mappings, createDefaultMqttMappingForm()],
+                          mappings: [...subscription.mappings, createDefaultMqttMappingForm(contract)],
                         }),
                       }))
                     }
@@ -250,14 +262,12 @@ export function MqttConfigSection({ form, setForm }: MqttConfigSectionProps) {
                             }),
                           }))
                         }
-                      >
-                        <option value="bool">Boolean</option>
-                        <option value="int16">int16</option>
-                        <option value="uint16">uint16</option>
-                        <option value="int32">int32</option>
-                        <option value="uint32">uint32</option>
-                        <option value="float32">float32</option>
-                        <option value="float64">float64</option>
+                        >
+                        {getCatalogOptionsForValue(contract, 'subscriptions', 'data_type', mapping.data_type).map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
                       </select>
                       <button
                         className="btn btn-secondary"
@@ -308,15 +318,8 @@ export function MqttConfigSection({ form, setForm }: MqttConfigSectionProps) {
             />
             Clean Start
           </label>
-          <label>
-            Telemetry Topic
-            <input value={form.outputTopic} onChange={(event) => setForm((current) => ({ ...current, outputTopic: event.target.value }))} />
-          </label>
-          <label>
-            Events Topic
-            <input value={form.eventsTopic} onChange={(event) => setForm((current) => ({ ...current, eventsTopic: event.target.value }))} />
-          </label>
         </div>
+        <p className="muted">Internal telemetry and event routing topics are managed by the platform for MQTT adapters.</p>
       </details>
     </article>
   )

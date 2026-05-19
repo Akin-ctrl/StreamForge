@@ -11,6 +11,7 @@ import { OverviewPage } from './features/overview/OverviewPage'
 import { PipelineBuilderPage } from './features/pipelines/PipelineBuilderPage'
 import { PipelinesPage } from './features/pipelines/PipelinesPage'
 import { SinksPage } from './features/sinks/SinksPage'
+import { AuthProvider } from './shared/auth/AuthProvider'
 import { UsersPage } from './features/users/UsersPage'
 import { ProtectedRoute } from './shared/auth/ProtectedRoute'
 
@@ -21,31 +22,33 @@ import { ProtectedRoute } from './shared/auth/ProtectedRoute'
  */
 function App() {
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route
-        path="/"
-        element={
-          <ProtectedRoute>
-            <AppShell />
-          </ProtectedRoute>
-        }
-      >
-        <Route index element={<Navigate to="/overview" replace />} />
-        <Route path="overview" element={<OverviewPage />} />
-        <Route path="gateways" element={<GatewaysPage />} />
-        <Route path="adapters" element={<AdaptersPage />} />
-        <Route path="pipelines" element={<PipelinesPage />} />
-        <Route path="pipelines/:deploymentId/edit" element={<PipelineBuilderPage />} />
-        <Route path="sinks" element={<SinksPage />} />
-        <Route path="alarms" element={<AlarmsPage />} />
-        <Route path="dlq" element={<DlqPage />} />
-        <Route path="create-pipeline" element={<PipelineBuilderPage />} />
-        <Route path="health" element={<HealthPage />} />
-        <Route path="users" element={<UsersPage />} />
-      </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <AuthProvider>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <AppShell />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<Navigate to="/overview" replace />} />
+          <Route path="overview" element={<OverviewPage />} />
+          <Route path="gateways" element={<GatewaysPage />} />
+          <Route path="adapters" element={<AdaptersPage />} />
+          <Route path="pipelines" element={<PipelinesPage />} />
+          <Route path="pipelines/:deploymentId/edit" element={<PipelineBuilderPage />} />
+          <Route path="sinks" element={<SinksPage />} />
+          <Route path="alarms" element={<AlarmsPage />} />
+          <Route path="dlq" element={<DlqPage />} />
+          <Route path="create-pipeline" element={<PipelineBuilderPage />} />
+          <Route path="health" element={<HealthPage />} />
+          <Route path="users" element={<UsersPage />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </AuthProvider>
   )
 }
 
