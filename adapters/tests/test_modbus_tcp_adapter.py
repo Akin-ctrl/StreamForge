@@ -44,7 +44,17 @@ class FakeClient:
         self.calls.append(call)
         return self.responses[call]
 
+    def read_input_registers(self, address: int, count: int, device_id: int):
+        call = (address, count, device_id)
+        self.calls.append(call)
+        return self.responses[call]
+
     def read_coils(self, address: int, count: int, device_id: int):
+        call = (address, count, device_id)
+        self.coil_calls.append(call)
+        return self.responses[call]
+
+    def read_discrete_inputs(self, address: int, count: int, device_id: int):
         call = (address, count, device_id)
         self.coil_calls.append(call)
         return self.responses[call]
@@ -244,6 +254,114 @@ class ModbusTcpAdapterBatchingTests(unittest.TestCase):
         self.assertEqual(transformed["events"][0]["previous_state"]["motor_running"], False)
         self.assertEqual(transformed["events"][0]["new_state"]["motor_running"], True)
         self.assertEqual(transformed["events"][0]["classification"], "EVENT")
+
+    def test_poll_reads_canonical_points_for_registers_and_events(self) -> None:
+        adapter = ModbusTcpAdapter(
+            {
+                "host": "127.0.0.1",
+                "port": 502,
+                "unit_id": 1,
+                "points": [
+                    {
+                        "point_name": "temperature",
+                        "memory_area": "holding_register",
+                        "address": 40001,
+                        "data_type": "float32",
+                        "unit": "celsius",
+                        "classification": "telemetry",
+                    },
+                    {
+                        "point_name": "motor_running",
+                        "memory_area": "coil",
+                        "address": 1,
+                        "data_type": "bool",
+                        "classification": "event",
+                        "event_type": "motor_state_change",
+                    },
+                ],
+                "output": {
+                    "kafka_bootstrap": "localhost:9092",
+                    "topic": "telemetry.raw",
+                    "events_topic": "events.raw",
+                    "asset_id": "asset-1",
+                },
+            }
+        )
+        adapter._client = FakeClient(
+            {
+                (0, 2, 1): FakeResponse([0x42C8, 0x0000]),
+                (0, 1, 1): FakeResponse(bits=[False]),
+            }
+        )
+
+        first = adapter.poll()
+        self.assertEqual(first["readings"]["temperature"]["value"], 100.0)
+        self.assertEqual(first["events"], [])
+
+        adapter._client = FakeClient(
+            {
+                (0, 2, 1): FakeResponse([0x42C8, 0x0000]),
+                (0, 1, 1): FakeResponse(bits=[True]),
+            }
+        )
+        second = adapter.poll()
+
+        self.assertEqual(len(second["events"]), 1)
+        self.assertEqual(second["events"][0]["event_type"], "motor_state_change")
+
+    def test_poll_reads_input_registers_and_discrete_inputs_from_canonical_points(self) -> None:
+        adapter = ModbusTcpAdapter(
+            {
+                "host": "127.0.0.1",
+                "port": 502,
+                "unit_id": 1,
+                "points": [
+                    {
+                        "point_name": "line_pressure",
+                        "memory_area": "input_register",
+                        "address": 30001,
+                        "data_type": "uint16",
+                        "unit": "bar",
+                        "classification": "telemetry",
+                    },
+                    {
+                        "point_name": "door_open",
+                        "memory_area": "discrete_input",
+                        "address": 10001,
+                        "data_type": "bool",
+                        "unit": "",
+                        "classification": "telemetry",
+                    },
+                ],
+                "output": {
+                    "kafka_bootstrap": "localhost:9092",
+                    "topic": "telemetry.raw",
+                    "events_topic": "events.raw",
+                    "asset_id": "asset-1",
+                },
+            }
+        )
+        adapter._client = FakeClient({})
+
+        def read_input_registers(address: int, count: int, device_id: int):
+            call = (address, count, device_id)
+            adapter._client.calls.append(call)
+            return FakeResponse([7])
+
+        def read_discrete_inputs(address: int, count: int, device_id: int):
+            call = (address, count, device_id)
+            adapter._client.coil_calls.append(call)
+            return FakeResponse(bits=[True])
+
+        adapter._client.read_input_registers = read_input_registers  # type: ignore[method-assign]
+        adapter._client.read_discrete_inputs = read_discrete_inputs  # type: ignore[method-assign]
+
+        polled = adapter.poll()
+
+        self.assertEqual(adapter._client.calls, [(0, 1, 1)])
+        self.assertEqual(adapter._client.coil_calls, [(0, 1, 1)])
+        self.assertEqual(polled["readings"]["line_pressure"]["value"], 7)
+        self.assertEqual(polled["readings"]["door_open"]["value"], True)
 
     def test_build_coil_batches_groups_contiguous_specs(self) -> None:
         specs = [

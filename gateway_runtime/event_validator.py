@@ -140,6 +140,13 @@ class EventValidatorModule:
         }
         for thread in self._threads.values():
             thread.start()
+        logger.info(
+            "event validator module started for gateway %s (raw_topic=%s, clean_topic=%s, dlq_topic=%s)",
+            self._gateway_id,
+            self._raw_topic,
+            self._clean_topic,
+            self._dlq_topic,
+        )
 
     def stop(self) -> None:
         """Stop event validator workers."""
@@ -153,16 +160,13 @@ class EventValidatorModule:
         for thread in self._threads.values():
             thread.join(timeout=5)
         self._threads = {}
-
-        for client in (self._producer, self._dlq_producer, self._consumer):
-            if client is None:
-                continue
-            try:
-                if hasattr(client, "flush"):
-                    client.flush()
-                client.close()
-            except Exception:
-                pass
+        self._close_client(self._producer, name="clean producer", flush=True)
+        self._close_client(self._dlq_producer, name="dlq producer", flush=True)
+        self._close_client(self._consumer, name="consumer", flush=False)
+        self._producer = None
+        self._dlq_producer = None
+        self._consumer = None
+        logger.info("event validator module stopped for gateway %s", self._gateway_id)
 
     def health(self) -> Dict[str, object]:
         """Return validator health and per-stage metrics."""
@@ -219,10 +223,21 @@ class EventValidatorModule:
                 request_timeout_ms=60000,
                 value_deserializer=lambda value: value,
             )
+            logger.info(
+                "event validator consumer initialized for gateway %s (topic=%s, group_id=sf-event-validator-%s)",
+                self._gateway_id,
+                self._raw_topic,
+                self._gateway_id,
+            )
         if self._producer is None:
             self._producer = KafkaProducer(
                 bootstrap_servers=self._bootstrap,
                 value_serializer=self._clean_schema.encode,
+            )
+            logger.info(
+                "event validator clean producer initialized for gateway %s (topic=%s)",
+                self._gateway_id,
+                self._clean_topic,
             )
         if self._dlq_producer is None:
             self._dlq_producer = KafkaProducer(
@@ -232,6 +247,12 @@ class EventValidatorModule:
 
     def _ingress_loop(self) -> None:
         assert self._consumer is not None
+        logger.info(
+            "event validator ingress loop consuming for gateway %s (topic=%s, group_id=sf-event-validator-%s)",
+            self._gateway_id,
+            self._raw_topic,
+            self._gateway_id,
+        )
         while not self._stop_event.is_set():
             try:
                 batch = self._consumer.poll(timeout_ms=1000)
@@ -677,6 +698,21 @@ class EventValidatorModule:
             metrics = self._stage_metrics[stage]
             metrics["errors_total"] = int(metrics["errors_total"]) + 1
             metrics["last_error"] = str(exc)[:1024]
+
+    def _close_client(self, client: object | None, *, name: str, flush: bool) -> None:
+        if client is None:
+            return
+        try:
+            if flush and hasattr(client, "flush"):
+                client.flush()
+            client.close()
+        except Exception as exc:
+            logger.warning(
+                "event validator failed to close %s for gateway %s cleanly: %s",
+                name,
+                self._gateway_id,
+                exc,
+            )
 
     def _record_stage_blocked(self, stage: str) -> None:
         with self._metrics_lock:

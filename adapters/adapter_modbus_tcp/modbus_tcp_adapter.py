@@ -24,6 +24,9 @@ class RegisterSpec:
     param: str
     data_type: str
     unit: str
+    memory_area: str = "holding_register"
+    scale: float = 1.0
+    offset: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -42,6 +45,9 @@ class CoilSpec:
     address: int
     param: str
     event_type: str
+    memory_area: str = "coil"
+    classification: str = "event"
+    unit: str = ""
 
 
 @dataclass(frozen=True)
@@ -159,6 +165,9 @@ class ModbusTcpAdapter(BaseAdapter):
             response = self._read_coil_batch_with_retry(batch=batch, unit_id=unit_id)
             for spec in batch.specs:
                 state = bool(response.bits[spec.address - batch.start])
+                if spec.classification != "event":
+                    readings[spec.param] = {"value": state, "unit": spec.unit}
+                    continue
                 previous_state = self._last_coil_states.get(spec.param)
                 self._last_coil_states[spec.param] = state
                 if previous_state is None or previous_state == state:
@@ -279,8 +288,31 @@ class ModbusTcpAdapter(BaseAdapter):
 
     def _iter_registers(self) -> Iterable[RegisterSpec]:
         """Yield register specs from configuration."""
+        raw_points = self.config.get("points")
+        if isinstance(raw_points, list) and raw_points:
+            for item in raw_points:
+                if not isinstance(item, dict):
+                    continue
+                memory_area = str(item.get("memory_area") or "holding_register").strip()
+                if memory_area not in {"holding_register", "input_register"}:
+                    continue
+                param = str(item.get("point_name") or item.get("param") or "").strip()
+                if not param:
+                    continue
+                address = self._normalize_register_address(int(item["address"]), memory_area)
+                yield RegisterSpec(
+                    address=address,
+                    param=param,
+                    data_type=str(item.get("data_type") or item.get("type") or "uint16"),
+                    unit=str(item.get("unit") or ""),
+                    memory_area=memory_area,
+                    scale=float(item.get("scale", 1.0) or 1.0),
+                    offset=float(item.get("offset", 0.0) or 0.0),
+                )
+            return
+
         for item in self.config.get("registers", []):
-            address = self._normalize_address(int(item["address"]))
+            address = self._normalize_register_address(int(item["address"]), "holding_register")
             yield RegisterSpec(
                 address=address,
                 param=item["param"],
@@ -290,6 +322,28 @@ class ModbusTcpAdapter(BaseAdapter):
 
     def _iter_coils(self) -> Iterable[CoilSpec]:
         """Yield coil specs from configuration."""
+        raw_points = self.config.get("points")
+        if isinstance(raw_points, list) and raw_points:
+            for item in raw_points:
+                if not isinstance(item, dict):
+                    continue
+                memory_area = str(item.get("memory_area") or "").strip()
+                if memory_area not in {"coil", "discrete_input"}:
+                    continue
+                param = str(item.get("point_name") or item.get("param") or "").strip()
+                if not param:
+                    continue
+                address = self._normalize_binary_address(int(item["address"]), memory_area)
+                yield CoilSpec(
+                    address=address,
+                    param=param,
+                    event_type=str(item.get("event_type") or f"{param}_state_change"),
+                    memory_area=memory_area,
+                    classification=str(item.get("classification") or "event").strip().lower(),
+                    unit=str(item.get("unit") or ""),
+                )
+            return
+
         raw_coils = self.config.get("coils", [])
         if isinstance(raw_coils, dict):
             items = []
@@ -308,7 +362,7 @@ class ModbusTcpAdapter(BaseAdapter):
             param = str(item.get("param", "")).strip()
             if not param:
                 continue
-            address = self._normalize_coil_address(int(item["address"]))
+            address = self._normalize_binary_address(int(item["address"]), "coil")
             yield CoilSpec(
                 address=address,
                 param=param,
@@ -321,11 +375,21 @@ class ModbusTcpAdapter(BaseAdapter):
         def attempt():
             if self._client is None:
                 raise RuntimeError("Modbus client not connected")
-            response = self._client.read_holding_registers(
-                batch.start,
-                count=batch.count,
-                device_id=unit_id,
-            )
+            memory_area = batch.specs[0].memory_area
+            if memory_area == "holding_register":
+                response = self._client.read_holding_registers(
+                    batch.start,
+                    count=batch.count,
+                    device_id=unit_id,
+                )
+            elif memory_area == "input_register":
+                response = self._client.read_input_registers(
+                    batch.start,
+                    count=batch.count,
+                    device_id=unit_id,
+                )
+            else:
+                raise RuntimeError(f"Unsupported Modbus register memory area: {memory_area}")
             if response.isError():
                 raise RuntimeError(f"Modbus read error at {batch.start}")
             return response
@@ -343,13 +407,23 @@ class ModbusTcpAdapter(BaseAdapter):
         def attempt():
             if self._client is None:
                 raise RuntimeError("Modbus client not connected")
-            response = self._client.read_coils(
-                batch.start,
-                count=batch.count,
-                device_id=unit_id,
-            )
+            memory_area = batch.specs[0].memory_area
+            if memory_area == "coil":
+                response = self._client.read_coils(
+                    batch.start,
+                    count=batch.count,
+                    device_id=unit_id,
+                )
+            elif memory_area == "discrete_input":
+                response = self._client.read_discrete_inputs(
+                    batch.start,
+                    count=batch.count,
+                    device_id=unit_id,
+                )
+            else:
+                raise RuntimeError(f"Unsupported Modbus binary memory area: {memory_area}")
             if response.isError():
-                raise RuntimeError(f"Modbus coil read error at {batch.start}")
+                raise RuntimeError(f"Modbus binary read error at {batch.start}")
             return response
 
         return self._retry_operation(
@@ -411,7 +485,7 @@ class ModbusTcpAdapter(BaseAdapter):
 
         for spec in specs[1:]:
             spec_end = spec.address + cls._register_width(spec)
-            if spec.address <= current_end:
+            if spec.memory_area == current_specs[-1].memory_area and spec.address <= current_end:
                 current_end = max(current_end, spec_end)
                 current_specs.append(spec)
                 continue
@@ -449,7 +523,7 @@ class ModbusTcpAdapter(BaseAdapter):
 
         for spec in specs[1:]:
             spec_end = spec.address + 1
-            if spec.address <= current_end:
+            if spec.memory_area == current_specs[-1].memory_area and spec.address <= current_end:
                 current_end = max(current_end, spec_end)
                 current_specs.append(spec)
                 continue
@@ -487,21 +561,27 @@ class ModbusTcpAdapter(BaseAdapter):
         if spec.data_type == "float32":
             if len(registers) != 2:
                 raise RuntimeError(f"Expected 2 registers for float32 at {spec.address}")
-            return cls._decode_float32(list(registers))
-        if not registers:
-            raise RuntimeError(f"Missing register data at {spec.address}")
-        return int(registers[0])
+            decoded: float | int = cls._decode_float32(list(registers))
+        else:
+            if not registers:
+                raise RuntimeError(f"Missing register data at {spec.address}")
+            decoded = int(registers[0])
+        return cls._apply_scale_and_offset(decoded, spec)
 
     @staticmethod
-    def _normalize_address(address: int) -> int:
-        """Normalize Modbus address to zero-based register offset."""
-        if address >= 40001:
+    def _normalize_register_address(address: int, memory_area: str) -> int:
+        """Normalize Modbus register addresses to zero-based offsets."""
+        if memory_area == "holding_register" and address >= 40001:
             return address - 40001
+        if memory_area == "input_register" and address >= 30001:
+            return address - 30001
         return address
 
     @staticmethod
-    def _normalize_coil_address(address: int) -> int:
-        """Normalize Modbus coil address to zero-based offset."""
+    def _normalize_binary_address(address: int, memory_area: str) -> int:
+        """Normalize Modbus binary addresses to zero-based offsets."""
+        if memory_area == "discrete_input" and address >= 10001:
+            return address - 10001
         return max(address - 1, 0) if address > 0 else address
 
     @staticmethod
@@ -509,6 +589,13 @@ class ModbusTcpAdapter(BaseAdapter):
         """Decode two 16-bit registers into IEEE754 float32."""
         packed = bytes([registers[0] >> 8, registers[0] & 0xFF, registers[1] >> 8, registers[1] & 0xFF])
         return unpack(">f", packed)[0]
+
+    @staticmethod
+    def _apply_scale_and_offset(value: float | int, spec: RegisterSpec) -> float | int:
+        adjusted = (float(value) * spec.scale) + spec.offset
+        if spec.data_type in {"uint16", "int16"} and spec.scale == 1.0 and spec.offset == 0.0:
+            return int(value)
+        return adjusted
 
     @staticmethod
     def _sleep(seconds: float) -> None:

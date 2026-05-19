@@ -14,6 +14,7 @@ from gateway_runtime.runtime import GatewayRuntime
 def _gateway_config(version: str) -> GatewayConfig:
     return GatewayConfig(
         gateway_id="gw-edge-01",
+        deployment_id="deployment-demo-01",
         adapters=[],
         sinks=[],
         validation={"enabled": False},
