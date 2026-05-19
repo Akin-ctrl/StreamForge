@@ -90,7 +90,7 @@ export function MqttConfigSection({ contract, form, setForm }: MqttConfigSection
           <p className="muted">Add the MQTT topic subscriptions this adapter should consume.</p>
         ) : (
           form.subscriptions.map((subscription, subscriptionIndex) => (
-            <div className="rule-stack" key={`${subscription.topic_filter}-${subscriptionIndex}`}>
+            <div className="rule-stack" key={subscription.uiId}>
               <div className="inline-grid">
                 <input
                   placeholder="Topic filter"
@@ -199,7 +199,7 @@ export function MqttConfigSection({ contract, form, setForm }: MqttConfigSection
                   <p className="muted">Add mappings from JSON fields to normalized parameters.</p>
                 ) : (
                   subscription.mappings.map((mapping, mappingIndex) => (
-                    <div className="inline-grid" key={`${mapping.json_field}-${mappingIndex}`}>
+                    <div className="inline-grid" key={mapping.uiId}>
                       <input
                         placeholder="JSON field"
                         value={mapping.json_field}

@@ -13,12 +13,15 @@ export function AdapterSelectionSection({ adapters, selectedIds, onToggle }: Ada
   return (
     <article className="card">
       <div className="page-header">
-        <h3>Adapters</h3>
-        <span className="muted">{selectedIds.length} selected</span>
+        <h3>Saved Adapters</h3>
+        <Link className="btn btn-secondary" to="/adapters">
+          Manage Saved Adapters
+        </Link>
       </div>
+      <p className="muted">{selectedIds.length} selected</p>
       <p className="muted">
-        Choose the saved ingress connections that should run on this gateway. Each adapter can already contain many
-        mapped points, subscriptions, or monitored items.
+        Choose the saved ingress connections that should run on this gateway. These are reusable configured adapter
+        objects, and each one can already contain many mapped points, subscriptions, or monitored items.
       </p>
       {adapters.length === 0 ? (
         <div className="empty-state">

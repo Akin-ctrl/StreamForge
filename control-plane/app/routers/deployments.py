@@ -8,10 +8,12 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.audit import record_audit_event
 from app.core.config_validation import validate_deployment_payload, validate_deployment_status
+from app.core.operator_checks import preflight_deployment
 from app.core.security import permission_set_for_user, require_permission
 from app.db.deps import get_db
 from app.db.models import Adapter, Deployment, Gateway, Sink, User
 from app.schemas.deployments import DeploymentCreateRequest, DeploymentItem, DeploymentUpdateRequest
+from app.schemas.operations import DeploymentPreflightResult
 
 router = APIRouter()
 
@@ -23,6 +25,10 @@ def _resolve_gateway(db: Session, gateway_id: str) -> Gateway:
     return gateway
 
 
+def _find_gateway(db: Session, gateway_id: str) -> Gateway | None:
+    return db.execute(select(Gateway).where(Gateway.gateway_id == gateway_id)).scalar_one_or_none()
+
+
 def _resolve_adapters(db: Session, adapter_ids: list[str]) -> list[Adapter]:
     rows = db.execute(select(Adapter).where(Adapter.adapter_id.in_(adapter_ids))).scalars().all()
     by_id = {row.adapter_id: row for row in rows}
@@ -32,6 +38,14 @@ def _resolve_adapters(db: Session, adapter_ids: list[str]) -> list[Adapter]:
     return [by_id[adapter_id] for adapter_id in adapter_ids]
 
 
+def _find_adapters(db: Session, adapter_ids: list[str]) -> list[Adapter]:
+    if not adapter_ids:
+        return []
+    rows = db.execute(select(Adapter).where(Adapter.adapter_id.in_(adapter_ids))).scalars().all()
+    by_id = {row.adapter_id: row for row in rows}
+    return [by_id[adapter_id] for adapter_id in adapter_ids if adapter_id in by_id]
+
+
 def _resolve_sinks(db: Session, sink_ids: list[str]) -> list[Sink]:
     rows = db.execute(select(Sink).where(Sink.sink_id.in_(sink_ids))).scalars().all()
     by_id = {row.sink_id: row for row in rows}
@@ -39,6 +53,14 @@ def _resolve_sinks(db: Session, sink_ids: list[str]) -> list[Sink]:
     if missing:
         raise HTTPException(status_code=404, detail=f"Sink(s) not found: {', '.join(missing)}")
     return [by_id[sink_id] for sink_id in sink_ids]
+
+
+def _find_sinks(db: Session, sink_ids: list[str]) -> list[Sink]:
+    if not sink_ids:
+        return []
+    rows = db.execute(select(Sink).where(Sink.sink_id.in_(sink_ids))).scalars().all()
+    by_id = {row.sink_id: row for row in rows}
+    return [by_id[sink_id] for sink_id in sink_ids if sink_id in by_id]
 
 
 def _deactivate_other_deployments(
@@ -109,6 +131,18 @@ def list_deployments(
         .order_by(Deployment.created_at.desc())
     ).scalars().all()
     return [_to_item(row) for row in rows]
+
+
+@router.post("/preflight", response_model=DeploymentPreflightResult)
+def preflight_deployment_route(
+    payload: DeploymentCreateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("deployments:update")),
+) -> DeploymentPreflightResult:
+    gateway = _find_gateway(db, payload.gateway_id)
+    adapters = _find_adapters(db, payload.adapter_ids)
+    sinks = _find_sinks(db, payload.sink_ids)
+    return preflight_deployment(db, payload, gateway, adapters, sinks)
 
 
 @router.get("/{deployment_id}", response_model=DeploymentItem)

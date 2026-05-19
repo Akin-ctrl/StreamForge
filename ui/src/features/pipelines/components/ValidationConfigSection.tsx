@@ -4,6 +4,10 @@ import {
   applyValidationJson,
   buildValidationJson,
   type AlarmRuleForm,
+  createDefaultAlarmRuleForm,
+  createDefaultGapRuleForm,
+  createDefaultRangeRuleForm,
+  createDefaultRateRuleForm,
   type DeploymentFormState,
   type GapRuleForm,
   type RangeRuleForm,
@@ -30,31 +34,28 @@ export function ValidationConfigSection({ form, setForm, onError }: ValidationCo
   const addRangeRule = () => {
     setForm((current) => ({
       ...current,
-      rangeRules: [...current.rangeRules, { parameter: '', min: '', max: '' }],
+      rangeRules: [...current.rangeRules, createDefaultRangeRuleForm()],
     }))
   }
 
   const addRateRule = () => {
     setForm((current) => ({
       ...current,
-      rateRules: [...current.rateRules, { parameter: '', limit: '' }],
+      rateRules: [...current.rateRules, createDefaultRateRuleForm()],
     }))
   }
 
   const addGapRule = () => {
     setForm((current) => ({
       ...current,
-      gapRules: [...current.gapRules, { parameter: '', seconds: '' }],
+      gapRules: [...current.gapRules, createDefaultGapRuleForm()],
     }))
   }
 
   const addAlarmRule = () => {
     setForm((current) => ({
       ...current,
-      alarmRules: [
-        ...current.alarmRules,
-        { parameter: '', type: '', severity: 'HIGH', operator: '>', threshold: '', message: '', clearMessage: '' },
-      ],
+      alarmRules: [...current.alarmRules, createDefaultAlarmRuleForm()],
     }))
   }
 
@@ -89,7 +90,7 @@ export function ValidationConfigSection({ form, setForm, onError }: ValidationCo
           </button>
         </div>
         {form.rangeRules.map((rule, index) => (
-          <div className="rule-row" key={`${rule.parameter}-${index}`}>
+          <div className="rule-row" key={rule.uiId}>
             <input
               placeholder="Parameter"
               value={rule.parameter}
@@ -140,7 +141,7 @@ export function ValidationConfigSection({ form, setForm, onError }: ValidationCo
           </button>
         </div>
         {form.rateRules.map((rule, index) => (
-          <div className="rule-row" key={`${rule.parameter}-${index}`}>
+          <div className="rule-row" key={rule.uiId}>
             <input
               placeholder="Parameter"
               value={rule.parameter}
@@ -181,7 +182,7 @@ export function ValidationConfigSection({ form, setForm, onError }: ValidationCo
           </button>
         </div>
         {form.gapRules.map((rule, index) => (
-          <div className="rule-row" key={`${rule.parameter}-${index}`}>
+          <div className="rule-row" key={rule.uiId}>
             <input
               placeholder="Parameter"
               value={rule.parameter}
@@ -222,7 +223,7 @@ export function ValidationConfigSection({ form, setForm, onError }: ValidationCo
           </button>
         </div>
         {form.alarmRules.map((rule, index) => (
-          <div className="rule-stack" key={`${rule.type}-${index}`}>
+          <div className="rule-stack" key={rule.uiId}>
             <div className="inline-grid">
               <input
                 placeholder="Parameter"

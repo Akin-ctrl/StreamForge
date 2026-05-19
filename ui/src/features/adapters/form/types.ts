@@ -1,6 +1,7 @@
 import type { JsonObject } from '../../../shared/types/json'
 
 export type ModbusPointForm = {
+  uiId: string
   point_name: string
   memory_area: string
   address: string
@@ -15,6 +16,7 @@ export type ModbusPointForm = {
 }
 
 export type MqttMappingForm = {
+  uiId: string
   json_field: string
   parameter: string
   unit: string
@@ -22,6 +24,7 @@ export type MqttMappingForm = {
 }
 
 export type MqttSubscriptionForm = {
+  uiId: string
   topic_filter: string
   message_type: string
   payload_format: string
@@ -31,6 +34,7 @@ export type MqttSubscriptionForm = {
 }
 
 export type OpcuaMonitoredItemForm = {
+  uiId: string
   node_id: string
   parameter: string
   unit: string

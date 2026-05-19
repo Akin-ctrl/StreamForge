@@ -31,7 +31,7 @@ export function ModbusPointsEditor({ contract, form, setForm }: ModbusPointsEdit
         <p className="muted">Add the parameters or state points this connection should read.</p>
       ) : (
         form.points.map((point, index) => (
-          <div className="rule-stack" key={`${point.point_name}-${index}`}>
+          <div className="rule-stack" key={point.uiId}>
             <div className="inline-grid">
               <input
                 placeholder="Point name"

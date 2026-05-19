@@ -12,6 +12,7 @@ export function AdapterReviewPanel({ form }: AdapterReviewPanelProps) {
   return (
     <aside className="card composer-sidebar">
       <h3>Review</h3>
+      <p className="muted">Saved reusable adapter object</p>
       <div className="review-grid">
         <strong>Adapter ID</strong>
         <span>{form.adapterId || 'New adapter'}</span>

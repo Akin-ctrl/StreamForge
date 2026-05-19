@@ -37,7 +37,7 @@ export function DeploymentReviewPanel(props: DeploymentReviewPanelProps) {
       </div>
 
       <div className="builder-section">
-        <h4>Adapters</h4>
+        <h4>Saved Adapters</h4>
         {selectedAdapters.length === 0 ? (
           <p className="error">Select at least one adapter.</p>
         ) : (
@@ -53,7 +53,7 @@ export function DeploymentReviewPanel(props: DeploymentReviewPanelProps) {
       </div>
 
       <div className="builder-section">
-        <h4>Sinks</h4>
+        <h4>Saved Sinks</h4>
         {selectedSinks.length === 0 ? (
           <p className="error">Select at least one sink.</p>
         ) : (

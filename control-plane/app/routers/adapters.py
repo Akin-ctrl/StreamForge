@@ -7,7 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.audit import record_audit_event
+from app.core.connection_tests import test_adapter_connection
 from app.core.config_validation import validate_adapter_config, validate_object_status
+from app.core.operator_checks import prepare_adapter_draft_config, validate_adapter_draft
 from app.core.secrets import (
     build_secret_status,
     list_configured_secret_fields,
@@ -19,6 +21,7 @@ from app.core.secrets import (
 from app.core.security import require_permission
 from app.db.deps import get_db
 from app.db.models import Adapter, User
+from app.schemas.operations import ConnectionTestResult, ValidationResult
 from app.schemas.adapters import AdapterCreateRequest, AdapterItem, AdapterUpdateRequest
 
 router = APIRouter()
@@ -46,6 +49,33 @@ def list_adapters(
     rows = db.execute(select(Adapter).order_by(Adapter.created_at.desc())).scalars().all()
     configured = list_configured_secret_fields(db, "adapter", [row.adapter_id for row in rows])
     return [_to_item(row, configured.get(row.adapter_id, set())) for row in rows]
+
+
+@router.post("/validate", response_model=ValidationResult)
+def validate_adapter_draft_route(
+    payload: AdapterCreateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("adapters:update")),
+) -> ValidationResult:
+    return validate_adapter_draft(db, payload)
+
+
+@router.post("/test-connection", response_model=ConnectionTestResult)
+def test_adapter_connection_route(
+    payload: AdapterCreateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("adapters:update")),
+) -> ConnectionTestResult:
+    validation = validate_adapter_draft(db, payload)
+    if not validation.valid:
+        return ConnectionTestResult(
+            ok=False,
+            status="failed",
+            message="Fix validation issues before running the adapter connection test",
+            warnings=validation.errors,
+        )
+    prepared = prepare_adapter_draft_config(db, payload)
+    return test_adapter_connection(payload.adapter_type, prepared.effective_config)
 
 
 @router.get("/{adapter_id}", response_model=AdapterItem)

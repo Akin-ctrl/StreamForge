@@ -9,9 +9,17 @@ import {
   getCatalog,
   listAdapters,
   listDeployments,
+  testAdapterConnection,
   updateAdapter,
+  validateAdapterDraft,
 } from '../../shared/api/client'
 import { buildAdapterUsage, summarizeAdapterConfig } from '../../shared/config/deployments'
+import { ActionResultPanel } from '../../shared/forms/ActionResultPanel'
+import {
+  connectionTestToViewModel,
+  type ActionResultViewModel,
+  validationResultToViewModel,
+} from '../../shared/forms/validationIssues'
 import {
   adapterToForm,
   applyAdapterConfigJson,
@@ -37,6 +45,8 @@ export function AdaptersPage() {
   const [configJson, setConfigJson] = useState(buildAdapterConfigJson(buildDefaultAdapterForm('modbus_tcp')))
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [actionResult, setActionResult] = useState<ActionResultViewModel | null>(null)
+  const [actionPending, setActionPending] = useState<'validate' | 'test' | null>(null)
 
   const refresh = async () => {
     setLoading(true)
@@ -72,6 +82,7 @@ export function AdaptersPage() {
     setEditingId(null)
     const nextContract = catalogAdapters.find((adapter) => adapter.adapter_type === nextType)
     setForm(buildDefaultAdapterForm(nextType, nextContract))
+    setActionResult(null)
   }
 
   const startCreate = (nextType: string) => {
@@ -82,6 +93,7 @@ export function AdaptersPage() {
     setEditingId(item.adapter_id)
     const nextContract = catalogAdapters.find((adapter) => adapter.adapter_type === item.adapter_type)
     setForm(adapterToForm(item, nextContract))
+    setActionResult(null)
   }
 
   const onSubmit = async () => {
@@ -96,6 +108,32 @@ export function AdaptersPage() {
       resetForm(form.adapterType)
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Failed to save adapter')
+    }
+  }
+
+  const onValidate = async () => {
+    setActionPending('validate')
+    setError(null)
+    try {
+      const result = await validateAdapterDraft(formToCreateAdapterPayload(form, currentContract))
+      setActionResult(validationResultToViewModel('Adapter Validation', result))
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'Failed to validate adapter')
+    } finally {
+      setActionPending(null)
+    }
+  }
+
+  const onTestConnection = async () => {
+    setActionPending('test')
+    setError(null)
+    try {
+      const result = await testAdapterConnection(formToCreateAdapterPayload(form, currentContract))
+      setActionResult(connectionTestToViewModel('Adapter Connection Test', result))
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'Failed to test adapter connection')
+    } finally {
+      setActionPending(null)
     }
   }
 
@@ -138,8 +176,9 @@ export function AdaptersPage() {
       </div>
 
       <p className="muted">
-        Configure protocol connections here, then attach them to deployments. One adapter instance represents one source
-        connection or session and may contain many mapped parameters inside its config.
+        Configure reusable protocol connections here, then attach those saved adapter objects to deployments. One
+        adapter instance represents one source connection or session and may contain many mapped parameters inside its
+        config.
       </p>
 
       {error && <p className="error">{error}</p>}
@@ -167,7 +206,7 @@ export function AdaptersPage() {
         <div className="builder-section">
           <article className="card">
             <div className="page-header">
-              <h3>{editingId ? 'Edit Adapter' : 'Create Adapter'}</h3>
+              <h3>{editingId ? 'Edit Saved Adapter' : 'Create Saved Adapter'}</h3>
               {editingId && (
                 <button className="btn btn-secondary" onClick={() => resetForm(form.adapterType)} type="button">
                   Cancel Edit
@@ -214,9 +253,18 @@ export function AdaptersPage() {
                 </button>
               </div>
             </details>
-            <button className="btn" onClick={() => void onSubmit()} type="button">
-              {editingId ? 'Update Adapter' : 'Create Adapter'}
-            </button>
+            {actionResult && <ActionResultPanel result={actionResult} />}
+            <div className="page-actions">
+              <button className="btn btn-secondary" disabled={actionPending !== null} onClick={() => void onValidate()} type="button">
+                {actionPending === 'validate' ? 'Validating…' : 'Validate'}
+              </button>
+              <button className="btn btn-secondary" disabled={actionPending !== null} onClick={() => void onTestConnection()} type="button">
+                {actionPending === 'test' ? 'Testing…' : 'Test Connection'}
+              </button>
+              <button className="btn" disabled={actionPending !== null} onClick={() => void onSubmit()} type="button">
+                {editingId ? 'Update Adapter' : 'Create Adapter'}
+              </button>
+            </div>
           </article>
 
           <article className="card">
@@ -275,7 +323,10 @@ export function AdaptersPage() {
                   <td>{usage.adapter.name}</td>
                   <td>{usage.adapter.adapter_type}</td>
                   <td>{usage.adapter.status}</td>
-                  <td>{usage.deploymentIds.length} deployment(s)</td>
+                  <td>
+                    {usage.deploymentIds.length} deployment(s)
+                    {usage.gatewayIds.length > 0 ? ` across ${usage.gatewayIds.length} gateway(s)` : ''}
+                  </td>
                   <td>{summarizeAdapterConfig(usage.adapter.adapter_type, usage.adapter.config)}</td>
                   <td>
                     <button className="btn btn-secondary" onClick={() => startEdit(usage.adapter)} type="button">

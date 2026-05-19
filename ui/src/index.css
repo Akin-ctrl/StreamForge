@@ -125,6 +125,7 @@ body {
   display: flex;
   gap: 0.75rem;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .section-grid,
@@ -258,6 +259,37 @@ body {
   flex-wrap: wrap;
   color: var(--text-muted);
   font-size: 0.88rem;
+}
+
+.action-result {
+  border-width: 1px;
+}
+
+.action-result-success {
+  border-color: color-mix(in oklab, var(--accent) 35%, var(--border));
+  background: color-mix(in oklab, var(--accent) 7%, var(--panel));
+}
+
+.action-result-warning {
+  border-color: #efc089;
+  background: #fff7eb;
+}
+
+.action-result-error {
+  border-color: color-mix(in oklab, var(--error) 30%, var(--border));
+  background: color-mix(in oklab, var(--error) 6%, var(--panel));
+}
+
+:root[data-theme='dark'] .action-result-warning {
+  border-color: #65401f;
+  background: #231a0e;
+}
+
+.plain-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.35rem;
 }
 
 .empty-state {
@@ -411,6 +443,12 @@ body {
 
 .table td .btn + .btn {
   margin-left: 0.5rem;
+}
+
+.tab-strip {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
 .login-page {

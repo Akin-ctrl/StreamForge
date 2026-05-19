@@ -8,6 +8,7 @@ export function SinkReviewPanel({ form }: SinkReviewPanelProps) {
   return (
     <aside className="card composer-sidebar">
       <h3>Review</h3>
+      <p className="muted">Saved reusable sink object</p>
       <div className="review-grid">
         <strong>Sink ID</strong>
         <span>{form.sinkId || 'New sink'}</span>

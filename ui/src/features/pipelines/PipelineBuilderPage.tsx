@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import {
   type AdapterItem,
+  type DeploymentPreflightResult,
   type GatewayItem,
   type SinkItem,
   createDeployment,
@@ -10,8 +11,11 @@ import {
   listAdapters,
   listGateways,
   listSinks,
+  preflightDeployment,
   updateDeployment,
 } from '../../shared/api/client'
+import { ActionResultPanel } from '../../shared/forms/ActionResultPanel'
+import { preflightToViewModel, type ActionResultViewModel } from '../../shared/forms/validationIssues'
 import {
   buildDefaultDeploymentForm,
   deploymentToForm,
@@ -38,6 +42,8 @@ export function PipelineBuilderPage() {
   const [adapters, setAdapters] = useState<AdapterItem[]>([])
   const [sinks, setSinks] = useState<SinkItem[]>([])
   const [form, setForm] = useState<DeploymentFormState>(buildDefaultDeploymentForm())
+  const [preflightResult, setPreflightResult] = useState<DeploymentPreflightResult | null>(null)
+  const [preflighting, setPreflighting] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -60,6 +66,7 @@ export function PipelineBuilderPage() {
         setGateways(gatewayRows)
         setAdapters(adapterRows)
         setSinks(sinkRows)
+        setPreflightResult(null)
 
         if (deployment) {
           setForm(deploymentToForm(deployment))
@@ -155,19 +162,38 @@ export function PipelineBuilderPage() {
     }
   }
 
+  const onPreflight = async () => {
+    setPreflighting(true)
+    setError(null)
+    try {
+      const result = await preflightDeployment(formToCreatePayload(form))
+      setPreflightResult(result)
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'Failed to run deployment preflight')
+    } finally {
+      setPreflighting(false)
+    }
+  }
+
+  const preflightViewModel: ActionResultViewModel | null = preflightResult ? preflightToViewModel(preflightResult) : null
+
   return (
     <section>
       <div className="page-header">
         <div>
           <h2>{editing ? 'Edit Deployment' : 'Compose Deployment'}</h2>
           <p className="muted">
-            Choose a gateway, attach saved adapters and sinks, then tune deployment-level processing before activation.
+            Compose one deployment from saved adapter and sink objects, then tune deployment-level processing before
+            activation.
           </p>
         </div>
         <div className="page-actions">
           <Link className="btn btn-secondary" to="/pipelines">
             Back To Deployments
           </Link>
+          <button className="btn btn-secondary" disabled={loading || saving || preflighting} onClick={() => void onPreflight()} type="button">
+            {preflighting ? 'Preflighting…' : 'Preflight Deployment'}
+          </button>
           <button className="btn" disabled={loading || saving} onClick={() => void onSubmit()} type="button">
             {saving ? 'Saving…' : editing ? 'Update Deployment' : 'Create Deployment'}
           </button>
@@ -180,6 +206,7 @@ export function PipelineBuilderPage() {
       ) : (
         <div className="composer-layout">
           <div className="builder-section">
+            {preflightViewModel && <ActionResultPanel result={preflightViewModel} />}
             <DeploymentBasicsSection
               deploymentId={form.deploymentId}
               editing={editing}

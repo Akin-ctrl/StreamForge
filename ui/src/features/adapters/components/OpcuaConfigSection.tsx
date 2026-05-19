@@ -97,7 +97,7 @@ export function OpcuaConfigSection({ contract, form, setForm }: OpcuaConfigSecti
           <p className="muted">Add the nodes this session should monitor.</p>
         ) : (
           form.monitoredItems.map((item, index) => (
-            <div className="rule-stack" key={`${item.node_id}-${index}`}>
+            <div className="rule-stack" key={item.uiId}>
               <div className="inline-grid">
                 <input
                   placeholder="Node ID"

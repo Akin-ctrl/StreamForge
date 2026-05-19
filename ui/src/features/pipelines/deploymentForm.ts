@@ -1,24 +1,29 @@
 import type { DeploymentCreatePayload, DeploymentItem, DeploymentUpdatePayload } from '../../shared/api/client'
 import { asBoolean, asJsonObject, asString, toNumberString } from '../../shared/config/json'
+import { createFormRowId } from '../../shared/forms/rowIds'
 import type { JsonObject } from '../../shared/types/json'
 
 export type RangeRuleForm = {
+  uiId: string
   parameter: string
   min: string
   max: string
 }
 
 export type RateRuleForm = {
+  uiId: string
   parameter: string
   limit: string
 }
 
 export type GapRuleForm = {
+  uiId: string
   parameter: string
   seconds: string
 }
 
 export type AlarmRuleForm = {
+  uiId: string
   parameter: string
   type: string
   severity: string
@@ -108,6 +113,44 @@ export function buildDefaultDeploymentForm(): DeploymentFormState {
   }
 }
 
+export function createDefaultRangeRuleForm(): RangeRuleForm {
+  return {
+    uiId: createFormRowId('range-rule'),
+    parameter: '',
+    min: '',
+    max: '',
+  }
+}
+
+export function createDefaultRateRuleForm(): RateRuleForm {
+  return {
+    uiId: createFormRowId('rate-rule'),
+    parameter: '',
+    limit: '',
+  }
+}
+
+export function createDefaultGapRuleForm(): GapRuleForm {
+  return {
+    uiId: createFormRowId('gap-rule'),
+    parameter: '',
+    seconds: '',
+  }
+}
+
+export function createDefaultAlarmRuleForm(): AlarmRuleForm {
+  return {
+    uiId: createFormRowId('alarm-rule'),
+    parameter: '',
+    type: '',
+    severity: 'HIGH',
+    operator: '>',
+    threshold: '',
+    message: '',
+    clearMessage: '',
+  }
+}
+
 export function deploymentToForm(deployment: DeploymentItem): DeploymentFormState {
   const defaults = buildDefaultDeploymentForm()
   const validation = asJsonObject(deployment.validation_config) || {}
@@ -135,16 +178,19 @@ export function deploymentToForm(deployment: DeploymentItem): DeploymentFormStat
         return null
       }
       return {
+        uiId: createDefaultRangeRuleForm().uiId,
         parameter,
         min: toNumberString(range.min),
         max: toNumberString(range.max),
       }
     }),
     rateRules: mapRulesObject(validation.rate_of_change, (parameter, config) => ({
+      uiId: createDefaultRateRuleForm().uiId,
       parameter,
       limit: toNumberString(config),
     })),
     gapRules: mapRulesObject(validation.gap_detection, (parameter, config) => ({
+      uiId: createDefaultGapRuleForm().uiId,
       parameter,
       seconds: toNumberString(config),
     })),
@@ -152,6 +198,7 @@ export function deploymentToForm(deployment: DeploymentItem): DeploymentFormStat
       ? validation.alarm_rules.map((rule) => {
           const alarmRule = asJsonObject(rule) || {}
           return {
+            uiId: createDefaultAlarmRuleForm().uiId,
             parameter: asString(alarmRule.parameter),
             type: asString(alarmRule.type),
             severity: asString(alarmRule.severity, 'HIGH'),

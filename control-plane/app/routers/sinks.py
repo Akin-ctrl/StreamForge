@@ -7,7 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.audit import record_audit_event
+from app.core.connection_tests import test_sink_connection
 from app.core.config_validation import validate_object_status, validate_sink_config
+from app.core.operator_checks import prepare_sink_draft_config, validate_sink_draft
 from app.core.secrets import (
     build_secret_status,
     delete_secret_fields_not_in,
@@ -21,6 +23,7 @@ from app.core.secrets import (
 from app.core.security import require_permission
 from app.db.deps import get_db
 from app.db.models import Sink, User
+from app.schemas.operations import ConnectionTestResult, ValidationResult
 from app.schemas.sinks import SinkCreateRequest, SinkItem, SinkUpdateRequest
 
 router = APIRouter()
@@ -48,6 +51,33 @@ def list_sinks(
     rows = db.execute(select(Sink).order_by(Sink.created_at.desc())).scalars().all()
     configured = list_configured_secret_fields(db, "sink", [row.sink_id for row in rows])
     return [_to_item(row, configured.get(row.sink_id, set())) for row in rows]
+
+
+@router.post("/validate", response_model=ValidationResult)
+def validate_sink_draft_route(
+    payload: SinkCreateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("sinks:update")),
+) -> ValidationResult:
+    return validate_sink_draft(db, payload)
+
+
+@router.post("/test-connection", response_model=ConnectionTestResult)
+def test_sink_connection_route(
+    payload: SinkCreateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("sinks:update")),
+) -> ConnectionTestResult:
+    validation = validate_sink_draft(db, payload)
+    if not validation.valid:
+        return ConnectionTestResult(
+            ok=False,
+            status="failed",
+            message="Fix validation issues before running the sink connection test",
+            warnings=validation.errors,
+        )
+    prepared = prepare_sink_draft_config(db, payload)
+    return test_sink_connection(payload.sink_type, prepared.effective_config)
 
 
 @router.get("/{sink_id}", response_model=SinkItem)

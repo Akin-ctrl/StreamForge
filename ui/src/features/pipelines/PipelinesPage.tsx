@@ -55,7 +55,8 @@ export function PipelinesPage() {
         <div>
           <h2>Deployments</h2>
           <p className="muted">
-            Review saved deployment compositions here, then open the composer when you need to create or revise one.
+            Review saved deployment compositions here. Each deployment attaches reusable saved adapters and sinks to one
+            gateway with deployment-level validation, event, and aggregate behavior.
           </p>
         </div>
         <div className="page-actions">
@@ -102,8 +103,8 @@ export function PipelinesPage() {
                 <th>Deployment ID</th>
                 <th>Gateway</th>
                 <th>Status</th>
-                <th>Adapters</th>
-                <th>Sinks</th>
+                <th>Saved Adapters</th>
+                <th>Saved Sinks</th>
                 <th>Created</th>
                 <th>Actions</th>
               </tr>
