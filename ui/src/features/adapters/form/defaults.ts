@@ -1,5 +1,6 @@
 import type { CatalogAdapterType } from '../../../shared/api/client'
 import { getCatalogBooleanDefault, getCatalogStringDefault } from '../../../shared/config/catalog'
+import { createFormRowId } from '../../../shared/forms/rowIds'
 import type {
   AdapterFormState,
   ModbusPointForm,
@@ -10,6 +11,7 @@ import type {
 
 export function createDefaultPointForm(contract?: CatalogAdapterType): ModbusPointForm {
   return {
+    uiId: createFormRowId('modbus-point'),
     point_name: '',
     memory_area: getCatalogStringDefault(contract, 'points', 'memory_area', 'holding_register'),
     address: '',
@@ -26,6 +28,7 @@ export function createDefaultPointForm(contract?: CatalogAdapterType): ModbusPoi
 
 export function createDefaultMqttMappingForm(contract?: CatalogAdapterType): MqttMappingForm {
   return {
+    uiId: createFormRowId('mqtt-mapping'),
     json_field: '',
     parameter: '',
     unit: '',
@@ -35,6 +38,7 @@ export function createDefaultMqttMappingForm(contract?: CatalogAdapterType): Mqt
 
 export function createDefaultMqttSubscriptionForm(contract?: CatalogAdapterType): MqttSubscriptionForm {
   return {
+    uiId: createFormRowId('mqtt-subscription'),
     topic_filter: '',
     message_type: getCatalogStringDefault(contract, 'subscriptions', 'message_type', 'telemetry'),
     payload_format: getCatalogStringDefault(contract, 'subscriptions', 'payload_format', 'json'),
@@ -46,6 +50,7 @@ export function createDefaultMqttSubscriptionForm(contract?: CatalogAdapterType)
 
 export function createDefaultMonitoredItemForm(contract?: CatalogAdapterType): OpcuaMonitoredItemForm {
   return {
+    uiId: createFormRowId('opcua-item'),
     node_id: '',
     parameter: '',
     unit: '',

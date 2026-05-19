@@ -4,6 +4,10 @@ import {
   applyValidationJson,
   buildValidationJson,
   type AlarmRuleForm,
+  createDefaultAlarmRuleForm,
+  createDefaultGapRuleForm,
+  createDefaultRangeRuleForm,
+  createDefaultRateRuleForm,
   type DeploymentFormState,
   type GapRuleForm,
   type RangeRuleForm,
@@ -30,31 +34,28 @@ export function ValidationConfigSection({ form, setForm, onError }: ValidationCo
   const addRangeRule = () => {
     setForm((current) => ({
       ...current,
-      rangeRules: [...current.rangeRules, { parameter: '', min: '', max: '' }],
+      rangeRules: [...current.rangeRules, createDefaultRangeRuleForm()],
     }))
   }
 
   const addRateRule = () => {
     setForm((current) => ({
       ...current,
-      rateRules: [...current.rateRules, { parameter: '', limit: '' }],
+      rateRules: [...current.rateRules, createDefaultRateRuleForm()],
     }))
   }
 
   const addGapRule = () => {
     setForm((current) => ({
       ...current,
-      gapRules: [...current.gapRules, { parameter: '', seconds: '' }],
+      gapRules: [...current.gapRules, createDefaultGapRuleForm()],
     }))
   }
 
   const addAlarmRule = () => {
     setForm((current) => ({
       ...current,
-      alarmRules: [
-        ...current.alarmRules,
-        { parameter: '', type: '', severity: 'HIGH', operator: '>', threshold: '', message: '', clearMessage: '' },
-      ],
+      alarmRules: [...current.alarmRules, createDefaultAlarmRuleForm()],
     }))
   }
 
@@ -70,7 +71,10 @@ export function ValidationConfigSection({ form, setForm, onError }: ValidationCo
   return (
     <article className="card">
       <div className="page-header">
-        <h3>Validation</h3>
+        <div className="card-header-copy">
+          <h3>Validation</h3>
+          <p className="muted">Define parameter quality rules and alarm conditions at the deployment level so operators can reason about one processing policy per gateway composition.</p>
+        </div>
       </div>
       <label className="toggle-label">
         <input
@@ -83,50 +87,75 @@ export function ValidationConfigSection({ form, setForm, onError }: ValidationCo
 
       <div className="nested-card card builder-section">
         <div className="page-header">
-          <h4>Parameter Ranges</h4>
+          <div className="card-header-copy">
+            <h4>Parameter Ranges</h4>
+            <p className="muted">Set expected operating bands for parameters that should stay within a stable range.</p>
+          </div>
           <button className="btn btn-secondary" onClick={addRangeRule} type="button">
             Add Range
           </button>
         </div>
         {form.rangeRules.map((rule, index) => (
-          <div className="rule-row" key={`${rule.parameter}-${index}`}>
-            <input
-              placeholder="Parameter"
-              value={rule.parameter}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  rangeRules: updateArrayItem<RangeRuleForm>(current.rangeRules, index, { ...rule, parameter: event.target.value }),
-                }))
-              }
-            />
-            <input
-              placeholder="Min"
-              value={rule.min}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  rangeRules: updateArrayItem<RangeRuleForm>(current.rangeRules, index, { ...rule, min: event.target.value }),
-                }))
-              }
-            />
-            <input
-              placeholder="Max"
-              value={rule.max}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  rangeRules: updateArrayItem<RangeRuleForm>(current.rangeRules, index, { ...rule, max: event.target.value }),
-                }))
-              }
-            />
-            <button
-              className="btn btn-secondary"
-              onClick={() => setForm((current) => ({ ...current, rangeRules: current.rangeRules.filter((_, itemIndex) => itemIndex !== index) }))}
-              type="button"
-            >
-              Remove
-            </button>
+          <div className="rule-card" key={rule.uiId}>
+            <div className="rule-card-header">
+              <div>
+                <strong>Range Rule {index + 1}</strong>
+                <p className="muted">Describe the parameter and its acceptable lower and upper bounds.</p>
+              </div>
+              <button
+                className="btn btn-secondary"
+                onClick={() =>
+                  setForm((current) => ({
+                    ...current,
+                    rangeRules: current.rangeRules.filter((_, itemIndex) => itemIndex !== index),
+                  }))
+                }
+                type="button"
+              >
+                Remove
+              </button>
+            </div>
+            <div className="rule-row">
+              <input
+                placeholder="Parameter"
+                value={rule.parameter}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    rangeRules: updateArrayItem<RangeRuleForm>(current.rangeRules, index, {
+                      ...rule,
+                      parameter: event.target.value,
+                    }),
+                  }))
+                }
+              />
+              <input
+                placeholder="Min"
+                value={rule.min}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    rangeRules: updateArrayItem<RangeRuleForm>(current.rangeRules, index, {
+                      ...rule,
+                      min: event.target.value,
+                    }),
+                  }))
+                }
+              />
+              <input
+                placeholder="Max"
+                value={rule.max}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    rangeRules: updateArrayItem<RangeRuleForm>(current.rangeRules, index, {
+                      ...rule,
+                      max: event.target.value,
+                    }),
+                  }))
+                }
+              />
+            </div>
           </div>
         ))}
         {form.rangeRules.length === 0 && <p className="muted">No range rules yet.</p>}
@@ -134,40 +163,62 @@ export function ValidationConfigSection({ form, setForm, onError }: ValidationCo
 
       <div className="nested-card card builder-section">
         <div className="page-header">
-          <h4>Rate Of Change</h4>
+          <div className="card-header-copy">
+            <h4>Rate Of Change</h4>
+            <p className="muted">Catch spikes or impossible jumps by limiting how far a parameter can move per sample.</p>
+          </div>
           <button className="btn btn-secondary" onClick={addRateRule} type="button">
             Add Limit
           </button>
         </div>
         {form.rateRules.map((rule, index) => (
-          <div className="rule-row" key={`${rule.parameter}-${index}`}>
-            <input
-              placeholder="Parameter"
-              value={rule.parameter}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  rateRules: updateArrayItem<RateRuleForm>(current.rateRules, index, { ...rule, parameter: event.target.value }),
-                }))
-              }
-            />
-            <input
-              placeholder="Max delta"
-              value={rule.limit}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  rateRules: updateArrayItem<RateRuleForm>(current.rateRules, index, { ...rule, limit: event.target.value }),
-                }))
-              }
-            />
-            <button
-              className="btn btn-secondary"
-              onClick={() => setForm((current) => ({ ...current, rateRules: current.rateRules.filter((_, itemIndex) => itemIndex !== index) }))}
-              type="button"
-            >
-              Remove
-            </button>
+          <div className="rule-card" key={rule.uiId}>
+            <div className="rule-card-header">
+              <div>
+                <strong>Rate Rule {index + 1}</strong>
+                <p className="muted">Specify the parameter and its maximum allowed change between samples.</p>
+              </div>
+              <button
+                className="btn btn-secondary"
+                onClick={() =>
+                  setForm((current) => ({
+                    ...current,
+                    rateRules: current.rateRules.filter((_, itemIndex) => itemIndex !== index),
+                  }))
+                }
+                type="button"
+              >
+                Remove
+              </button>
+            </div>
+            <div className="rule-row">
+              <input
+                placeholder="Parameter"
+                value={rule.parameter}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    rateRules: updateArrayItem<RateRuleForm>(current.rateRules, index, {
+                      ...rule,
+                      parameter: event.target.value,
+                    }),
+                  }))
+                }
+              />
+              <input
+                placeholder="Max delta"
+                value={rule.limit}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    rateRules: updateArrayItem<RateRuleForm>(current.rateRules, index, {
+                      ...rule,
+                      limit: event.target.value,
+                    }),
+                  }))
+                }
+              />
+            </div>
           </div>
         ))}
         {form.rateRules.length === 0 && <p className="muted">No rate-of-change rules yet.</p>}
@@ -175,40 +226,62 @@ export function ValidationConfigSection({ form, setForm, onError }: ValidationCo
 
       <div className="nested-card card builder-section">
         <div className="page-header">
-          <h4>Gap Detection</h4>
+          <div className="card-header-copy">
+            <h4>Gap Detection</h4>
+            <p className="muted">Describe when a parameter should be treated as missing or stalled.</p>
+          </div>
           <button className="btn btn-secondary" onClick={addGapRule} type="button">
             Add Gap Rule
           </button>
         </div>
         {form.gapRules.map((rule, index) => (
-          <div className="rule-row" key={`${rule.parameter}-${index}`}>
-            <input
-              placeholder="Parameter"
-              value={rule.parameter}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  gapRules: updateArrayItem<GapRuleForm>(current.gapRules, index, { ...rule, parameter: event.target.value }),
-                }))
-              }
-            />
-            <input
-              placeholder="Seconds"
-              value={rule.seconds}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  gapRules: updateArrayItem<GapRuleForm>(current.gapRules, index, { ...rule, seconds: event.target.value }),
-                }))
-              }
-            />
-            <button
-              className="btn btn-secondary"
-              onClick={() => setForm((current) => ({ ...current, gapRules: current.gapRules.filter((_, itemIndex) => itemIndex !== index) }))}
-              type="button"
-            >
-              Remove
-            </button>
+          <div className="rule-card" key={rule.uiId}>
+            <div className="rule-card-header">
+              <div>
+                <strong>Gap Rule {index + 1}</strong>
+                <p className="muted">Specify the parameter and how many seconds can pass before it is considered absent.</p>
+              </div>
+              <button
+                className="btn btn-secondary"
+                onClick={() =>
+                  setForm((current) => ({
+                    ...current,
+                    gapRules: current.gapRules.filter((_, itemIndex) => itemIndex !== index),
+                  }))
+                }
+                type="button"
+              >
+                Remove
+              </button>
+            </div>
+            <div className="rule-row">
+              <input
+                placeholder="Parameter"
+                value={rule.parameter}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    gapRules: updateArrayItem<GapRuleForm>(current.gapRules, index, {
+                      ...rule,
+                      parameter: event.target.value,
+                    }),
+                  }))
+                }
+              />
+              <input
+                placeholder="Seconds"
+                value={rule.seconds}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    gapRules: updateArrayItem<GapRuleForm>(current.gapRules, index, {
+                      ...rule,
+                      seconds: event.target.value,
+                    }),
+                  }))
+                }
+              />
+            </div>
           </div>
         ))}
         {form.gapRules.length === 0 && <p className="muted">No gap-detection rules yet.</p>}
@@ -216,13 +289,35 @@ export function ValidationConfigSection({ form, setForm, onError }: ValidationCo
 
       <div className="nested-card card builder-section">
         <div className="page-header">
-          <h4>Alarm Rules</h4>
+          <div className="card-header-copy">
+            <h4>Alarm Rules</h4>
+            <p className="muted">Define operator-facing alarms that should be emitted when validation or thresholds fire.</p>
+          </div>
           <button className="btn btn-secondary" onClick={addAlarmRule} type="button">
             Add Alarm
           </button>
         </div>
         {form.alarmRules.map((rule, index) => (
-          <div className="rule-stack" key={`${rule.type}-${index}`}>
+          <div className="rule-card" key={rule.uiId}>
+            <div className="rule-card-header">
+              <div>
+                <strong>Alarm Rule {index + 1}</strong>
+                <p className="muted">Describe the parameter, alarm classification, and the messages operators should see.</p>
+              </div>
+              <button
+                className="btn btn-secondary"
+                onClick={() =>
+                  setForm((current) => ({
+                    ...current,
+                    alarmRules: current.alarmRules.filter((_, itemIndex) => itemIndex !== index),
+                  }))
+                }
+                type="button"
+              >
+                Remove
+              </button>
+            </div>
+            <div className="rule-stack">
             <div className="inline-grid">
               <input
                 placeholder="Parameter"
@@ -306,13 +401,7 @@ export function ValidationConfigSection({ form, setForm, onError }: ValidationCo
                   }))
                 }
               />
-              <button
-                className="btn btn-secondary"
-                onClick={() => setForm((current) => ({ ...current, alarmRules: current.alarmRules.filter((_, itemIndex) => itemIndex !== index) }))}
-                type="button"
-              >
-                Remove
-              </button>
+            </div>
             </div>
           </div>
         ))}

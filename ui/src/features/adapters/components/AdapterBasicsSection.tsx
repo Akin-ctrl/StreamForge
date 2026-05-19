@@ -32,7 +32,10 @@ export function AdapterBasicsSection(props: AdapterBasicsSectionProps) {
   return (
     <article className="card">
       <div className="page-header">
-        <h3>Adapter Basics</h3>
+        <div className="card-header-copy">
+          <h3>Adapter Basics</h3>
+          <p className="muted">Give the adapter a stable identity, choose the protocol, and describe what source connection this object represents.</p>
+        </div>
       </div>
       <div className="inline-grid">
         <label>
@@ -66,7 +69,7 @@ export function AdapterBasicsSection(props: AdapterBasicsSectionProps) {
       </div>
       <label>
         Description
-        <input value={description} onChange={(event) => onDescriptionChange(event.target.value)} />
+        <textarea rows={3} value={description} onChange={(event) => onDescriptionChange(event.target.value)} />
       </label>
     </article>
   )

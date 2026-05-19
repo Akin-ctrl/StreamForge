@@ -1,5 +1,6 @@
 import type { AdapterItem, CatalogAdapterType } from '../../../shared/api/client'
 import { asBoolean, asJsonObject, asString, cloneJsonObject, toStringValue } from '../../../shared/config/json'
+import { createFormRowId } from '../../../shared/forms/rowIds'
 import { buildDefaultAdapterForm, createDefaultMonitoredItemForm, createDefaultMqttMappingForm, createDefaultMqttSubscriptionForm, createDefaultPointForm } from './defaults'
 import { isAdapterPasswordConfigured } from './secrets'
 import type { AdapterFormState } from './types'
@@ -60,6 +61,7 @@ export function adapterToForm(adapter: AdapterItem, contract?: CatalogAdapterTyp
       ? config.points.map((point) => {
           const pointRecord = asJsonObject(point) || {}
           return {
+            uiId: createFormRowId('modbus-point'),
             point_name: asString(pointRecord.point_name),
             memory_area: asString(pointRecord.memory_area, defaultPoint.memory_area),
             address: toStringValue(pointRecord.address),
@@ -78,6 +80,7 @@ export function adapterToForm(adapter: AdapterItem, contract?: CatalogAdapterTyp
       ? config.subscriptions.map((subscription) => {
           const subscriptionRecord = asJsonObject(subscription) || {}
           return {
+            uiId: createFormRowId('mqtt-subscription'),
             topic_filter: asString(subscriptionRecord.topic_filter),
             message_type: asString(subscriptionRecord.message_type, defaultSubscription.message_type),
             payload_format: asString(subscriptionRecord.payload_format, defaultSubscription.payload_format),
@@ -87,6 +90,7 @@ export function adapterToForm(adapter: AdapterItem, contract?: CatalogAdapterTyp
               ? subscriptionRecord.mappings.map((mapping) => {
                   const mappingRecord = asJsonObject(mapping) || {}
                   return {
+                    uiId: createFormRowId('mqtt-mapping'),
                     json_field: asString(mappingRecord.json_field),
                     parameter: asString(mappingRecord.parameter),
                     unit: asString(mappingRecord.unit),
@@ -101,6 +105,7 @@ export function adapterToForm(adapter: AdapterItem, contract?: CatalogAdapterTyp
       ? config.monitored_items.map((item) => {
           const itemRecord = asJsonObject(item) || {}
           return {
+            uiId: createFormRowId('opcua-item'),
             node_id: asString(itemRecord.node_id),
             parameter: asString(itemRecord.parameter),
             unit: asString(itemRecord.unit),

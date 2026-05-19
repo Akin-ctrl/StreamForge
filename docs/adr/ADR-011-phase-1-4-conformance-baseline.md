@@ -22,18 +22,18 @@ Status interpretation note:
 
 ---
 
-## Current Status Update (2026-03-28)
+## Current Status Update (2026-05-19)
 
 ### Phase Status
 
-- **Phase 1 (Core Foundation): Completed** for original minimal scope.
-- **Phase 2 (Control Plane API): Partial** (operator-driven gateway creation model in place; broader roadmap items remain).
-- **Phase 3 (Validation & Sinks): Completed** for original minimal scope.
-- **Phase 4 (UI): Completed** for original milestone scope (Gateways, Pipeline Builder, Health, Alarms, DLQ).
+- **Phase 1 (Core Foundation): Completed** for the current committed core scope.
+- **Phase 2 (Control Plane API): Substantially implemented** for the operator-driven model, with broader enterprise/OAuth and zero-touch onboarding still outside the completed set.
+- **Phase 3 (Validation & Sinks): Completed** for the current committed telemetry, validation, events, aggregates, and sink scope.
+- **Phase 4 (UI): Completed and expanded** beyond the original milestone scope (reusable adapters/sinks, deployment composition, validation/test/preflight, events, aggregates, fleet, and logs).
 
 ### Open Work Anchors
 
-- Remaining open implementation items are tracked in P2/P3 checkboxes below.
+- Remaining open implementation items are now narrower and are tracked in P2/P3 checkboxes below plus `PROJECT_PHASES.md` and `docs/UI_PRODUCT_ACTION_LIST.md`.
 - Completed issue items are moved to [docs/ISSUES_SOLVED.md](../ISSUES_SOLVED.md).
 
 ---
@@ -108,16 +108,16 @@ Status interpretation note:
 - **Partial**: Local Kafka pattern exists, but runtime lifecycle control and advanced buffering controls are limited.
 
 ### ADR-002 (Protocol Adapters)
-- **Partial**: Containerized adapter pattern exists; runtime support remains effectively single-adapter type.
+- **Partial**: Containerized adapter pattern exists and implemented support now covers `modbus_tcp`, `modbus_rtu`, `mqtt`, and `opcua`; broader wireless/field protocols remain open.
 
 ### ADR-003 (Schema Management)
-- **Not aligned**: Docs/ADR specify Avro + Schema Registry + offline schema cache; implementation path is primarily JSON serialization with local JSON schema validation.
+- **Aligned**: Avro + Schema Registry + offline schema-cache behavior are implemented in the current runtime/control-plane path.
 
 ### ADR-004 (Validation & DLQ)
-- **Partial**: Validation and DLQ routing exist; operator DLQ workflows are missing.
+- **Aligned**: Validation, DLQ routing, and operator DLQ workflows are implemented.
 
 ### ADR-005 (Sink Architecture)
-- **Partial**: Containerized sink pattern implemented; sink catalog scope remains limited in practice.
+- **Partial**: Containerized sink pattern is implemented with `timescaledb`, `kafka`, `http`, and `alert_router`; broader sink breadth remains open.
 
 ### ADR-006 (Gateway Autonomy)
 - **Aligned**: Cached config semantics now support deterministic startup, offline reuse, and background refresh consistent with the autonomy decision.
@@ -129,7 +129,7 @@ Status interpretation note:
 - **Aligned**: Explicit circuit breaker behavior now protects control-plane requests and sink downstream writes, with health visibility and cooldown semantics matching ADR-008.
 
 ### ADR-009 (Overflow Handling)
-- **Not aligned**: Tiered overflow controls (compress/downsample/priority eviction/block) are not implemented.
+- **Aligned**: Tiered overflow controls (compress/downsample/priority eviction/block) are implemented.
 
 ### ADR-010 (Copilot/MCP)
 - **Not aligned for Phase 1-4 scope**: No implemented MCP tool surface matching ADR intent.
@@ -192,8 +192,8 @@ The checklist below converts the findings in this ADR into a practical fix seque
 
 - [x] Decide and codify final schema strategy: align implementation/docs on Avro + Schema Registry or formally revise ADR/docs around the current JSON path.
 - [x] Implement the chosen schema path consistently, including offline schema-cache behavior if Avro/Registry remains the target architecture.
-- [ ] Expand adapter support beyond effectively single-protocol `modbus_tcp`, or narrow architecture claims if multi-protocol support is deferred.
-- [ ] Expand sink portfolio to match documented architecture/ADR scope, or narrow architecture claims if limited sink support is the intentional near-term scope.
+- [ ] Expand remaining adapter support beyond the current implemented set (`modbus_tcp`, `modbus_rtu`, `mqtt`, `opcua`), or narrow architecture claims if wireless/field protocols are deferred.
+- [ ] Expand remaining sink portfolio beyond the current implemented set (`timescaledb`, `kafka`, `http`, `alert_router`), or narrow architecture claims if broader cloud/archive sinks are deferred.
 - [x] Implement tiered overflow handling from ADR-009: compress, downsample, priority eviction, and blocking behavior.
 - [ ] Complete authentication roadmap gaps for richer RBAC and/or OAuth/OIDC if ADR-007 remains in scope for this phase set.
 - [ ] Implement MCP/Copilot tool surface only if ADR-010 remains part of the committed architecture roadmap; otherwise explicitly defer/re-scope it.

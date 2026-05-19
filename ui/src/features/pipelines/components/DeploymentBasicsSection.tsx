@@ -30,12 +30,14 @@ export function DeploymentBasicsSection(props: DeploymentBasicsSectionProps) {
   return (
     <article className="card">
       <div className="page-header">
-        <h3>Gateway</h3>
+        <div className="card-header-copy">
+          <h3>Gateway Assignment</h3>
+          <p className="muted">
+            Bind one gateway to this deployment and keep the deployment identity readable before attaching reusable
+            adapters and sinks.
+          </p>
+        </div>
       </div>
-      <p className="muted">
-        Each deployment binds one gateway to a saved set of adapters, sinks, and processing rules. Only one deployment
-        should be active for a gateway at a time.
-      </p>
       <div className="inline-grid">
         <label>
           Deployment ID

@@ -15,7 +15,12 @@ export function ModbusRtuConfigSection({ contract, form, setForm }: ModbusRtuCon
   return (
     <article className="card">
       <div className="page-header">
-        <h3>Modbus RTU</h3>
+        <div className="card-header-copy">
+          <h3>Modbus RTU</h3>
+          <p className="muted">
+            Define the serial connection, polling cadence, and the points this device should normalize into telemetry.
+          </p>
+        </div>
       </div>
       <div className="inline-grid">
         <label>

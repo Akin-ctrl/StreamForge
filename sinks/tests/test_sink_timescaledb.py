@@ -196,6 +196,56 @@ class SinkTimescaleHealthTests(unittest.TestCase):
 
         self.assertTrue(any("DROP TABLE IF EXISTS" in query for query, _ in calls))
 
+    def test_ensure_table_shape_rejects_populated_incompatible_table(self) -> None:
+        class FakeCursor:
+            def __init__(self) -> None:
+                self._last = None
+
+            def execute(self, query: str, params=None) -> None:
+                self._last = query
+
+            def fetchall(self):
+                if "information_schema.columns" in (self._last or ""):
+                    return [("asset_id",), ("parameter",), ("value",), ("gateway_time",), ("payload",)]
+                return []
+
+            def fetchone(self):
+                if "COUNT(*)" in (self._last or ""):
+                    return (3,)
+                return None
+
+        with self.assertRaisesRegex(ValueError, "manual migration required"):
+            sink_main._ensure_table_shape(
+                FakeCursor(),
+                "telemetry_1s",
+                {"asset_id", "parameter", "classification", "window_start", "window_end", "payload"},
+            )
+
+    def test_ensure_telemetry_table_tolerates_hypertable_promotion_failure(self) -> None:
+        calls: list[tuple[str, tuple | None]] = []
+
+        class FakeCursor:
+            def execute(self, query: str, params=None) -> None:
+                calls.append((query, params))
+                if "create_hypertable" in query:
+                    raise RuntimeError("cannot create a unique index without the column \"gateway_time\"")
+
+            def fetchall(self):
+                return []
+
+            def fetchone(self):
+                return None
+
+        original_error_types = sink_main._db_optional_error_types
+        try:
+            sink_main._db_optional_error_types = lambda: (RuntimeError,)
+            sink_main._ensure_telemetry_table(FakeCursor(), "telemetry_clean")
+        finally:
+            sink_main._db_optional_error_types = original_error_types
+
+        self.assertTrue(any("CREATE TABLE IF NOT EXISTS" in query for query, _ in calls))
+        self.assertTrue(any("create_hypertable" in query for query, _ in calls))
+
     def test_dedupe_aggregate_table_uses_window_identity(self) -> None:
         calls: list[str] = []
 

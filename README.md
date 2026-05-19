@@ -172,23 +172,22 @@ bash scripts/check_standards_gates.sh
 - ✅ Basic protocol adapter baseline (`modbus_tcp`)
 - ✅ UI baseline for gateway operations
 
-**Milestone 2: Reliability & Scale** (In progress)
-- Schema registry integration
-- Edge buffering with overflow handling
-- Multi-gateway fleet management
-- Advanced sink services
+**Milestone 2: Control & Operator Workflows** (Completed for current core scope)
+- Reusable adapters, reusable sinks, and composed deployments
+- Adapter/sink validation, connection testing, and deployment preflight
+- Events, aggregates, fleet, and logs operator views
 
-**Milestone 3: Intelligence** (Not started)
-- AI Copilot integration
-- Anomaly detection
-- Auto-configuration suggestions
-- Predictive buffering
+**Milestone 3: Reliability & Observability** (In progress)
+- Schema registry integration and offline cache
+- Overflow controls, health surfaces, and fleet/runtime visibility
+- Recent runtime logs in the control plane/UI
+- Longer-lived remote log storage and deeper production validation remain open
 
-**Milestone 4: Enterprise Features** (Not started)
-- Advanced RBAC
-- Multi-tenancy
-- SaaS deployment option
-- Marketplace for adapters
+**Milestone 4: Expansion & Enterprise Roadmap** (In progress)
+- Additional adapters and sinks beyond the current industrial/web portfolio
+- General configuration UX polish and stronger design-system consistency
+- Optional OAuth/OIDC and richer enterprise auth
+- MCP/Copilot tooling only if retained in committed scope
 
 ## License
 

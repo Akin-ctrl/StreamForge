@@ -13,12 +13,18 @@ export function SinkSelectionSection({ sinks, selectedIds, onToggle }: SinkSelec
   return (
     <article className="card">
       <div className="page-header">
-        <h3>Sinks</h3>
-        <span className="muted">{selectedIds.length} selected</span>
+        <div className="card-header-copy">
+          <h3>Saved Sinks</h3>
+          <p className="muted">
+            Select reusable delivery targets that will receive validated telemetry, events, or aggregate outputs from
+            this gateway composition.
+          </p>
+        </div>
+        <Link className="btn btn-secondary" to="/sinks">
+          Manage Saved Sinks
+        </Link>
       </div>
-      <p className="muted">
-        Choose the delivery targets that should receive this gateway&apos;s validated, event, and aggregate output.
-      </p>
+      <p className="muted">{selectedIds.length} selected</p>
       {sinks.length === 0 ? (
         <div className="empty-state">
           <p className="muted">No sinks are configured yet.</p>

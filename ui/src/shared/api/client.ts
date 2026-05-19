@@ -82,6 +82,64 @@ export type DeploymentItem = {
   updated_at: string
 }
 
+export type EventItem = {
+  source_sink_id: string
+  source_table: string
+  record_id: number
+  gateway_id?: string | null
+  asset_id: string
+  event_type: string
+  classification: string
+  gateway_time: string
+  device_time?: string | null
+  previous_state: JsonObject
+  new_state: JsonObject
+  metadata: JsonObject
+  payload: JsonObject
+}
+
+export type AggregateResolution = '1s' | '1min'
+
+export type AggregateItem = {
+  resolution: AggregateResolution
+  source_sink_id: string
+  source_table: string
+  record_id: number
+  gateway_id?: string | null
+  asset_id: string
+  parameter: string
+  unit?: string | null
+  classification: string
+  window_start: string
+  window_end: string
+  avg: number
+  min: number
+  max: number
+  stddev: number
+  count: number
+  p50: number
+  p95: number
+  p99: number
+  good_samples: number
+  suspect_samples: number
+  uncertain_samples: number
+  bad_samples: number
+  pct_good: number
+  payload: JsonObject
+}
+
+export type LogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL'
+
+export type LogEntry = {
+  timestamp: string
+  gateway_id: string
+  level: LogLevel | string
+  logger: string
+  component: string
+  message: string
+  exception?: string | null
+}
+
 export type AlarmSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO'
 export type AlarmState = 'ACTIVE' | 'ACKNOWLEDGED' | 'CLEARED' | 'SUPPRESSED'
 
@@ -213,6 +271,40 @@ export type CatalogSinkType = {
 export type CatalogResponse = {
   adapters: CatalogAdapterType[]
   sinks: CatalogSinkType[]
+}
+
+export type ValidationIssue = {
+  field_path?: string | null
+  message: string
+  severity: 'error' | 'warning'
+}
+
+export type ValidationResult = {
+  valid: boolean
+  errors: string[]
+  warnings: string[]
+  field_issues: ValidationIssue[]
+}
+
+export type ConnectionProbeResult = {
+  name: string
+  status: 'passed' | 'failed' | 'warning' | 'unsupported'
+  message: string
+}
+
+export type ConnectionTestResult = {
+  ok: boolean
+  status: 'passed' | 'failed' | 'unsupported_here' | 'cannot_test_from_control_plane'
+  message: string
+  warnings: string[]
+  probes: ConnectionProbeResult[]
+}
+
+export type DeploymentPreflightResult = {
+  ready: boolean
+  errors: string[]
+  warnings: string[]
+  field_issues: ValidationIssue[]
 }
 
 export type BootstrapStatusResponse = {
@@ -413,6 +505,20 @@ export function createAdapter(payload: AdapterCreatePayload) {
   })
 }
 
+export function validateAdapterDraft(payload: AdapterCreatePayload) {
+  return request<ValidationResult>('/api/v1/adapters/validate', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function testAdapterConnection(payload: AdapterCreatePayload) {
+  return request<ConnectionTestResult>('/api/v1/adapters/test-connection', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
 export function updateAdapter(adapterId: string, payload: AdapterUpdatePayload) {
   return request<AdapterItem>(`/api/v1/adapters/${encodeURIComponent(adapterId)}`, {
     method: 'PUT',
@@ -432,6 +538,20 @@ export function listSinks() {
 
 export function createSink(payload: SinkCreatePayload) {
   return request<SinkItem>('/api/v1/sinks', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function validateSinkDraft(payload: SinkCreatePayload) {
+  return request<ValidationResult>('/api/v1/sinks/validate', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function testSinkConnection(payload: SinkCreatePayload) {
+  return request<ConnectionTestResult>('/api/v1/sinks/test-connection', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
@@ -460,6 +580,13 @@ export function getDeployment(deploymentId: string) {
 
 export function createDeployment(payload: DeploymentCreatePayload) {
   return request<DeploymentItem>('/api/v1/deployments', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function preflightDeployment(payload: DeploymentCreatePayload) {
+  return request<DeploymentPreflightResult>('/api/v1/deployments/preflight', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
@@ -580,4 +707,104 @@ export function discardDlqMessage(messageId: string, reviewedBy?: string) {
     method: 'POST',
     body: reviewedBy ? JSON.stringify({ reviewed_by: reviewedBy }) : undefined,
   })
+}
+
+export function listEvents(filters?: {
+  gateway_id?: string
+  asset_id?: string
+  event_type?: string
+  classification?: string
+  start_time?: string
+  end_time?: string
+  limit?: number
+}) {
+  const params = new URLSearchParams()
+
+  if (filters?.gateway_id) {
+    params.set('gateway_id', filters.gateway_id)
+  }
+  if (filters?.asset_id) {
+    params.set('asset_id', filters.asset_id)
+  }
+  if (filters?.event_type) {
+    params.set('event_type', filters.event_type)
+  }
+  if (filters?.classification) {
+    params.set('classification', filters.classification)
+  }
+  if (filters?.start_time) {
+    params.set('start_time', filters.start_time)
+  }
+  if (filters?.end_time) {
+    params.set('end_time', filters.end_time)
+  }
+  if (filters?.limit) {
+    params.set('limit', String(filters.limit))
+  }
+
+  const suffix = params.toString()
+  return request<EventItem[]>(`/api/v1/events${suffix ? `?${suffix}` : ''}`)
+}
+
+export function listAggregates(filters: {
+  resolution: AggregateResolution
+  gateway_id?: string
+  asset_id?: string
+  parameter?: string
+  classification?: string
+  start_time?: string
+  end_time?: string
+  limit?: number
+}) {
+  const params = new URLSearchParams()
+  params.set('resolution', filters.resolution)
+
+  if (filters.gateway_id) {
+    params.set('gateway_id', filters.gateway_id)
+  }
+  if (filters.asset_id) {
+    params.set('asset_id', filters.asset_id)
+  }
+  if (filters.parameter) {
+    params.set('parameter', filters.parameter)
+  }
+  if (filters.classification) {
+    params.set('classification', filters.classification)
+  }
+  if (filters.start_time) {
+    params.set('start_time', filters.start_time)
+  }
+  if (filters.end_time) {
+    params.set('end_time', filters.end_time)
+  }
+  if (filters.limit) {
+    params.set('limit', String(filters.limit))
+  }
+
+  return request<AggregateItem[]>(`/api/v1/aggregates?${params.toString()}`)
+}
+
+export function listLogs(filters?: {
+  gateway_id?: string
+  component?: string
+  level?: string
+  limit?: number
+}) {
+  const params = new URLSearchParams()
+
+  if (filters?.gateway_id) {
+    params.set('gateway_id', filters.gateway_id)
+  }
+  if (filters?.component) {
+    params.set('component', filters.component)
+  }
+  if (filters?.level) {
+    params.set('level', filters.level)
+  }
+  if (filters?.limit) {
+    params.set('limit', String(filters.limit))
+  }
+
+  const suffix = params.toString()
+  return request<LogEntry[]>(`/api/v1/logs${suffix ? `?${suffix}` : ''}`)
 }

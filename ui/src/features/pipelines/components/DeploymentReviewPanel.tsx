@@ -26,22 +26,34 @@ export function DeploymentReviewPanel(props: DeploymentReviewPanelProps) {
 
   return (
     <aside className="card composer-sidebar">
-      <h3>Review</h3>
-      <div className="review-grid">
-        <strong>Deployment</strong>
-        <span>{deploymentId || 'New deployment'}</span>
-        <strong>Gateway</strong>
-        <span>{gatewayId || 'Not selected'}</span>
-        <strong>Status</strong>
-        <span>{status}</span>
+      <div className="card-header-copy">
+        <h3>Deployment Summary</h3>
+        <p className="muted">
+          Review the gateway assignment, attached objects, and processing posture before saving or activating a
+          deployment.
+        </p>
+      </div>
+      <div className="summary-grid">
+        <div className="summary-item">
+          <span className="summary-label">Deployment</span>
+          <strong>{deploymentId || 'New deployment'}</strong>
+        </div>
+        <div className="summary-item">
+          <span className="summary-label">Gateway</span>
+          <strong>{gatewayId || 'Not selected'}</strong>
+        </div>
+        <div className="summary-item">
+          <span className="summary-label">Status</span>
+          <strong>{status}</strong>
+        </div>
       </div>
 
-      <div className="builder-section">
-        <h4>Adapters</h4>
+      <div className="review-section">
+        <h4>Saved Adapters</h4>
         {selectedAdapters.length === 0 ? (
           <p className="error">Select at least one adapter.</p>
         ) : (
-          <ul className="plain-list">
+          <ul className="review-list">
             {selectedAdapters.map((adapter) => (
               <li key={adapter.adapter_id}>
                 <strong>{adapter.name}</strong>
@@ -52,12 +64,12 @@ export function DeploymentReviewPanel(props: DeploymentReviewPanelProps) {
         )}
       </div>
 
-      <div className="builder-section">
-        <h4>Sinks</h4>
+      <div className="review-section">
+        <h4>Saved Sinks</h4>
         {selectedSinks.length === 0 ? (
           <p className="error">Select at least one sink.</p>
         ) : (
-          <ul className="plain-list">
+          <ul className="review-list">
             {selectedSinks.map((sink) => (
               <li key={sink.sink_id}>
                 <strong>{sink.name}</strong>
@@ -68,12 +80,21 @@ export function DeploymentReviewPanel(props: DeploymentReviewPanelProps) {
         )}
       </div>
 
-      <div className="builder-section">
+      <div className="review-section">
         <h4>Processing</h4>
-        <ul className="plain-list">
+        <ul className="review-list">
           <li>{validationEnabled ? 'Validation enabled' : 'Validation disabled'}</li>
           <li>{eventsEnabled ? 'Events enabled' : 'Events disabled'}</li>
           <li>{aggregatesEnabled ? 'Aggregates enabled' : 'Aggregates disabled'}</li>
+        </ul>
+      </div>
+
+      <div className="review-section">
+        <h4>Readiness</h4>
+        <ul className="review-list">
+          <li>{gatewayId ? 'Gateway selected' : 'Select a gateway before saving.'}</li>
+          <li>{selectedAdapters.length > 0 ? 'Adapters attached' : 'Attach at least one saved adapter.'}</li>
+          <li>{selectedSinks.length > 0 ? 'Sinks attached' : 'Attach at least one saved sink.'}</li>
         </ul>
       </div>
     </aside>

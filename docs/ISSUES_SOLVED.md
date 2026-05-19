@@ -2,7 +2,7 @@
 
 This file tracks issues that have been completed and moved out of active queues.
 
-Last updated: 2026-05-14
+Last updated: 2026-05-19
 
 ---
 
@@ -59,6 +59,21 @@ Last updated: 2026-05-14
 | Health signal validation completeness (baseline hardening) | ✅ Solved (baseline) | Component health endpoints/reporting added; deeper production SLO validation remains future work. |
 | Config cache behavior under control-plane outage | ✅ Solved | Deterministic cache startup and fallback behavior implemented. |
 | Dev-stack parity guardrails (baseline) | ✅ Solved (baseline) | Single-node Kafka dev constraints are codified in compose/runtime settings. |
+
+---
+
+## Resolved from UI Product Roadmap (2026-05)
+
+| Roadmap Item | Status | Resolution Summary | Evidence |
+|-------------|--------|--------------------|----------|
+| UI information architecture correction | ✅ Solved | Reframed the UI around Overview, Fleet, Gateways, Adapters, Deployments, Sinks, and operator operations views. | `ui/src/App.tsx`, `ui/src/app/layout/AppShell.tsx` |
+| First-class adapters section | ✅ Solved | Added persisted adapter inventory/management and protocol-aware authoring flows. | `ui/src/features/adapters/`, `control-plane/app/routers/adapters.py` |
+| Deployment/composition builder rework | ✅ Solved | Deployments now compose saved adapters and sinks rather than hiding everything inside one mixed wizard. | `ui/src/features/pipelines/`, `control-plane/app/routers/deployments.py` |
+| Object ownership and reuse clarity | ✅ Solved | Adapter/sink reuse and deployment composition are now explicit across pages, summaries, and review panels. | `ui/src/features/adapters/`, `ui/src/features/sinks/`, `ui/src/features/pipelines/` |
+| Connection test and preflight UX | ✅ Solved | Added adapter/sink validation and test-connection actions plus deployment preflight checks. | `control-plane/app/core/operator_checks.py`, `control-plane/app/core/connection_tests.py`, `ui/src/shared/forms/ActionResultPanel.tsx` |
+| Event and aggregate UX | ✅ Solved | Added operator-facing event and aggregate inventory/detail views backed by control-plane read APIs. | `ui/src/features/events/EventsPage.tsx`, `ui/src/features/aggregates/AggregatesPage.tsx`, `control-plane/app/routers/events.py`, `control-plane/app/routers/aggregates.py` |
+| Fleet operations and topology views | ✅ Solved | Added fleet inventory, gateway drill-down, and topology visibility surfaces. | `ui/src/features/fleet/`, `ui/src/shared/fleet/` |
+| Logs viewer | ✅ Solved | Added real gateway-runtime log transport through heartbeat state and surfaced it in control-plane/UI logs views. | `gateway_runtime/logging_utils.py`, `control-plane/app/routers/logs.py`, `ui/src/features/logs/LogsPage.tsx` |
 
 ---
 

@@ -6,6 +6,7 @@ Consumes validated telemetry from Kafka and writes to TimescaleDB/PostgreSQL.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 import signal
@@ -23,6 +24,7 @@ from gateway_runtime.logging_utils import configure_json_logging
 
 
 APP = FastAPI(title="sink-timescaledb", version="0.1.0")
+logger = logging.getLogger(__name__)
 
 _STOP = threading.Event()
 _DB_BREAKER = CircuitBreaker(
@@ -107,11 +109,7 @@ def _ensure_telemetry_table(cursor, table: str) -> None:
         );
         """
     )
-    with suppress(RuntimeError, OSError, ValueError):
-        cursor.execute(
-            "SELECT create_hypertable(%s, 'gateway_time', if_not_exists => TRUE);",
-            (table,),
-        )
+    _try_create_hypertable(cursor, table, "gateway_time")
 
 
 def _ensure_aggregate_table(cursor, table: str) -> None:
@@ -150,11 +148,7 @@ def _ensure_aggregate_table(cursor, table: str) -> None:
         );
         """
     )
-    with suppress(*_db_optional_error_types()):
-        cursor.execute(
-            "SELECT create_hypertable(%s, 'window_start', if_not_exists => TRUE);",
-            (table,),
-        )
+    _try_create_hypertable(cursor, table, "window_start")
     _dedupe_aggregate_table(cursor, table)
     cursor.execute(
         f"""
@@ -189,11 +183,7 @@ def _ensure_event_table(cursor, table: str) -> None:
         );
         """
     )
-    with suppress(*_db_optional_error_types()):
-        cursor.execute(
-            "SELECT create_hypertable(%s, 'gateway_time', if_not_exists => TRUE);",
-            (table,),
-        )
+    _try_create_hypertable(cursor, table, "gateway_time")
     _dedupe_event_table(cursor, table)
     cursor.execute(
         f"""
@@ -233,6 +223,22 @@ def _table_row_count(cursor, table: str) -> int:
     cursor.execute(f'SELECT COUNT(*) FROM "{table}"')
     row = cursor.fetchone()
     return int(row[0]) if row else 0
+
+
+def _try_create_hypertable(cursor, table: str, time_column: str) -> None:
+    """Best-effort hypertable promotion without blocking ingest on schema quirks."""
+    try:
+        cursor.execute(
+            f"SELECT create_hypertable(%s, '{time_column}', if_not_exists => TRUE);",
+            (table,),
+        )
+    except _db_optional_error_types() as exc:
+        logger.warning(
+            "timescaledb sink could not promote %s to a hypertable on %s; continuing with a regular table: %s",
+            table,
+            time_column,
+            exc,
+        )
 
 
 def _resolve_schema(topic: str, schema_path: str | None, message_format: str = "auto") -> SchemaManager:

@@ -32,7 +32,10 @@ export function SinkBasicsSection(props: SinkBasicsSectionProps) {
   return (
     <article className="card">
       <div className="page-header">
-        <h3>Sink Basics</h3>
+        <div className="card-header-copy">
+          <h3>Sink Basics</h3>
+          <p className="muted">Give the sink a stable identity, choose the destination type, and describe what delivery target this object represents.</p>
+        </div>
       </div>
       <div className="inline-grid">
         <label>
@@ -66,7 +69,7 @@ export function SinkBasicsSection(props: SinkBasicsSectionProps) {
       </div>
       <label>
         Description
-        <input value={description} onChange={(event) => onDescriptionChange(event.target.value)} />
+        <textarea rows={3} value={description} onChange={(event) => onDescriptionChange(event.target.value)} />
       </label>
     </article>
   )

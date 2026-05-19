@@ -7,17 +7,26 @@ type SinkReviewPanelProps = {
 export function SinkReviewPanel({ form }: SinkReviewPanelProps) {
   return (
     <aside className="card composer-sidebar">
-      <h3>Review</h3>
-      <div className="review-grid">
-        <strong>Sink ID</strong>
-        <span>{form.sinkId || 'New sink'}</span>
-        <strong>Type</strong>
-        <span>{form.sinkType}</span>
-        <strong>Status</strong>
-        <span>{form.status}</span>
+      <div className="card-header-copy">
+        <h3>Sink Summary</h3>
+        <p className="muted">Review the saved reusable sink target before validating, testing, or saving it.</p>
+      </div>
+      <div className="summary-grid">
+        <div className="summary-item">
+          <span className="summary-label">Sink ID</span>
+          <strong>{form.sinkId || 'New sink'}</strong>
+        </div>
+        <div className="summary-item">
+          <span className="summary-label">Type</span>
+          <strong>{form.sinkType}</strong>
+        </div>
+        <div className="summary-item">
+          <span className="summary-label">Status</span>
+          <strong>{form.status}</strong>
+        </div>
       </div>
 
-      <div className="builder-section">
+      <div className="review-section">
         <h4>Destination</h4>
         {form.sinkType === 'timescaledb' && (
           <p className="muted">
@@ -42,6 +51,14 @@ export function SinkReviewPanel({ form }: SinkReviewPanelProps) {
                   : 'Webhook not configured'}
           </p>
         )}
+      </div>
+
+      <div className="review-section">
+        <h4>Readiness</h4>
+        <ul className="review-list">
+          <li>{form.name.trim() ? 'Display name provided' : 'Add a display name before saving.'}</li>
+          <li>{form.description.trim() ? 'Description added' : 'Description is optional but helps reuse.'}</li>
+        </ul>
       </div>
     </aside>
   )

@@ -32,7 +32,13 @@ export function MqttConfigSection({ contract, form, setForm }: MqttConfigSection
   return (
     <article className="card">
       <div className="page-header">
-        <h3>MQTT</h3>
+        <div className="card-header-copy">
+          <h3>MQTT</h3>
+          <p className="muted">
+            Define the broker session once, then organize topic subscriptions and payload mappings so they are easier
+            to review before saving.
+          </p>
+        </div>
       </div>
       <div className="inline-grid">
         <label>
@@ -75,7 +81,10 @@ export function MqttConfigSection({ contract, form, setForm }: MqttConfigSection
 
       <div className="nested-card card builder-section">
         <div className="page-header">
-          <h4>Subscriptions</h4>
+          <div className="card-header-copy">
+            <h4>Subscriptions</h4>
+            <p className="muted">Each subscription can own its topic filter, payload format, and normalized mappings.</p>
+          </div>
           <button
             className="btn btn-secondary"
             onClick={() =>
@@ -90,7 +99,14 @@ export function MqttConfigSection({ contract, form, setForm }: MqttConfigSection
           <p className="muted">Add the MQTT topic subscriptions this adapter should consume.</p>
         ) : (
           form.subscriptions.map((subscription, subscriptionIndex) => (
-            <div className="rule-stack" key={`${subscription.topic_filter}-${subscriptionIndex}`}>
+            <div className="rule-card" key={subscription.uiId}>
+              <div className="rule-card-header">
+                <div>
+                  <strong>Subscription {subscriptionIndex + 1}</strong>
+                  <p className="muted">Describe the source topic and how its payload should be interpreted.</p>
+                </div>
+              </div>
+              <div className="rule-stack">
               <div className="inline-grid">
                 <input
                   placeholder="Topic filter"
@@ -178,7 +194,10 @@ export function MqttConfigSection({ contract, form, setForm }: MqttConfigSection
 
               <div className="nested-card card builder-section">
                 <div className="page-header">
-                  <h5>Mappings</h5>
+                  <div className="card-header-copy">
+                    <h5>Mappings</h5>
+                    <p className="muted">Map JSON fields to normalized parameters, units, and data types.</p>
+                  </div>
                   <button
                     className="btn btn-secondary"
                     onClick={() =>
@@ -199,7 +218,14 @@ export function MqttConfigSection({ contract, form, setForm }: MqttConfigSection
                   <p className="muted">Add mappings from JSON fields to normalized parameters.</p>
                 ) : (
                   subscription.mappings.map((mapping, mappingIndex) => (
-                    <div className="inline-grid" key={`${mapping.json_field}-${mappingIndex}`}>
+                    <div className="rule-card" key={mapping.uiId}>
+                      <div className="rule-card-header">
+                        <div>
+                          <strong>Mapping {mappingIndex + 1}</strong>
+                          <p className="muted">Define the JSON field and the normalized signal it should produce.</p>
+                        </div>
+                      </div>
+                      <div className="inline-grid">
                       <input
                         placeholder="JSON field"
                         value={mapping.json_field}
@@ -281,12 +307,14 @@ export function MqttConfigSection({ contract, form, setForm }: MqttConfigSection
                           }))
                         }
                         type="button"
-                      >
+                        >
                         Remove
                       </button>
+                      </div>
                     </div>
                   ))
                 )}
+              </div>
               </div>
             </div>
           ))

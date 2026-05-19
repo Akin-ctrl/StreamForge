@@ -14,7 +14,13 @@ export function HttpSinkSection({ contract, form, setForm }: HttpSinkSectionProp
   return (
     <article className="card">
       <div className="page-header">
-        <h3>HTTP Forwarder</h3>
+        <div className="card-header-copy">
+          <h3>HTTP Forwarder</h3>
+          <p className="muted">
+            Define the downstream endpoint and method while the platform keeps source-topic routing out of the normal
+            operator flow.
+          </p>
+        </div>
       </div>
       <div className="inline-grid">
         <label>

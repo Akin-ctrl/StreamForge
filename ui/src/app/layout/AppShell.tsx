@@ -7,10 +7,14 @@ import { useOperatorPreferences } from '../../shared/preferences/PreferencesProv
 // Primary navigation for MVP operator screens.
 const links = [
   { to: '/overview', label: 'Overview' },
+  { to: '/fleet', label: 'Fleet' },
   { to: '/gateways', label: 'Gateways' },
   { to: '/adapters', label: 'Adapters' },
   { to: '/pipelines', label: 'Deployments' },
   { to: '/sinks', label: 'Sinks' },
+  { to: '/events', label: 'Events' },
+  { to: '/aggregates', label: 'Aggregates' },
+  { to: '/logs', label: 'Logs' },
   { to: '/alarms', label: 'Alarms' },
   { to: '/dlq', label: 'DLQ' },
   { to: '/create-pipeline', label: 'Compose Deployment' },
