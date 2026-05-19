@@ -7,13 +7,41 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from struct import unpack
-from typing import Dict, Iterable, Sequence
+from typing import Callable, Dict, Iterable, Protocol, Sequence, TypeVar
 
 from adapters.adapter_base.base_adapter import BaseAdapter
 from adapters.adapter_base.kafka_publisher import KafkaPublisher
 
 
 _EVENT_SCHEMA_PATH = str(Path(__file__).resolve().parents[2] / "schemas" / "event.avsc")
+T = TypeVar("T")
+
+
+class RegisterReadResponseLike(Protocol):
+    """Minimal Modbus register response surface used by the adapter."""
+
+    registers: Sequence[int]
+
+    def isError(self) -> bool: ...
+
+
+class CoilReadResponseLike(Protocol):
+    """Minimal Modbus binary response surface used by the adapter."""
+
+    bits: Sequence[bool]
+
+    def isError(self) -> bool: ...
+
+
+class ModbusClientLike(Protocol):
+    """Minimal Modbus client surface required by the shared polling pipeline."""
+
+    def connect(self) -> bool: ...
+    def close(self) -> None: ...
+    def read_holding_registers(self, address: int, count: int, device_id: int) -> RegisterReadResponseLike: ...
+    def read_input_registers(self, address: int, count: int, device_id: int) -> RegisterReadResponseLike: ...
+    def read_coils(self, address: int, count: int, device_id: int) -> CoilReadResponseLike: ...
+    def read_discrete_inputs(self, address: int, count: int, device_id: int) -> CoilReadResponseLike: ...
 
 
 @dataclass(frozen=True)
@@ -69,7 +97,7 @@ class ModbusTcpAdapter(BaseAdapter):
     def __init__(self, config: dict) -> None:
         """Initialize adapter with validated config."""
         super().__init__(config)
-        self._client = None
+        self._client: ModbusClientLike | None = None
         self._event_publisher: KafkaPublisher | None = None
         self._last_coil_states: dict[str, bool] = {}
         self._connect_max_attempts = max(int(config.get("connect_max_attempts", 3)), 1)
@@ -369,10 +397,10 @@ class ModbusTcpAdapter(BaseAdapter):
                 event_type=str(item.get("event_type") or f"{param}_state_change"),
             )
 
-    def _read_batch_with_retry(self, batch: RegisterBatch, unit_id: int):
+    def _read_batch_with_retry(self, batch: RegisterBatch, unit_id: int) -> RegisterReadResponseLike:
         """Read a batch with reconnect-aware retry semantics."""
 
-        def attempt():
+        def attempt() -> RegisterReadResponseLike:
             if self._client is None:
                 raise RuntimeError("Modbus client not connected")
             memory_area = batch.specs[0].memory_area
@@ -401,10 +429,10 @@ class ModbusTcpAdapter(BaseAdapter):
             before_retry=self._reconnect_after_read_failure,
         )
 
-    def _read_coil_batch_with_retry(self, batch: CoilBatch, unit_id: int):
+    def _read_coil_batch_with_retry(self, batch: CoilBatch, unit_id: int) -> CoilReadResponseLike:
         """Read a coil batch with reconnect-aware retry semantics."""
 
-        def attempt():
+        def attempt() -> CoilReadResponseLike:
             if self._client is None:
                 raise RuntimeError("Modbus client not connected")
             memory_area = batch.specs[0].memory_area
@@ -439,7 +467,13 @@ class ModbusTcpAdapter(BaseAdapter):
         self.disconnect()
         self.connect()
 
-    def _retry_operation(self, operation: str, max_attempts: int, action, before_retry=None):
+    def _retry_operation(
+        self,
+        operation: str,
+        max_attempts: int,
+        action: Callable[[], T],
+        before_retry: Callable[[], None] | None = None,
+    ) -> T:
         """Run an operation with bounded exponential backoff."""
         delay_s = self._retry_backoff_s
 
@@ -603,7 +637,7 @@ class ModbusTcpAdapter(BaseAdapter):
         time.sleep(seconds)
 
     @staticmethod
-    def _create_client(host: str, port: int):
+    def _create_client(host: str, port: int) -> ModbusClientLike:
         """Construct a Modbus TCP client."""
         try:
             from pymodbus.client import ModbusTcpClient  # type: ignore

@@ -28,6 +28,16 @@ _ALARM_SCHEMA_PATH = str(Path(__file__).resolve().parents[1] / "schemas" / "alar
 _QUEUE_WAIT_TIMEOUT_S = 0.25
 
 
+def _kafka_client_error_types() -> tuple[type[BaseException], ...]:
+    """Return the client-side exceptions expected from Kafka cleanup paths."""
+    error_types: list[type[BaseException]] = [RuntimeError, OSError, ValueError]
+    try:
+        from kafka.errors import KafkaError  # type: ignore
+    except ModuleNotFoundError:
+        return tuple(error_types)
+    return tuple(error_types + [KafkaError])
+
+
 class ValidatorModule:
     """Consumes raw telemetry, applies validation rules, and publishes outcomes via staged workers."""
 
@@ -297,6 +307,8 @@ class ValidatorModule:
 
                 self._drain_completion_queue()
             except Exception as exc:
+                # Deliberate worker-boundary catch: the ingress thread must stay
+                # alive and retry after transient consumer or decode failures.
                 logger.exception("validator ingress loop failed")
                 self._record_stage_error("ingress", exc)
                 time.sleep(1)
@@ -318,11 +330,11 @@ class ValidatorModule:
     def _handle_decode_failure(self, record, payload: bytes, exc: Exception) -> None:
         try:
             self._emit_undecodable_dlq(record, payload, str(exc))
-        except Exception:
+        except _kafka_client_error_types():
             logger.exception("validator failed to emit undecodable payload to DLQ")
         try:
             self._commit_record(record)
-        except Exception:
+        except _kafka_client_error_types():
             logger.exception("validator failed to commit undecodable payload offset")
 
     def _validation_loop(self) -> None:
@@ -369,6 +381,8 @@ class ValidatorModule:
                     }
                 self._record_stage_processed("validation", latency_ms=(time.monotonic() - started_at) * 1000.0)
             except Exception as exc:
+                # Deliberate worker-boundary catch: bad validation logic should
+                # downgrade the record to DLQ instead of killing the worker.
                 logger.exception("validator validation stage failed")
                 self._record_stage_error("validation", exc)
                 self._increment_quality_total("bad")
@@ -407,6 +421,8 @@ class ValidatorModule:
                     return
                 self._record_stage_processed("publish", latency_ms=(time.monotonic() - started_at) * 1000.0)
             except Exception as exc:
+                # Deliberate worker-boundary catch: downstream publish failures
+                # are retried with backoff rather than terminating the thread.
                 logger.exception("validator publish stage failed")
                 self._record_stage_error("publish", exc)
                 item["publish_attempts"] = int(item.get("publish_attempts", 0)) + 1
@@ -422,6 +438,8 @@ class ValidatorModule:
                 if operations > 0:
                     self._record_stage_processed("control_sync", latency_ms=(time.monotonic() - started_at) * 1000.0, count=operations)
             except Exception as exc:
+                # Deliberate containment boundary: control-plane sync issues
+                # should degrade health, not halt validation processing.
                 logger.exception("validator control sync loop failed")
                 self._record_stage_error("control_sync", exc)
             finally:
@@ -462,7 +480,7 @@ class ValidatorModule:
                 continue
             try:
                 self._commit_record(item["record"])
-            except Exception as exc:
+            except _kafka_client_error_types() as exc:
                 logger.exception("validator commit failed")
                 self._record_stage_error("ingress", exc)
 
@@ -515,7 +533,7 @@ class ValidatorModule:
             if flush and hasattr(client, "flush"):
                 client.flush()
             client.close()
-        except Exception as exc:
+        except _kafka_client_error_types() as exc:
             logger.warning("validator failed to close %s for gateway %s cleanly: %s", name, self._gateway_id, exc)
 
     def _record_stage_blocked(self, stage: str) -> None:

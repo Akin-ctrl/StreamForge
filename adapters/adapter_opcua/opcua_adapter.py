@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from queue import Empty, Queue
-from typing import Any
+from typing import Any, Protocol
 
 from adapters.adapter_base.base_adapter import BaseAdapter
 
@@ -26,13 +27,30 @@ class _SubscriptionHandler:
         self._adapter._ingest_datachange(node, value, data)
 
 
+class OpcUaSubscriptionLike(Protocol):
+    """Minimal subscription surface used by the OPC UA adapter."""
+
+    def subscribe_data_change(self, node: object) -> object: ...
+    def unsubscribe(self, handles: list[object]) -> object: ...
+    def delete(self) -> object: ...
+
+
+class OpcUaClientLike(Protocol):
+    """Minimal OPC UA client surface required by the adapter."""
+
+    def connect(self) -> None: ...
+    def disconnect(self) -> None: ...
+    def create_subscription(self, publishing_interval_ms: int, handler: _SubscriptionHandler) -> OpcUaSubscriptionLike: ...
+    def get_node(self, node_id: str) -> object: ...
+
+
 class OpcUaAdapter(BaseAdapter):
     """Telemetry-first OPC UA adapter using monitored item subscriptions."""
 
     def __init__(self, config: dict) -> None:
         super().__init__(config)
-        self._client = None
-        self._subscription = None
+        self._client: OpcUaClientLike | None = None
+        self._subscription: OpcUaSubscriptionLike | None = None
         self._subscription_handles: list[object] = []
         self._queue: Queue[dict[str, Any]] = Queue()
         self._connected = False
@@ -91,16 +109,12 @@ class OpcUaAdapter(BaseAdapter):
 
     def disconnect(self) -> None:
         if self._subscription is not None:
-            try:
+            with suppress(AttributeError, RuntimeError, OSError, ValueError):
                 if self._subscription_handles and hasattr(self._subscription, "unsubscribe"):
                     self._subscription.unsubscribe(self._subscription_handles)
-            except Exception:
-                pass
-            try:
+            with suppress(AttributeError, RuntimeError, OSError, ValueError):
                 if hasattr(self._subscription, "delete"):
                     self._subscription.delete()
-            except Exception:
-                pass
             self._subscription = None
             self._subscription_handles = []
 
@@ -128,6 +142,8 @@ class OpcUaAdapter(BaseAdapter):
                 self._health["last_publish_at"] = self._utcnow()
                 self._set_status("healthy", connected=True, running=True, last_error=None)
         except Exception as exc:
+            # Deliberate adapter-boundary catch: runtime supervision expects a
+            # failed status and a surfaced exception instead of silent exit.
             self._set_status("failed", running=False, last_error=str(exc))
             raise
         finally:
@@ -239,7 +255,7 @@ class OpcUaAdapter(BaseAdapter):
         return None
 
     @staticmethod
-    def _create_client(endpoint: str):
+    def _create_client(endpoint: str) -> OpcUaClientLike:
         try:
             from asyncua.sync import Client  # type: ignore
         except ModuleNotFoundError as exc:

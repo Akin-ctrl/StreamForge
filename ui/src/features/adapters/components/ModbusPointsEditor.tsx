@@ -1,7 +1,7 @@
 import type { Dispatch, SetStateAction } from 'react'
 
 import type { CatalogAdapterType } from '../../../shared/api/client'
-import { getCatalogOptions } from '../../../shared/config/catalog'
+import { getCatalogOptionsForValue } from '../../../shared/config/catalog'
 import { createDefaultPointForm, type AdapterFormState, type ModbusPointForm } from '../adapterForm'
 
 type ModbusPointsEditorProps = {
@@ -14,39 +14,7 @@ function updatePoint(points: ModbusPointForm[], index: number, nextPoint: Modbus
   return points.map((point, pointIndex) => (pointIndex === index ? nextPoint : point))
 }
 
-const fallbackMemoryAreas = [
-  { value: 'holding_register', label: 'Holding Register' },
-  { value: 'input_register', label: 'Input Register' },
-  { value: 'coil', label: 'Coil' },
-  { value: 'discrete_input', label: 'Discrete Input' },
-]
-
-const fallbackDataTypes = [
-  { value: 'bool', label: 'Boolean' },
-  { value: 'int16', label: 'int16' },
-  { value: 'uint16', label: 'uint16' },
-  { value: 'int32', label: 'int32' },
-  { value: 'uint32', label: 'uint32' },
-  { value: 'float32', label: 'float32' },
-  { value: 'float64', label: 'float64' },
-]
-
-const fallbackEndian = [
-  { value: 'big', label: 'Big' },
-  { value: 'little', label: 'Little' },
-]
-
-const fallbackClassification = [
-  { value: 'telemetry', label: 'Telemetry' },
-  { value: 'event', label: 'Event' },
-]
-
 export function ModbusPointsEditor({ contract, form, setForm }: ModbusPointsEditorProps) {
-  const memoryAreas = getCatalogOptions(contract, 'points', 'memory_area')
-  const dataTypes = getCatalogOptions(contract, 'points', 'data_type')
-  const endian = getCatalogOptions(contract, 'points', 'byte_order')
-  const classificationOptions = getCatalogOptions(contract, 'points', 'classification')
-
   return (
     <div className="nested-card card builder-section">
       <div className="page-header">
@@ -84,7 +52,7 @@ export function ModbusPointsEditor({ contract, form, setForm }: ModbusPointsEdit
                   }))
                 }
               >
-                {(memoryAreas.length > 0 ? memoryAreas : fallbackMemoryAreas).map((option) => (
+                {getCatalogOptionsForValue(contract, 'points', 'memory_area', point.memory_area).map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
@@ -109,7 +77,7 @@ export function ModbusPointsEditor({ contract, form, setForm }: ModbusPointsEdit
                   }))
                 }
               >
-                {(dataTypes.length > 0 ? dataTypes : fallbackDataTypes).map((option) => (
+                {getCatalogOptionsForValue(contract, 'points', 'data_type', point.data_type).map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
@@ -126,7 +94,7 @@ export function ModbusPointsEditor({ contract, form, setForm }: ModbusPointsEdit
                   }))
                 }
               >
-                {(endian.length > 0 ? endian : fallbackEndian).map((option) => (
+                {getCatalogOptionsForValue(contract, 'points', 'byte_order', point.byte_order).map((option) => (
                   <option key={option.value} value={option.value}>
                     Byte Order: {option.label}
                   </option>
@@ -141,7 +109,7 @@ export function ModbusPointsEditor({ contract, form, setForm }: ModbusPointsEdit
                   }))
                 }
               >
-                {(endian.length > 0 ? endian : fallbackEndian).map((option) => (
+                {getCatalogOptionsForValue(contract, 'points', 'word_order', point.word_order).map((option) => (
                   <option key={option.value} value={option.value}>
                     Word Order: {option.label}
                   </option>
@@ -188,7 +156,7 @@ export function ModbusPointsEditor({ contract, form, setForm }: ModbusPointsEdit
                   }))
                 }
               >
-                {(classificationOptions.length > 0 ? classificationOptions : fallbackClassification).map((option) => (
+                {getCatalogOptionsForValue(contract, 'points', 'classification', point.classification).map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>

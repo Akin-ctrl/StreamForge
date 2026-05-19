@@ -1,3 +1,11 @@
+/**
+ * Serialization helpers for adapter authoring.
+ *
+ * The form keeps a passthrough JSON fragment so we can preserve catalog-driven
+ * advanced fields that are not rendered directly in the current editor. These
+ * helpers rebuild the canonical editable sections, then merge back the safe
+ * passthrough state without reintroducing secrets or internal-only defaults.
+ */
 import type { AdapterCreatePayload, AdapterItem, AdapterUpdatePayload, CatalogAdapterType } from '../../../shared/api/client'
 import { getCatalogStringDefault, getInternalFieldKeys } from '../../../shared/config/catalog'
 import { asJsonObject, asString, cloneJsonObject, parseNumberInput } from '../../../shared/config/json'
@@ -24,6 +32,8 @@ function serializePoint(point: ModbusPointForm): JsonObject {
 
 function baseConfig(form: AdapterFormState): JsonObject {
   const config = cloneJsonObject(form.passthroughConfig)
+  // These keys are rebuilt from explicit form state so stale passthrough values
+  // do not win during edits or JSON fallback application.
   for (const key of [
     'host',
     'port',
@@ -198,6 +208,9 @@ function mergeAdapterConfigJson(adapterType: string, currentFullConfig: JsonObje
   const currentOutput = asJsonObject(currentFullConfig.output) || {}
   merged.output = mergeConfigSection(currentOutput, parsed.output)
 
+  // MQTT and OPC UA carry nested advanced sections that are not fully surfaced
+  // in the default editor. Merge them explicitly so advanced JSON edits do not
+  // wipe unrelated nested settings.
   if (adapterType === 'mqtt') {
     const currentAdvanced = asJsonObject(currentFullConfig.advanced) || {}
     merged.advanced = mergeConfigSection(currentAdvanced, parsed.advanced)

@@ -1,7 +1,7 @@
 import type { Dispatch, SetStateAction } from 'react'
 
 import type { CatalogSinkType } from '../../../shared/api/client'
-import { getCatalogOptions } from '../../../shared/config/catalog'
+import { getCatalogOptionsForValue } from '../../../shared/config/catalog'
 import type { SinkFormState } from '../sinkForm'
 
 type AlertRouterSinkSectionProps = {
@@ -10,14 +10,7 @@ type AlertRouterSinkSectionProps = {
   setForm: Dispatch<SetStateAction<SinkFormState>>
 }
 
-const fallbackRouteTypes = [
-  { value: 'webhook', label: 'Webhook' },
-  { value: 'slack', label: 'Slack' },
-]
-
 export function AlertRouterSinkSection({ contract, form, setForm }: AlertRouterSinkSectionProps) {
-  const routeTypes = getCatalogOptions(contract, 'destination', 'route_type')
-
   return (
     <article className="card">
       <div className="page-header">
@@ -27,7 +20,7 @@ export function AlertRouterSinkSection({ contract, form, setForm }: AlertRouterS
         <label>
           Route Type
           <select value={form.routeType} onChange={(event) => setForm((current) => ({ ...current, routeType: event.target.value }))}>
-            {(routeTypes.length > 0 ? routeTypes : fallbackRouteTypes).map((option) => (
+            {getCatalogOptionsForValue(contract, 'destination', 'route_type', form.routeType).map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>
@@ -56,13 +49,7 @@ export function AlertRouterSinkSection({ contract, form, setForm }: AlertRouterS
           </label>
         )}
       </div>
-      <details className="card nested-card advanced-block">
-        <summary>Advanced</summary>
-        <label>
-          Source Topic
-          <input value={form.sourceTopic} onChange={(event) => setForm((current) => ({ ...current, sourceTopic: event.target.value }))} />
-        </label>
-      </details>
+      <p className="muted">Alarm ingress routing is managed by the platform for alert-router sinks.</p>
     </article>
   )
 }

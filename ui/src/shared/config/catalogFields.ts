@@ -1,6 +1,7 @@
 import type { CatalogAdapterType, CatalogField, CatalogSection, CatalogSinkType } from '../api/client'
 
 export type CatalogContract = CatalogAdapterType | CatalogSinkType
+export type CatalogOption = { value: string; label: string }
 
 function findField(fields: CatalogField[], fieldKey: string): CatalogField | undefined {
   for (const field of fields) {
@@ -36,6 +37,26 @@ export function getCatalogOptions(
   contract: CatalogContract | undefined,
   sectionKey: string,
   fieldKey: string,
-): Array<{ value: string; label: string }> {
+): CatalogOption[] {
   return getCatalogField(contract, sectionKey, fieldKey)?.options || []
+}
+
+export function getCatalogOptionsForValue(
+  contract: CatalogContract | undefined,
+  sectionKey: string,
+  fieldKey: string,
+  currentValue: string,
+  currentLabel?: string,
+): CatalogOption[] {
+  const options = getCatalogOptions(contract, sectionKey, fieldKey)
+  if (options.length > 0) {
+    return options
+  }
+
+  const normalized = currentValue.trim()
+  if (!normalized) {
+    return []
+  }
+
+  return [{ value: normalized, label: currentLabel ?? normalized }]
 }

@@ -9,6 +9,7 @@ import socket
 from typing import Dict, List
 
 from gateway_runtime.config import SinkConfig
+from gateway_runtime.docker_types import DockerClientLike, DockerContainerLike
 from gateway_runtime.errors import AdapterStartError
 
 try:
@@ -25,8 +26,8 @@ class SinkManager:
 
     def __init__(self) -> None:
         self._containers: Dict[str, str] = {}
-        self._client = None
-        self._network = None
+        self._client: DockerClientLike | None = None
+        self._network: str | None = None
 
     def start_all(self, configs: List[SinkConfig]) -> None:
         """Start all configured sinks in active status."""
@@ -47,7 +48,12 @@ class SinkManager:
             self._stop_container(client, container_id)
             self._containers.pop(sink_id, None)
 
-    def start_sink(self, config: SinkConfig, client=None, network: str | None = None) -> None:
+    def start_sink(
+        self,
+        config: SinkConfig,
+        client: DockerClientLike | None = None,
+        network: str | None = None,
+    ) -> None:
         """Start single sink container."""
         if config.sink_id in self._containers:
             self.stop_sink(config.sink_id)
@@ -113,7 +119,8 @@ class SinkManager:
             "sinks": sink_states,
         }
 
-    def _docker_client(self):
+    def _docker_client(self) -> DockerClientLike:
+        """Create the optional Docker client lazily for sink management."""
         if self._client is None:
             try:
                 import docker  # type: ignore
@@ -123,7 +130,8 @@ class SinkManager:
             self._client = docker.from_env()
         return self._client
 
-    def _resolve_network(self, client) -> str:
+    def _resolve_network(self, client: DockerClientLike) -> str:
+        """Infer the Docker network sinks should join in the current runtime."""
         if self._network:
             return self._network
 
@@ -146,14 +154,15 @@ class SinkManager:
 
     def _ensure_container(
         self,
-        client,
+        client: DockerClientLike,
         name: str,
         image: str,
         environment: Dict[str, str],
         network: str,
         labels: Dict[str, str],
         command: list[str],
-    ):
+    ) -> DockerContainerLike:
+        """Replace any stale sink container and start a fresh one."""
         container = self._get_container(client, name, context=f"checking for existing sink container {name}")
         if container is not None:
             self._stop_container(client, container.id)
@@ -169,7 +178,7 @@ class SinkManager:
             restart_policy={"Name": "unless-stopped"},
         )
 
-    def _prune_orphaned_containers(self, client, desired_ids: set[str]) -> None:
+    def _prune_orphaned_containers(self, client: DockerClientLike, desired_ids: set[str]) -> None:
         """Remove managed sink containers that are not part of the desired sink set."""
         for container in self._list_managed_containers(client):
             sink_id = self._managed_sink_id(container)
@@ -182,14 +191,14 @@ class SinkManager:
             )
             self._stop_container(client, container.id)
 
-    def _list_managed_containers(self, client) -> list[object]:
+    def _list_managed_containers(self, client: DockerClientLike) -> list[DockerContainerLike]:
         try:
             return list(client.containers.list(all=True))
         except Exception as exc:
             logger.warning("sink manager failed to list managed containers: %s", exc)
             return []
 
-    def _managed_sink_id(self, container) -> str | None:
+    def _managed_sink_id(self, container: DockerContainerLike) -> str | None:
         if not self._is_managed_container(container):
             return None
         labels = container.labels or {}
@@ -202,7 +211,7 @@ class SinkManager:
             return name[len(prefix) :]
         return None
 
-    def _is_managed_container(self, container) -> bool:
+    def _is_managed_container(self, container: DockerContainerLike) -> bool:
         labels = container.labels or {}
         name = getattr(container, "name", "").lstrip("/")
         if labels.get("component") != "sink":
@@ -224,7 +233,14 @@ class SinkManager:
     def _is_docker_not_found(exc: Exception) -> bool:
         return bool(docker_errors is not None and isinstance(exc, docker_errors.NotFound))
 
-    def _get_container(self, client, container_ref: str, *, context: str):
+    def _get_container(
+        self,
+        client: DockerClientLike,
+        container_ref: str,
+        *,
+        context: str,
+    ) -> DockerContainerLike | None:
+        """Resolve one sink container while preserving not-found semantics."""
         try:
             return client.containers.get(container_ref)
         except Exception as exc:
@@ -233,7 +249,7 @@ class SinkManager:
             logger.warning("sink manager failed to resolve container %s while %s: %s", container_ref, context, exc)
             return None
 
-    def _stop_container(self, client, container_id: str) -> None:
+    def _stop_container(self, client: DockerClientLike, container_id: str) -> None:
         container = self._get_container(client, container_id, context=f"stopping sink container {container_id}")
         if container is None:
             return
@@ -292,7 +308,7 @@ class SinkManager:
         return os.getenv("COMPOSE_PROJECT_NAME") or os.getenv("DOCKER_COMPOSE_PROJECT") or "deploy"
 
     @staticmethod
-    def _inject_shared_env(env: Dict[str, str], config: dict) -> None:
+    def _inject_shared_env(env: Dict[str, str], config: dict[str, object]) -> None:
         shared = {
             "SCHEMA_REGISTRY_URL": str(config.get("schema_registry_url") or os.getenv("SCHEMA_REGISTRY_URL", "")),
             "SCHEMA_CACHE_PATH": str(config.get("schema_cache_path") or os.getenv("SCHEMA_CACHE_PATH", "/data/schemas.cache.json")),

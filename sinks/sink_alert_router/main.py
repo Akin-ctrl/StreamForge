@@ -6,6 +6,7 @@ them to webhook-style destinations such as generic HTTP endpoints and Slack.
 
 from __future__ import annotations
 
+from contextlib import suppress
 import json
 import os
 from pathlib import Path
@@ -39,6 +40,16 @@ _STATS = {
     "route_type": "webhook",
 }
 _ALARM_SCHEMA_PATH = str(Path(__file__).resolve().parents[2] / "schemas" / "alarm.avsc")
+
+
+def _kafka_runtime_error_types() -> tuple[type[BaseException], ...]:
+    """Return the consumer-side exceptions expected during sink shutdown."""
+    error_types: list[type[BaseException]] = [RuntimeError, OSError, ValueError]
+    try:
+        from kafka.errors import KafkaError  # type: ignore
+    except ModuleNotFoundError:
+        return tuple(error_types)
+    return tuple(error_types + [KafkaError])
 
 
 def _load_config() -> dict:
@@ -224,16 +235,16 @@ def _writer_loop() -> None:
                 _STATS["consumer_lag"] = 0
                 _ALERT_BREAKER.record_success()
         except Exception as exc:
+            # Deliberate service-boundary catch: routing failures should trip the
+            # breaker and back off instead of killing the sink thread.
             _STATS["errors"] += 1
             _STATS["last_error"] = str(exc)
             _ALERT_BREAKER.record_failure(exc)
             _STOP.wait(timeout=max(_ALERT_BREAKER.remaining_open_seconds(), 3.0))
         finally:
             if consumer is not None:
-                try:
+                with suppress(*_kafka_runtime_error_types()):
                     consumer.close()
-                except Exception:
-                    pass
 
 
 def _health_payload() -> dict:

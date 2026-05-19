@@ -26,6 +26,16 @@ _EVENT_SCHEMA_PATH = str(Path(__file__).resolve().parents[1] / "schemas" / "even
 _QUEUE_WAIT_TIMEOUT_S = 0.25
 
 
+def _kafka_client_error_types() -> tuple[type[BaseException], ...]:
+    """Return the client-side exceptions expected from Kafka cleanup paths."""
+    error_types: list[type[BaseException]] = [RuntimeError, OSError, ValueError]
+    try:
+        from kafka.errors import KafkaError  # type: ignore
+    except ModuleNotFoundError:
+        return tuple(error_types)
+    return tuple(error_types + [KafkaError])
+
+
 class EventValidatorModule:
     """Consumes raw events, validates structure, and publishes clean or DLQ outcomes."""
 
@@ -284,6 +294,8 @@ class EventValidatorModule:
                         self._record_stage_processed("ingress", latency_ms=0.0)
                 self._drain_completion_queue()
             except Exception as exc:
+                # Deliberate worker-boundary catch: ingestion must stay alive
+                # under transient consumer bugs and bad payloads.
                 logger.exception("event validator ingress loop failed")
                 self._record_stage_error("ingress", exc)
                 time.sleep(1)
@@ -305,11 +317,11 @@ class EventValidatorModule:
     def _handle_decode_failure(self, record, payload: bytes, exc: Exception) -> None:
         try:
             self._emit_undecodable_dlq(record, payload, str(exc))
-        except Exception:
+        except _kafka_client_error_types():
             logger.exception("event validator failed to emit undecodable payload to DLQ")
         try:
             self._commit_record(record)
-        except Exception:
+        except _kafka_client_error_types():
             logger.exception("event validator failed to commit undecodable payload offset")
 
     def _validation_loop(self) -> None:
@@ -347,6 +359,8 @@ class EventValidatorModule:
                     }
                 self._record_stage_processed("validation", latency_ms=(time.monotonic() - started_at) * 1000.0)
             except Exception as exc:
+                # Deliberate worker-boundary catch: malformed events become DLQ
+                # records without bringing down the validation worker.
                 logger.exception("event validator validation stage failed")
                 self._record_stage_error("validation", exc)
                 self._increment_validated_total("rejected")
@@ -384,6 +398,8 @@ class EventValidatorModule:
                     return
                 self._record_stage_processed("publish", latency_ms=(time.monotonic() - started_at) * 1000.0)
             except Exception as exc:
+                # Deliberate worker-boundary catch: downstream publish failures
+                # are retried instead of terminating the thread.
                 logger.exception("event validator publish stage failed")
                 self._record_stage_error("publish", exc)
                 item["publish_attempts"] = int(item.get("publish_attempts", 0)) + 1
@@ -399,6 +415,8 @@ class EventValidatorModule:
                 if operations > 0:
                     self._record_stage_processed("control_sync", latency_ms=(time.monotonic() - started_at) * 1000.0, count=operations)
             except Exception as exc:
+                # Deliberate containment boundary: control-plane mirroring
+                # should never stop the validator from processing events.
                 logger.exception("event validator control sync loop failed")
                 self._record_stage_error("control_sync", exc)
             finally:
@@ -656,7 +674,7 @@ class EventValidatorModule:
                 continue
             try:
                 self._commit_record(item["record"])
-            except Exception as exc:
+            except _kafka_client_error_types() as exc:
                 logger.exception("event validator commit failed")
                 self._record_stage_error("ingress", exc)
 
@@ -706,7 +724,7 @@ class EventValidatorModule:
             if flush and hasattr(client, "flush"):
                 client.flush()
             client.close()
-        except Exception as exc:
+        except _kafka_client_error_types() as exc:
             logger.warning(
                 "event validator failed to close %s for gateway %s cleanly: %s",
                 name,
