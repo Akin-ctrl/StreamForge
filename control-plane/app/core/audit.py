@@ -19,7 +19,7 @@ def record_audit_event(
     action: str,
     resource_type: str,
     resource_public_id: str,
-    details: dict | None = None,
+    details: dict[str, object] | None = None,
 ) -> AuditEvent:
     """Append one audit event to the current database transaction."""
     event = AuditEvent(

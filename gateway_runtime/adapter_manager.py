@@ -12,6 +12,7 @@ from typing import Dict, List
 
 from gateway_runtime.adapter_factory import AdapterFactory
 from gateway_runtime.config import AdapterConfig
+from gateway_runtime.docker_types import DockerClientLike, DockerContainerLike
 from gateway_runtime.errors import AdapterStartError
 
 try:
@@ -40,8 +41,8 @@ class AdapterManager:
             "reason": None,
             "updated_at": None,
         }
-        self._client = None
-        self._network = None
+        self._client: DockerClientLike | None = None
+        self._network: str | None = None
 
     def start_all(self, configs: List[AdapterConfig]) -> None:
         """Start all adapters defined in config."""
@@ -186,7 +187,8 @@ class AdapterManager:
         for adapter_id in list(self._containers):
             self._apply_throttle_to_adapter(adapter_id, policy)
 
-    def _docker_client(self):
+    def _docker_client(self) -> DockerClientLike:
+        """Create the optional Docker client lazily for adapter management."""
         if self._client is None:
             try:
                 import docker  # type: ignore
@@ -196,7 +198,8 @@ class AdapterManager:
             self._client = docker.from_env()
         return self._client
 
-    def _resolve_network(self, client) -> str:
+    def _resolve_network(self, client: DockerClientLike) -> str:
+        """Infer the Docker network adapters should join in the current runtime."""
         if self._network:
             return self._network
 
@@ -219,7 +222,7 @@ class AdapterManager:
 
     def _ensure_container(
         self,
-        client,
+        client: DockerClientLike,
         name: str,
         image: str,
         environment: Dict[str, str],
@@ -227,7 +230,8 @@ class AdapterManager:
         labels: Dict[str, str],
         command: list[str],
         devices: list[str],
-    ):
+    ) -> DockerContainerLike:
+        """Replace any stale adapter container and start a fresh one."""
         container = self._get_container(client, name, context=f"checking for existing adapter container {name}")
         if container is not None:
             self._stop_container(client, container.id)
@@ -244,7 +248,7 @@ class AdapterManager:
             restart_policy={"Name": "unless-stopped"},
         )
 
-    def _prune_orphaned_containers(self, client, desired_ids: set[str]) -> None:
+    def _prune_orphaned_containers(self, client: DockerClientLike, desired_ids: set[str]) -> None:
         """Remove managed adapter containers that do not belong to the desired config set."""
         for container in self._list_managed_containers(client):
             adapter_id = self._managed_adapter_id(container)
@@ -257,14 +261,14 @@ class AdapterManager:
             )
             self._stop_container(client, container.id)
 
-    def _list_managed_containers(self, client) -> list[object]:
+    def _list_managed_containers(self, client: DockerClientLike) -> list[DockerContainerLike]:
         try:
             return list(client.containers.list(all=True))
         except Exception as exc:
             logger.warning("adapter manager failed to list managed containers: %s", exc)
             return []
 
-    def _managed_adapter_id(self, container) -> str | None:
+    def _managed_adapter_id(self, container: DockerContainerLike) -> str | None:
         if not self._is_managed_container(container):
             return None
         labels = container.labels or {}
@@ -277,7 +281,7 @@ class AdapterManager:
             return name[len(prefix) :]
         return None
 
-    def _is_managed_container(self, container) -> bool:
+    def _is_managed_container(self, container: DockerContainerLike) -> bool:
         labels = container.labels or {}
         name = getattr(container, "name", "").lstrip("/")
         if labels.get("component") != "adapter":
@@ -295,7 +299,7 @@ class AdapterManager:
             return True
         return project == AdapterManager._compose_project()
 
-    def _stop_container(self, client, container_id: str) -> None:
+    def _stop_container(self, client: DockerClientLike, container_id: str) -> None:
         container = self._get_container(client, container_id, context=f"stopping adapter container {container_id}")
         if container is None:
             return
@@ -321,7 +325,14 @@ class AdapterManager:
     def _is_docker_not_found(exc: Exception) -> bool:
         return bool(docker_errors is not None and isinstance(exc, docker_errors.NotFound))
 
-    def _get_container(self, client, container_ref: str, *, context: str):
+    def _get_container(
+        self,
+        client: DockerClientLike,
+        container_ref: str,
+        *,
+        context: str,
+    ) -> DockerContainerLike | None:
+        """Resolve one adapter container while preserving not-found semantics."""
         try:
             return client.containers.get(container_ref)
         except Exception as exc:
@@ -381,7 +392,7 @@ class AdapterManager:
         return os.getenv("COMPOSE_PROJECT_NAME") or os.getenv("DOCKER_COMPOSE_PROJECT") or "deploy"
 
     @staticmethod
-    def _device_mappings(config: dict) -> list[str]:
+    def _device_mappings(config: dict[str, object]) -> list[str]:
         devices: list[str] = []
         raw_devices = config.get("devices")
         if isinstance(raw_devices, list):
@@ -396,7 +407,7 @@ class AdapterManager:
         return devices
 
     @staticmethod
-    def _inject_shared_env(env: Dict[str, str], config: dict) -> None:
+    def _inject_shared_env(env: Dict[str, str], config: dict[str, object]) -> None:
         output = config.get("output") if isinstance(config.get("output"), dict) else {}
         shared = {
             "SCHEMA_REGISTRY_URL": str(output.get("schema_registry_url") or os.getenv("SCHEMA_REGISTRY_URL", "")),

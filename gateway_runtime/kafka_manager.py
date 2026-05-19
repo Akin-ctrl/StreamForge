@@ -2,12 +2,31 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import socket
 import time
 from typing import Dict
 
+from gateway_runtime.docker_types import DockerClientLike, DockerContainerLike
 from gateway_runtime.errors import KafkaError
+
+
+logger = logging.getLogger(__name__)
+
+
+def _docker_error_types() -> tuple[type[BaseException], ...]:
+    """Return the docker-side exceptions expected during Kafka management."""
+    error_types: list[type[BaseException]] = [RuntimeError, OSError]
+    try:
+        from docker.errors import APIError, DockerException, NotFound  # type: ignore
+    except ModuleNotFoundError:
+        return tuple(error_types)
+    return tuple(error_types + [NotFound, APIError, DockerException])
+
+
+def _container_lookup_error_types() -> tuple[type[BaseException], ...]:
+    return _docker_error_types() + (KafkaError,)
 
 
 class KafkaManager:
@@ -27,8 +46,8 @@ class KafkaManager:
         self._container_network_mode = os.getenv("KAFKA_CONTAINER_NETWORK_MODE", self._default_network_mode())
         self._host_data_dir = os.getenv("KAFKA_DATA_DIR")
         self._data_volume = os.getenv("KAFKA_DATA_VOLUME", f"{self._container_name}-data")
-        self._client = None
-        self._network = None
+        self._client: DockerClientLike | None = None
+        self._network: str | None = None
         self._managed_container_id: str | None = None
         self._managed_by_runtime = False
 
@@ -129,7 +148,8 @@ class KafkaManager:
         except OSError:
             return False
 
-    def _docker_client(self):
+    def _docker_client(self) -> DockerClientLike:
+        """Create the optional Docker client lazily for runtime-managed Kafka."""
         if self._client is None:
             try:
                 import docker  # type: ignore
@@ -145,14 +165,15 @@ class KafkaManager:
 
         try:
             container = self._find_container(self._docker_client(), self._container_name)
-        except Exception:
+        except _container_lookup_error_types():
             return
 
         self._container_name = container.name
         self._managed_container_id = container.id
         self._managed_by_runtime = self._is_runtime_managed(container)
 
-    def _resolve_network(self, client) -> str:
+    def _resolve_network(self, client: DockerClientLike) -> str:
+        """Infer the Docker network that runtime-managed Kafka should join."""
         if self._network:
             return self._network
 
@@ -167,13 +188,14 @@ class KafkaManager:
             if networks:
                 self._network = next(iter(networks.keys()))
                 return self._network
-        except Exception:
-            pass
+        except _docker_error_types():
+            logger.debug("falling back to bridge network for embedded Kafka discovery")
 
         self._network = "bridge"
         return self._network
 
-    def _ensure_container(self, client, network: str | None):
+    def _ensure_container(self, client: DockerClientLike, network: str | None) -> DockerContainerLike:
+        """Reuse or create the Kafka container that backs the embedded broker."""
         try:
             container = self._find_container(client, self._container_name)
             self._container_name = container.name
@@ -181,7 +203,7 @@ class KafkaManager:
             if container.status != "running":
                 container.start()
             return container
-        except Exception:
+        except _container_lookup_error_types():
             labels = {
                 "app": "streamforge",
                 "component": "kafka",
@@ -207,16 +229,16 @@ class KafkaManager:
             return client.containers.run(**run_kwargs)
 
     @staticmethod
-    def _stop_container(client, container_id: str) -> None:
+    def _stop_container(client: DockerClientLike, container_id: str) -> None:
         try:
             container = client.containers.get(container_id)
             container.stop(timeout=10)
             container.remove()
-        except Exception:
+        except _docker_error_types():
             return None
 
     @staticmethod
-    def _is_runtime_managed(container) -> bool:
+    def _is_runtime_managed(container: DockerContainerLike) -> bool:
         labels = container.labels or {}
         return labels.get("streamforge.managed-by") == "gateway_runtime" and labels.get("component") == "kafka"
 
@@ -230,13 +252,14 @@ class KafkaManager:
         try:
             container = self._find_container(self._docker_client(), target)
             return container.status
-        except Exception:
+        except _container_lookup_error_types():
             return "missing"
 
-    def _find_container(self, client, target: str):
+    def _find_container(self, client: DockerClientLike, target: str) -> DockerContainerLike:
+        """Resolve a Kafka container by ID, name, or compose-derived alias."""
         try:
             return client.containers.get(target)
-        except Exception:
+        except _docker_error_types():
             pass
 
         for container in client.containers.list(all=True):
@@ -246,7 +269,7 @@ class KafkaManager:
         raise KafkaError(f"Kafka container {target} not found")
 
     @staticmethod
-    def _matches_container(container, target: str) -> bool:
+    def _matches_container(container: DockerContainerLike, target: str) -> bool:
         if container.name == target:
             return True
 

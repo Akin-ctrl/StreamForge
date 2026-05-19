@@ -1,7 +1,7 @@
 import type { Dispatch, SetStateAction } from 'react'
 
 import type { CatalogAdapterType } from '../../../shared/api/client'
-import { getCatalogOptions } from '../../../shared/config/catalog'
+import { getCatalogOptionsForValue } from '../../../shared/config/catalog'
 import type { AdapterFormState } from '../adapterForm'
 import { ModbusPointsEditor } from './ModbusPointsEditor'
 
@@ -11,15 +11,7 @@ type ModbusRtuConfigSectionProps = {
   setForm: Dispatch<SetStateAction<AdapterFormState>>
 }
 
-const fallbackParity = [
-  { value: 'N', label: 'None' },
-  { value: 'E', label: 'Even' },
-  { value: 'O', label: 'Odd' },
-]
-
 export function ModbusRtuConfigSection({ contract, form, setForm }: ModbusRtuConfigSectionProps) {
-  const parityOptions = getCatalogOptions(contract, 'connection', 'parity')
-
   return (
     <article className="card">
       <div className="page-header">
@@ -41,7 +33,7 @@ export function ModbusRtuConfigSection({ contract, form, setForm }: ModbusRtuCon
         <label>
           Parity
           <select value={form.parity} onChange={(event) => setForm((current) => ({ ...current, parity: event.target.value }))}>
-            {(parityOptions.length > 0 ? parityOptions : fallbackParity).map((option) => (
+            {getCatalogOptionsForValue(contract, 'connection', 'parity', form.parity).map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>
@@ -72,19 +64,7 @@ export function ModbusRtuConfigSection({ contract, form, setForm }: ModbusRtuCon
         <input value={form.defaultAssetId} onChange={(event) => setForm((current) => ({ ...current, defaultAssetId: event.target.value }))} />
       </label>
       <ModbusPointsEditor contract={contract} form={form} setForm={setForm} />
-      <details className="card nested-card advanced-block">
-        <summary>Advanced</summary>
-        <div className="inline-grid">
-          <label>
-            Telemetry Topic
-            <input value={form.outputTopic} onChange={(event) => setForm((current) => ({ ...current, outputTopic: event.target.value }))} />
-          </label>
-          <label>
-            Events Topic
-            <input value={form.eventsTopic} onChange={(event) => setForm((current) => ({ ...current, eventsTopic: event.target.value }))} />
-          </label>
-        </div>
-      </details>
+      <p className="muted">Internal telemetry and event routing topics are managed by the platform for Modbus adapters.</p>
     </article>
   )
 }

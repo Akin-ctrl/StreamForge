@@ -19,6 +19,16 @@ _AGGREGATE_SCHEMA_PATH = str(Path(__file__).resolve().parents[1] / "schemas" / "
 logger = logging.getLogger(__name__)
 
 
+def _kafka_client_error_types() -> tuple[type[BaseException], ...]:
+    """Return the client-side exceptions expected from Kafka cleanup paths."""
+    error_types: list[type[BaseException]] = [RuntimeError, OSError, ValueError]
+    try:
+        from kafka.errors import KafkaError  # type: ignore
+    except ModuleNotFoundError:
+        return tuple(error_types)
+    return tuple(error_types + [KafkaError])
+
+
 @dataclass(frozen=True)
 class AggregateResolution:
     """Definition for one aggregate output resolution."""
@@ -273,6 +283,8 @@ class AggregatorModule:
                         self._consumer.commit()
                 self._flush_closed_windows(now_epoch=time.time())
         except Exception as exc:
+            # Deliberate service-boundary catch: the supervisor should observe a
+            # failed aggregation loop explicitly instead of losing the failure.
             with self._metrics_lock:
                 self._last_error = str(exc)[:1024]
             logger.exception("aggregator loop failed for gateway %s", self._gateway_id)
@@ -285,7 +297,7 @@ class AggregatorModule:
             if flush and hasattr(client, "flush"):
                 client.flush()
             client.close()
-        except Exception as exc:
+        except _kafka_client_error_types() as exc:
             logger.warning("aggregator failed to close %s for gateway %s cleanly: %s", name, self._gateway_id, exc)
 
     def _process_message(self, message: dict[str, object]) -> None:

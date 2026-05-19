@@ -74,6 +74,7 @@ class SinkContract:
 
 
 def _options(*items: tuple[str, str]) -> tuple[ContractOption, ...]:
+    """Build immutable option metadata for one select-style field."""
     return tuple(ContractOption(value=value, label=label) for value, label in items)
 
 
@@ -92,6 +93,7 @@ def _field(
     options: tuple[ContractOption, ...] = (),
     children: tuple[ContractField, ...] = (),
 ) -> ContractField:
+    """Build one immutable field definition used by the canonical contracts."""
     return ContractField(
         key=key,
         label=label,
@@ -116,6 +118,7 @@ def _section(
     help_text: str | None = None,
     fields: tuple[ContractField, ...] = (),
 ) -> ContractSection:
+    """Build one immutable section definition used by the canonical contracts."""
     return ContractSection(
         key=key,
         label=label,

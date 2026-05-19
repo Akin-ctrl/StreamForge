@@ -1,3 +1,11 @@
+/**
+ * Serialization helpers for sink authoring.
+ *
+ * Like adapter authoring, the sink form preserves a passthrough JSON fragment
+ * so advanced catalog-managed fields survive edits even when they are not
+ * rendered directly. The JSON fallback intentionally excludes secret and
+ * internal routing fields from normal operator editing.
+ */
 import type { CatalogSinkType, SinkCreatePayload, SinkItem, SinkUpdatePayload } from '../../../shared/api/client'
 import { getInternalFieldKeys } from '../../../shared/config/catalog'
 import { cloneJsonObject } from '../../../shared/config/json'
@@ -8,6 +16,8 @@ import type { SinkFormState } from './types'
 
 function baseConfig(form: SinkFormState): JsonObject {
   const config = cloneJsonObject(form.passthroughConfig)
+  // These fields are rebuilt from first-class form state so stale passthrough
+  // values cannot silently override the canonical sink editor.
   for (const key of [
     'source_topic',
     'topic',

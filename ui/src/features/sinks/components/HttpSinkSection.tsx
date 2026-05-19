@@ -1,7 +1,7 @@
 import type { Dispatch, SetStateAction } from 'react'
 
 import type { CatalogSinkType } from '../../../shared/api/client'
-import { getCatalogOptions } from '../../../shared/config/catalog'
+import { getCatalogOptionsForValue } from '../../../shared/config/catalog'
 import type { SinkFormState } from '../sinkForm'
 
 type HttpSinkSectionProps = {
@@ -10,11 +10,7 @@ type HttpSinkSectionProps = {
   setForm: Dispatch<SetStateAction<SinkFormState>>
 }
 
-const fallbackMethods = [{ value: 'POST', label: 'POST' }]
-
 export function HttpSinkSection({ contract, form, setForm }: HttpSinkSectionProps) {
-  const methodOptions = getCatalogOptions(contract, 'destination', 'method')
-
   return (
     <article className="card">
       <div className="page-header">
@@ -28,7 +24,7 @@ export function HttpSinkSection({ contract, form, setForm }: HttpSinkSectionProp
         <label>
           Method
           <select value={form.method} onChange={(event) => setForm((current) => ({ ...current, method: event.target.value }))}>
-            {(methodOptions.length > 0 ? methodOptions : fallbackMethods).map((option) => (
+            {getCatalogOptionsForValue(contract, 'destination', 'method', form.method).map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>
@@ -36,13 +32,7 @@ export function HttpSinkSection({ contract, form, setForm }: HttpSinkSectionProp
           </select>
         </label>
       </div>
-      <details className="card nested-card advanced-block">
-        <summary>Advanced</summary>
-        <label>
-          Source Topic
-          <input value={form.sourceTopic} onChange={(event) => setForm((current) => ({ ...current, sourceTopic: event.target.value }))} />
-        </label>
-      </details>
+      <p className="muted">Source-topic routing is managed by the platform for HTTP sinks.</p>
     </article>
   )
 }

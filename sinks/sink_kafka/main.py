@@ -41,6 +41,16 @@ _EVENT_SCHEMA_PATH = str(Path(__file__).resolve().parents[2] / "schemas" / "even
 _ALARM_SCHEMA_PATH = str(Path(__file__).resolve().parents[2] / "schemas" / "alarm.avsc")
 
 
+def _kafka_runtime_error_types() -> tuple[type[BaseException], ...]:
+    """Return the producer/consumer exceptions expected during sink shutdown."""
+    error_types: list[type[BaseException]] = [RuntimeError, OSError, ValueError]
+    try:
+        from kafka.errors import KafkaError  # type: ignore
+    except ModuleNotFoundError:
+        return tuple(error_types)
+    return tuple(error_types + [KafkaError])
+
+
 def _load_config() -> dict:
     raw = os.getenv("SINK_CONFIG", "{}")
     config = json.loads(raw)
@@ -183,16 +193,18 @@ def _writer_loop() -> None:
                 _STATS["consumer_lag"] = 0
                 _TARGET_BREAKER.record_success()
         except Exception as exc:
+            # Deliberate service-boundary catch: target-cluster failures should
+            # open the breaker and retry instead of killing the sink thread.
             _STATS["errors"] += 1
             _STATS["last_error"] = str(exc)
             _TARGET_BREAKER.record_failure(exc)
             _STOP.wait(timeout=max(_TARGET_BREAKER.remaining_open_seconds(), 3.0))
         finally:
-            with suppress(Exception):
+            with suppress(*_kafka_runtime_error_types()):
                 if producer is not None:
                     producer.flush()
                     producer.close()
-            with suppress(Exception):
+            with suppress(*_kafka_runtime_error_types()):
                 if consumer is not None:
                     consumer.close()
 

@@ -1,7 +1,7 @@
 import type { Dispatch, SetStateAction } from 'react'
 
 import type { CatalogAdapterType } from '../../../shared/api/client'
-import { getCatalogOptions } from '../../../shared/config/catalog'
+import { getCatalogOptionsForValue } from '../../../shared/config/catalog'
 import {
   createDefaultMqttMappingForm,
   createDefaultMqttSubscriptionForm,
@@ -28,28 +28,7 @@ function updateMapping(mappings: MqttMappingForm[], index: number, nextMapping: 
   return mappings.map((mapping, mappingIndex) => (mappingIndex === index ? nextMapping : mapping))
 }
 
-const fallbackMessageTypes = [
-  { value: 'telemetry', label: 'Telemetry' },
-  { value: 'event', label: 'Event' },
-]
-
-const fallbackPayloadFormats = [{ value: 'json', label: 'JSON' }]
-
-const fallbackDataTypes = [
-  { value: 'bool', label: 'Boolean' },
-  { value: 'int16', label: 'int16' },
-  { value: 'uint16', label: 'uint16' },
-  { value: 'int32', label: 'int32' },
-  { value: 'uint32', label: 'uint32' },
-  { value: 'float32', label: 'float32' },
-  { value: 'float64', label: 'float64' },
-]
-
 export function MqttConfigSection({ contract, form, setForm }: MqttConfigSectionProps) {
-  const messageTypes = getCatalogOptions(contract, 'subscriptions', 'message_type')
-  const payloadFormats = getCatalogOptions(contract, 'subscriptions', 'payload_format')
-  const dataTypes = getCatalogOptions(contract, 'subscriptions', 'data_type')
-
   return (
     <article className="card">
       <div className="page-header">
@@ -138,7 +117,7 @@ export function MqttConfigSection({ contract, form, setForm }: MqttConfigSection
                     }))
                   }
                 >
-                  {(messageTypes.length > 0 ? messageTypes : fallbackMessageTypes).map((option) => (
+                  {getCatalogOptionsForValue(contract, 'subscriptions', 'message_type', subscription.message_type).map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
                     </option>
@@ -156,7 +135,7 @@ export function MqttConfigSection({ contract, form, setForm }: MqttConfigSection
                     }))
                   }
                 >
-                  {(payloadFormats.length > 0 ? payloadFormats : fallbackPayloadFormats).map((option) => (
+                  {getCatalogOptionsForValue(contract, 'subscriptions', 'payload_format', subscription.payload_format).map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
                     </option>
@@ -283,8 +262,8 @@ export function MqttConfigSection({ contract, form, setForm }: MqttConfigSection
                             }),
                           }))
                         }
-                      >
-                        {(dataTypes.length > 0 ? dataTypes : fallbackDataTypes).map((option) => (
+                        >
+                        {getCatalogOptionsForValue(contract, 'subscriptions', 'data_type', mapping.data_type).map((option) => (
                           <option key={option.value} value={option.value}>
                             {option.label}
                           </option>
@@ -339,15 +318,8 @@ export function MqttConfigSection({ contract, form, setForm }: MqttConfigSection
             />
             Clean Start
           </label>
-          <label>
-            Telemetry Topic
-            <input value={form.outputTopic} onChange={(event) => setForm((current) => ({ ...current, outputTopic: event.target.value }))} />
-          </label>
-          <label>
-            Events Topic
-            <input value={form.eventsTopic} onChange={(event) => setForm((current) => ({ ...current, eventsTopic: event.target.value }))} />
-          </label>
         </div>
+        <p className="muted">Internal telemetry and event routing topics are managed by the platform for MQTT adapters.</p>
       </details>
     </article>
   )

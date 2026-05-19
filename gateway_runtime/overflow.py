@@ -9,12 +9,23 @@ import logging
 import os
 from pathlib import Path
 import shutil
-from typing import Iterable
+from typing import Iterable, Protocol
 
 from gateway_runtime.config import AdapterConfig
+from gateway_runtime.docker_types import DockerClientLike
 
 
 logger = logging.getLogger(__name__)
+
+
+def _docker_admin_error_types() -> tuple[type[BaseException], ...]:
+    """Return the docker-side exceptions tolerated by overflow admin calls."""
+    error_types: list[type[BaseException]] = [RuntimeError, OSError]
+    try:
+        from docker.errors import APIError, DockerException, NotFound  # type: ignore
+    except ModuleNotFoundError:
+        return tuple(error_types)
+    return tuple(error_types + [NotFound, APIError, DockerException])
 
 
 @dataclass(frozen=True)
@@ -24,6 +35,14 @@ class OverflowSnapshot:
     blocked: bool
     last_action: str | None
     last_error: str | None
+
+
+class KafkaProducerLike(Protocol):
+    """Minimal Kafka producer surface used by the overflow manager."""
+
+    def send(self, topic: str, value: dict[str, object]) -> object: ...
+    def flush(self) -> object: ...
+    def close(self) -> object: ...
 
 
 class OverflowManager:
@@ -45,7 +64,7 @@ class OverflowManager:
         self._blocked = False
         self._last_action: str | None = None
         self._last_error: str | None = None
-        self._producer = None
+        self._producer: KafkaProducerLike | None = None
 
     def set_desired_adapters(self, adapters: Iterable[AdapterConfig]) -> None:
         self._desired_adapters = list(adapters)
@@ -57,6 +76,8 @@ class OverflowManager:
             return
 
         try:
+            # Deliberate containment boundary: overflow stage transitions must
+            # degrade gracefully and keep runtime health reporting alive.
             self._apply_stage(target_stage, usage)
             self._last_error = None
         except Exception as exc:
@@ -85,7 +106,7 @@ class OverflowManager:
             try:
                 self._producer.flush()
                 self._producer.close()
-            except Exception:
+            except (RuntimeError, OSError):
                 return
 
     def _apply_stage(self, stage: str, usage: float) -> None:
@@ -199,11 +220,11 @@ class OverflowManager:
         except ModuleNotFoundError:
             return
 
-        client = docker.from_env()
+        client: DockerClientLike = docker.from_env()
         try:
             container = client.containers.get(container_name)
             result = container.exec_run(command)
-        except Exception as exc:
+        except _docker_admin_error_types() as exc:
             if tolerate_failure:
                 return
             raise RuntimeError(f"Kafka admin command failed: {exc}") from exc
@@ -230,7 +251,8 @@ class OverflowManager:
         producer.send(self._event_topic, payload)
         producer.flush()
 
-    def _producer_or_create(self):
+    def _producer_or_create(self) -> KafkaProducerLike:
+        """Create the overflow event producer lazily on first use."""
         if self._producer is None:
             try:
                 from kafka import KafkaProducer  # type: ignore

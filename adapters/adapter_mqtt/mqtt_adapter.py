@@ -2,18 +2,34 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from queue import Empty, Queue
-from typing import Any
+from threading import Event
+from typing import Any, Protocol
 
 from adapters.adapter_base.base_adapter import BaseAdapter
 from adapters.adapter_base.kafka_publisher import KafkaPublisher
 
 
 _EVENT_SCHEMA_PATH = str(Path(__file__).resolve().parents[2] / "schemas" / "event.avsc")
+
+
+class MqttClientLike(Protocol):
+    """Minimal paho MQTT client surface required by the adapter."""
+
+    on_connect: object
+    on_message: object
+
+    def username_pw_set(self, username: str, password: str | None = None) -> None: ...
+    def connect(self, host: str, port: int, keepalive: int) -> None: ...
+    def loop_start(self) -> None: ...
+    def loop_stop(self) -> None: ...
+    def disconnect(self) -> None: ...
+    def subscribe(self, topic: str, qos: int = 0) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -37,10 +53,10 @@ class MqttAdapter(BaseAdapter):
 
     def __init__(self, config: dict) -> None:
         super().__init__(config)
-        self._client = None
+        self._client: MqttClientLike | None = None
         self._event_publisher: KafkaPublisher | None = None
         self._queue: Queue[dict[str, Any]] = Queue()
-        self._connected_event = None
+        self._connected_event: Event | None = None
         self._subscriptions = self._load_subscriptions()
         self._health.update(
             {
@@ -90,10 +106,8 @@ class MqttAdapter(BaseAdapter):
 
     def disconnect(self) -> None:
         if self._client is not None:
-            try:
+            with suppress(RuntimeError, OSError, ValueError):
                 self._client.loop_stop()
-            except Exception:
-                pass
             try:
                 self._client.disconnect()
             finally:
@@ -120,6 +134,8 @@ class MqttAdapter(BaseAdapter):
                 self._health["last_publish_at"] = self._utcnow()
                 self._set_status("healthy", connected=True, running=True, last_error=None)
         except Exception as exc:
+            # Deliberate adapter-boundary catch: runtime supervision expects a
+            # failed status and a surfaced exception instead of silent exit.
             self._set_status("failed", running=False, last_error=str(exc))
             raise
         finally:
@@ -290,7 +306,7 @@ class MqttAdapter(BaseAdapter):
             return
         try:
             payload = self._parse_payload(spec, payload_bytes)
-        except Exception as exc:
+        except RuntimeError as exc:
             self._health["parse_failures"] = int(self._health.get("parse_failures", 0)) + 1
             self._health["last_error"] = str(exc)
             self._set_status("degraded", connected=True, running=bool(self._health.get("running")), last_error=str(exc))
@@ -329,18 +345,16 @@ class MqttAdapter(BaseAdapter):
     def _topic_matches(subscription: str, topic: str) -> bool:
         try:
             from paho.mqtt.client import topic_matches_sub  # type: ignore
-        except Exception:
+        except ModuleNotFoundError:
             return subscription == topic
         return bool(topic_matches_sub(subscription, topic))
 
     @staticmethod
-    def _event_factory():
-        from threading import Event
-
+    def _event_factory() -> Event:
         return Event()
 
     @staticmethod
-    def _create_client(client_id: str):
+    def _create_client(client_id: str) -> MqttClientLike:
         try:
             import paho.mqtt.client as mqtt  # type: ignore
         except ModuleNotFoundError as exc:

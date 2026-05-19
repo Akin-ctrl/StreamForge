@@ -7,6 +7,7 @@ them as JSON to a configured HTTP endpoint.
 from __future__ import annotations
 
 import base64
+from contextlib import suppress
 import json
 import os
 from pathlib import Path
@@ -41,6 +42,16 @@ _STATS = {
 _AGGREGATE_SCHEMA_PATH = str(Path(__file__).resolve().parents[2] / "schemas" / "telemetry_aggregate.avsc")
 _EVENT_SCHEMA_PATH = str(Path(__file__).resolve().parents[2] / "schemas" / "event.avsc")
 _ALARM_SCHEMA_PATH = str(Path(__file__).resolve().parents[2] / "schemas" / "alarm.avsc")
+
+
+def _kafka_runtime_error_types() -> tuple[type[BaseException], ...]:
+    """Return the consumer-side exceptions expected during sink shutdown."""
+    error_types: list[type[BaseException]] = [RuntimeError, OSError, ValueError]
+    try:
+        from kafka.errors import KafkaError  # type: ignore
+    except ModuleNotFoundError:
+        return tuple(error_types)
+    return tuple(error_types + [KafkaError])
 
 
 def _load_config() -> dict:
@@ -184,16 +195,16 @@ def _writer_loop() -> None:
                 _STATS["consumer_lag"] = 0
                 _HTTP_BREAKER.record_success()
         except Exception as exc:
+            # Deliberate service-boundary catch: the sink should trip its
+            # breaker and retry instead of crashing the background thread.
             _STATS["errors"] += 1
             _STATS["last_error"] = str(exc)
             _HTTP_BREAKER.record_failure(exc)
             _STOP.wait(timeout=max(_HTTP_BREAKER.remaining_open_seconds(), 3.0))
         finally:
             if consumer is not None:
-                try:
+                with suppress(*_kafka_runtime_error_types()):
                     consumer.close()
-                except Exception:
-                    pass
 
 
 def _health_payload() -> dict:
