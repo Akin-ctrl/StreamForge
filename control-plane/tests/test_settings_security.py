@@ -34,6 +34,23 @@ def test_validate_startup_security_rejects_weak_jwt_secret() -> None:
         settings.validate_startup_security()
 
 
+def test_validate_startup_security_rejects_cookie_samesite_none_without_secure_cookie() -> None:
+    settings = build_settings(
+        auth_cookie_samesite="none",
+        auth_cookie_secure=False,
+    )
+
+    with pytest.raises(RuntimeError, match="requires a secure auth cookie"):
+        settings.validate_startup_security()
+
+
+def test_validate_startup_security_rejects_non_positive_cookie_age() -> None:
+    settings = build_settings(auth_cookie_max_age_seconds=0)
+
+    with pytest.raises(RuntimeError, match="AUTH_COOKIE_MAX_AGE_SECONDS"):
+        settings.validate_startup_security()
+
+
 def test_validate_startup_security_rejects_dev_bootstrap_outside_dev() -> None:
     settings = build_settings(
         environment="production",

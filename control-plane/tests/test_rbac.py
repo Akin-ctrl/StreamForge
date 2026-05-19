@@ -8,6 +8,7 @@ from app.core.security import (
     decode_user_token,
     normalize_user_role,
     permission_set_for_user,
+    roles_for_user,
 )
 from app.core.settings import settings
 from app.db.models import User
@@ -46,6 +47,17 @@ def test_engineer_permissions_include_configuration_but_not_admin_controls() -> 
     assert "gateways:manage" not in permissions
 
 
+def test_operator_permissions_stop_before_configuration_mutation() -> None:
+    user = User(username="operator", password_hash="hash", role=UserRole.OPERATOR.value)
+
+    permissions = permission_set_for_user(user)
+
+    assert "alarms:ack" in permissions
+    assert "dlq:approve" in permissions
+    assert "deployments:create" not in permissions
+    assert "users:manage" not in permissions
+
+
 def test_admin_permissions_include_privileged_controls() -> None:
     user = User(username="admin", password_hash="hash", role=UserRole.ADMIN.value)
 
@@ -55,6 +67,12 @@ def test_admin_permissions_include_privileged_controls() -> None:
     assert "gateways:manage" in permissions
     assert "deployments:activate" in permissions
     assert "configs:read" in permissions
+
+
+def test_roles_for_user_returns_only_the_persisted_role() -> None:
+    user = User(username="engineer", password_hash="hash", role=UserRole.ENGINEER.value)
+
+    assert roles_for_user(user) == [UserRole.ENGINEER]
 
 
 def test_user_token_carries_role_permissions(monkeypatch) -> None:

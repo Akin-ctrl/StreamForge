@@ -6,6 +6,7 @@ import os
 import unittest
 from unittest.mock import patch
 
+from gateway_runtime.config import SinkConfig
 from gateway_runtime.errors import AdapterStartError
 from gateway_runtime.sink_manager import SinkManager
 
@@ -84,6 +85,35 @@ class SinkManagerMetadataTests(unittest.TestCase):
     def test_unsupported_sink_type_raises(self) -> None:
         with self.assertRaises(AdapterStartError):
             SinkManager._command_for("unsupported")
+
+    def test_start_sink_uses_managed_runtime_label(self) -> None:
+        manager = SinkManager()
+        captured: dict[str, object] = {}
+        config = SinkConfig(
+            sink_id="timescaledb-demo-01",
+            sink_type="timescaledb",
+            config={"topic": "telemetry.clean", "table": "telemetry_clean"},
+        )
+
+        def fake_ensure_container(**kwargs):
+            captured.update(kwargs)
+            return FakeManagedContainer(
+                name="sf-sink-timescaledb-demo-01",
+                labels=kwargs["labels"],
+                container_id="container-1",
+            )
+
+        with (
+            patch.object(manager, "_docker_client", return_value=object()),
+            patch.object(manager, "_resolve_network", return_value="deploy_default"),
+            patch.object(manager, "_ensure_container", side_effect=fake_ensure_container),
+        ):
+            manager.start_sink(config)
+
+        labels = captured["labels"]
+        self.assertEqual(labels["streamforge.managed-by"], "gateway_runtime")
+        self.assertEqual(labels["sink_id"], "timescaledb-demo-01")
+        self.assertEqual(manager._containers["timescaledb-demo-01"], "container-1")
 
     def test_prune_orphaned_containers_removes_unconfigured_streamforge_sink(self) -> None:
         manager = SinkManager()
