@@ -91,21 +91,30 @@ class GatewayRuntime:
 
     def start(self) -> None:
         """Start all runtime components in correct order."""
-        print("gateway_runtime starting", flush=True)
+        logger.info("gateway runtime starting")
         config = self._load_initial_config()
         self._current_config = config
         self._startup_status = "starting"
         self._startup_error = None
-        print("gateway_runtime config loaded", flush=True)
+        logger.info(
+            "gateway runtime configuration loaded for gateway %s (deployment=%s, version=%s)",
+            config.gateway_id,
+            config.deployment_id or "none",
+            config.version,
+        )
         self._kafka.start()
-        print("gateway_runtime kafka ready", flush=True)
+        logger.info("gateway runtime kafka ready for gateway %s", config.gateway_id)
         self._kafka_watchdog_stop_event = asyncio.Event()
         self._kafka_watchdog_task = asyncio.create_task(self._kafka_watchdog_loop())
-        print("gateway_runtime kafka watchdog started", flush=True)
+        logger.info("gateway runtime kafka watchdog started for gateway %s", config.gateway_id)
         self._adapters.start_all(config.adapters)
         if self._overflow is not None:
             self._overflow.set_desired_adapters(config.adapters)
-        print("gateway_runtime adapters started", flush=True)
+        logger.info(
+            "gateway runtime adapters started for gateway %s (%d adapters)",
+            config.gateway_id,
+            len(config.adapters),
+        )
 
         validation_rules = dict(config.validation) if isinstance(config.validation, dict) else {}
         if config.deployment_id and "deployment_id" not in validation_rules:
@@ -141,29 +150,35 @@ class GatewayRuntime:
             self._aggregator.start()
 
         self._sinks.start_all(config.sinks)
-        print("gateway_runtime sinks started", flush=True)
+        logger.info(
+            "gateway runtime sinks started for gateway %s (%d sinks)",
+            config.gateway_id,
+            len(config.sinks),
+        )
         if self._overflow is not None:
             self._overflow_stop_event = asyncio.Event()
             self._overflow_task = asyncio.create_task(self._overflow_loop())
-            print("gateway_runtime overflow monitor started", flush=True)
+            logger.info("gateway runtime overflow monitor started for gateway %s", config.gateway_id)
         self._adapter_control_stop_event = asyncio.Event()
         self._adapter_control_task = asyncio.create_task(self._adapter_control_loop())
-        print("gateway_runtime adapter control loop started", flush=True)
+        logger.info("gateway runtime adapter control loop started for gateway %s", config.gateway_id)
         
         # Start polling loop when using Control Plane-backed config repository
         if isinstance(self._config_repo, ControlPlaneConfigRepository):
             self._poll_initial_delay = 0 if self._config_repo.last_load_source == "cache" else self._poll_interval
             self._polling_stop_event = asyncio.Event()
             self._polling_task = asyncio.create_task(self._polling_loop())
-            print("gateway_runtime polling loop started", flush=True)
+            logger.info("gateway runtime polling loop started for gateway %s", config.gateway_id)
             self._heartbeat_stop_event = asyncio.Event()
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-            print("gateway_runtime heartbeat loop started", flush=True)
+            logger.info("gateway runtime heartbeat loop started for gateway %s", config.gateway_id)
         self._startup_status = "running"
+        logger.info("gateway runtime started for gateway %s", config.gateway_id)
 
     def stop(self) -> None:
         """Stop all runtime components gracefully."""
-        print("gateway_runtime stopping", flush=True)
+        gateway_id = self._current_config.gateway_id if self._current_config is not None else "unknown"
+        logger.info("gateway runtime stopping for gateway %s", gateway_id)
         self._startup_status = "stopped"
         
         # Stop polling loop
@@ -205,7 +220,7 @@ class GatewayRuntime:
         self._adapters.stop_all()
         self._sinks.stop_all()
         self._kafka.stop()
-        print("gateway_runtime stopped", flush=True)
+        logger.info("gateway runtime stopped for gateway %s", gateway_id)
 
     async def _kafka_watchdog_loop(self) -> None:
         """Keep managed local Kafka available during runtime execution."""
@@ -216,7 +231,11 @@ class GatewayRuntime:
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                print(f"gateway_runtime kafka watchdog detected issue: {exc}", flush=True)
+                logger.exception(
+                    "gateway runtime kafka watchdog failed for gateway %s; retrying in %ss",
+                    self._current_config.gateway_id if self._current_config is not None else "unknown",
+                    self._kafka_watchdog_interval,
+                )
 
     async def _polling_loop(self) -> None:
         """Periodically fetch config from Control Plane and apply updates."""
@@ -232,7 +251,10 @@ class GatewayRuntime:
                 
                 # Apply config if different
                 if self._has_config_changed(self._current_config, new_config):
-                    print(f"gateway_runtime config changed, applying updates", flush=True)
+                    logger.info(
+                        "gateway runtime detected configuration change for gateway %s; applying update",
+                        new_config.gateway_id,
+                    )
                     self._apply_config_update(new_config)
                     self._current_config = new_config
                 
@@ -242,6 +264,12 @@ class GatewayRuntime:
             except ConfigError as exc:
                 # Control plane unreachable or error; exponential backoff
                 backoff_delay = self._next_poll_backoff(backoff_delay)
+                logger.warning(
+                    "gateway runtime config refresh failed for gateway %s; retrying in %.1fs: %s",
+                    self._current_config.gateway_id if self._current_config is not None else "unknown",
+                    backoff_delay,
+                    exc,
+                )
 
     def _load_initial_config(self) -> GatewayConfig:
         """Load initial config, retrying when the gateway is waiting for operator provisioning."""
@@ -286,10 +314,19 @@ class GatewayRuntime:
             except asyncio.CancelledError:
                 break
             except ConfigError as exc:
-                print(f"gateway_runtime heartbeat failed: {exc}", flush=True)
+                logger.warning(
+                    "gateway runtime heartbeat failed for gateway %s; retrying in %ss: %s",
+                    self._current_config.gateway_id if self._current_config is not None else "unknown",
+                    self._heartbeat_interval,
+                    exc,
+                )
                 await asyncio.sleep(self._heartbeat_interval)
             except Exception as exc:
-                print(f"gateway_runtime heartbeat error: {exc}", flush=True)
+                logger.exception(
+                    "gateway runtime heartbeat loop failed for gateway %s; retrying in %ss",
+                    self._current_config.gateway_id if self._current_config is not None else "unknown",
+                    self._heartbeat_interval,
+                )
                 await asyncio.sleep(self._heartbeat_interval)
 
     async def _overflow_loop(self) -> None:
@@ -302,7 +339,11 @@ class GatewayRuntime:
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                print(f"gateway_runtime overflow monitor error: {exc}", flush=True)
+                logger.exception(
+                    "gateway runtime overflow monitor failed for gateway %s; retrying in %ss",
+                    self._current_config.gateway_id if self._current_config is not None else "unknown",
+                    self._overflow_check_interval,
+                )
                 await asyncio.sleep(self._overflow_check_interval)
 
     async def _adapter_control_loop(self) -> None:
@@ -315,7 +356,11 @@ class GatewayRuntime:
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                print(f"gateway_runtime adapter control error: {exc}", flush=True)
+                logger.exception(
+                    "gateway runtime adapter control loop failed for gateway %s; retrying in %ss",
+                    self._current_config.gateway_id if self._current_config is not None else "unknown",
+                    self._adapter_control_interval,
+                )
                 await asyncio.sleep(self._adapter_control_interval)
 
     def _next_poll_backoff(self, current_delay: float) -> float:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import urllib.error
@@ -12,6 +13,14 @@ from typing import Dict, List
 from gateway_runtime.adapter_factory import AdapterFactory
 from gateway_runtime.config import AdapterConfig
 from gateway_runtime.errors import AdapterStartError
+
+try:
+    from docker import errors as docker_errors  # type: ignore
+except ModuleNotFoundError:
+    docker_errors = None
+
+
+logger = logging.getLogger(__name__)
 
 
 class AdapterManager:
@@ -55,14 +64,7 @@ class AdapterManager:
             }
             self._inject_shared_env(env, config.config)
 
-            labels = {
-                "app": "streamforge",
-                "component": "adapter",
-                "streamforge.managed-by": "gateway_runtime",
-                "adapter_id": config.adapter_id,
-                "adapter_type": config.adapter_type,
-            }
-            labels.update(self._compose_labels(config.adapter_type))
+            labels = self._labels_for(config.adapter_id, config.adapter_type)
             command = self._command_for(config.adapter_type)
             devices = self._device_mappings(config.config)
 
@@ -80,7 +82,7 @@ class AdapterManager:
             self._containers[config.adapter_id] = container.id
             self._container_names[config.adapter_id] = container.name
             self._throttle_state[config.adapter_id] = self._default_throttle_state()
-            print(f"adapter_manager started {config.adapter_id} as {container.name}", flush=True)
+            logger.info("adapter manager started %s as %s", config.adapter_id, container.name)
 
     def stop_all(self) -> None:
         """Stop all running adapters."""
@@ -110,13 +112,7 @@ class AdapterManager:
         }
         self._inject_shared_env(env, config.config)
         
-        labels = {
-            "app": "streamforge",
-            "component": "adapter",
-            "adapter_id": config.adapter_id,
-            "adapter_type": config.adapter_type,
-        }
-        labels.update(self._compose_labels(config.adapter_type))
+        labels = self._labels_for(config.adapter_id, config.adapter_type)
         command = self._command_for(config.adapter_type)
         devices = self._device_mappings(config.config)
         
@@ -134,7 +130,7 @@ class AdapterManager:
         self._containers[config.adapter_id] = container.id
         self._container_names[config.adapter_id] = container.name
         self._throttle_state[config.adapter_id] = self._default_throttle_state()
-        print(f"adapter_manager started {config.adapter_id} as {container.name}", flush=True)
+        logger.info("adapter manager started %s as %s", config.adapter_id, container.name)
 
     def stop_adapter(self, adapter_id: str) -> None:
         """Stop a single adapter by ID."""
@@ -147,7 +143,7 @@ class AdapterManager:
         self._containers.pop(adapter_id, None)
         self._container_names.pop(adapter_id, None)
         self._throttle_state.pop(adapter_id, None)
-        print(f"adapter_manager stopped {adapter_id}", flush=True)
+        logger.info("adapter manager stopped %s", adapter_id)
 
     def restart(self, adapter_id: str) -> None:
         """Restart a specific adapter by ID."""
@@ -165,12 +161,8 @@ class AdapterManager:
         client = self._docker_client()
         adapter_states = {}
         for adapter_id, container_id in self._containers.items():
-            status = "unknown"
-            try:
-                container = client.containers.get(container_id)
-                status = container.status
-            except Exception:
-                status = "missing"
+            container = self._get_container(client, container_id, context=f"reading health for adapter {adapter_id}")
+            status = container.status if container is not None else "missing"
 
             adapter_states[adapter_id] = status
 
@@ -219,8 +211,8 @@ class AdapterManager:
             if networks:
                 self._network = next(iter(networks.keys()))
                 return self._network
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("adapter manager could not infer runtime docker network; falling back to bridge: %s", exc)
 
         self._network = "bridge"
         return self._network
@@ -236,11 +228,9 @@ class AdapterManager:
         command: list[str],
         devices: list[str],
     ):
-        try:
-            container = client.containers.get(name)
+        container = self._get_container(client, name, context=f"checking for existing adapter container {name}")
+        if container is not None:
             self._stop_container(client, container.id)
-        except Exception:
-            pass
 
         return client.containers.run(
             image=image,
@@ -260,12 +250,18 @@ class AdapterManager:
             adapter_id = self._managed_adapter_id(container)
             if adapter_id is None or adapter_id in desired_ids:
                 continue
+            logger.info(
+                "adapter manager pruning orphaned managed container %s for adapter %s",
+                getattr(container, "name", "<unknown>"),
+                adapter_id,
+            )
             self._stop_container(client, container.id)
 
     def _list_managed_containers(self, client) -> list[object]:
         try:
             return list(client.containers.list(all=True))
-        except Exception:
+        except Exception as exc:
+            logger.warning("adapter manager failed to list managed containers: %s", exc)
             return []
 
     def _managed_adapter_id(self, container) -> str | None:
@@ -300,11 +296,38 @@ class AdapterManager:
         return project == AdapterManager._compose_project()
 
     def _stop_container(self, client, container_id: str) -> None:
+        container = self._get_container(client, container_id, context=f"stopping adapter container {container_id}")
+        if container is None:
+            return
         try:
-            container = client.containers.get(container_id)
             container.stop(timeout=5)
             container.remove()
-        except Exception:
+        except Exception as exc:
+            logger.warning("adapter manager failed to stop container %s cleanly: %s", container_id, exc)
+
+    @staticmethod
+    def _labels_for(adapter_id: str, adapter_type: str) -> Dict[str, str]:
+        labels = {
+            "app": "streamforge",
+            "component": "adapter",
+            "streamforge.managed-by": "gateway_runtime",
+            "adapter_id": adapter_id,
+            "adapter_type": adapter_type,
+        }
+        labels.update(AdapterManager._compose_labels(adapter_type))
+        return labels
+
+    @staticmethod
+    def _is_docker_not_found(exc: Exception) -> bool:
+        return bool(docker_errors is not None and isinstance(exc, docker_errors.NotFound))
+
+    def _get_container(self, client, container_ref: str, *, context: str):
+        try:
+            return client.containers.get(container_ref)
+        except Exception as exc:
+            if self._is_docker_not_found(exc):
+                return None
+            logger.warning("adapter manager failed to resolve container %s while %s: %s", container_ref, context, exc)
             return None
 
     @staticmethod
@@ -402,6 +425,7 @@ class AdapterManager:
             with urllib.request.urlopen(request, timeout=3) as response:
                 body = json.loads(response.read().decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            logger.warning("adapter manager failed to push throttle policy to %s via %s: %s", adapter_id, container_name, exc)
             self._throttle_state[adapter_id] = {
                 "status": "error",
                 "error": str(exc),

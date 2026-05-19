@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import logging
 import math
 import os
 from pathlib import Path
@@ -15,6 +16,7 @@ from adapters.adapter_base.schema import SchemaManager
 
 
 _AGGREGATE_SCHEMA_PATH = str(Path(__file__).resolve().parents[1] / "schemas" / "telemetry_aggregate.avsc")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -148,7 +150,12 @@ class AggregatorModule:
         self._windows = {resolution.name: {} for resolution in self._resolutions}
         self._thread = threading.Thread(target=self._run_loop, daemon=True, name=f"aggregator-{self._gateway_id}")
         self._thread.start()
-        print("aggregator_module started", flush=True)
+        logger.info(
+            "aggregator module started for gateway %s (source_topic=%s, resolutions=%s)",
+            self._gateway_id,
+            self._source_topic,
+            ",".join(resolution.name for resolution in self._resolutions),
+        )
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -156,18 +163,13 @@ class AggregatorModule:
             self._thread.join(timeout=5)
         self._thread = None
         self._flush_all(force=True)
-        if self._consumer is not None:
-            try:
-                self._consumer.close()
-            except Exception:
-                pass
-        for producer in self._producers.values():
-            try:
-                producer.flush()
-                producer.close()
-            except Exception:
-                continue
-        print("aggregator_module stopped", flush=True)
+        self._close_client(self._consumer, name="consumer", flush=False)
+        self._consumer = None
+        for resolution_name, producer in list(self._producers.items()):
+            self._close_client(producer, name=f"{resolution_name} producer", flush=True)
+        self._producers = {}
+        self._schemas = {}
+        logger.info("aggregator module stopped for gateway %s", self._gateway_id)
 
     def health(self) -> Dict[str, object]:
         with self._metrics_lock:
@@ -225,6 +227,12 @@ class AggregatorModule:
                 request_timeout_ms=60000,
                 value_deserializer=self._raw_schema.decode,
             )
+            logger.info(
+                "aggregator consumer initialized for gateway %s (topic=%s, group_id=sf-aggregator-%s)",
+                self._gateway_id,
+                self._source_topic,
+                self._gateway_id,
+            )
 
         for resolution in self._resolutions:
             if resolution.name in self._producers:
@@ -243,6 +251,12 @@ class AggregatorModule:
             )
             self._schemas[resolution.name] = schema
             self._producers[resolution.name] = producer
+            logger.info(
+                "aggregator producer initialized for gateway %s (resolution=%s, topic=%s)",
+                self._gateway_id,
+                resolution.name,
+                resolution.topic,
+            )
 
     def _run_loop(self) -> None:
         assert self._consumer is not None
@@ -261,7 +275,18 @@ class AggregatorModule:
         except Exception as exc:
             with self._metrics_lock:
                 self._last_error = str(exc)[:1024]
+            logger.exception("aggregator loop failed for gateway %s", self._gateway_id)
             raise
+
+    def _close_client(self, client: object | None, *, name: str, flush: bool) -> None:
+        if client is None:
+            return
+        try:
+            if flush and hasattr(client, "flush"):
+                client.flush()
+            client.close()
+        except Exception as exc:
+            logger.warning("aggregator failed to close %s for gateway %s cleanly: %s", name, self._gateway_id, exc)
 
     def _process_message(self, message: dict[str, object]) -> None:
         asset_id = str(message.get("asset_id", "unknown"))

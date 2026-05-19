@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 from typing import Dict, List
 
 from gateway_runtime.config import SinkConfig
 from gateway_runtime.errors import AdapterStartError
+
+try:
+    from docker import errors as docker_errors  # type: ignore
+except ModuleNotFoundError:
+    docker_errors = None
+
+
+logger = logging.getLogger(__name__)
 
 
 class SinkManager:
@@ -75,7 +84,7 @@ class SinkManager:
             command=command,
         )
         self._containers[config.sink_id] = container.id
-        print(f"sink_manager started {config.sink_id} as {container.name}", flush=True)
+        logger.info("sink manager started %s as %s", config.sink_id, container.name)
 
     def stop_sink(self, sink_id: str) -> None:
         """Stop single sink by id."""
@@ -84,19 +93,15 @@ class SinkManager:
         client = self._docker_client()
         self._stop_container(client, self._containers[sink_id])
         self._containers.pop(sink_id, None)
-        print(f"sink_manager stopped {sink_id}", flush=True)
+        logger.info("sink manager stopped %s", sink_id)
 
     def health(self) -> Dict[str, object]:
         """Return sink health status."""
         client = self._docker_client()
         sink_states = {}
         for sink_id, container_id in self._containers.items():
-            status = "unknown"
-            try:
-                container = client.containers.get(container_id)
-                status = container.status
-            except Exception:
-                status = "missing"
+            container = self._get_container(client, container_id, context=f"reading health for sink {sink_id}")
+            status = container.status if container is not None else "missing"
             sink_states[sink_id] = status
 
         overall = "healthy" if all(state == "running" for state in sink_states.values()) else "degraded"
@@ -133,8 +138,8 @@ class SinkManager:
             if networks:
                 self._network = next(iter(networks.keys()))
                 return self._network
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("sink manager could not infer runtime docker network; falling back to bridge: %s", exc)
 
         self._network = "bridge"
         return self._network
@@ -149,11 +154,9 @@ class SinkManager:
         labels: Dict[str, str],
         command: list[str],
     ):
-        try:
-            container = client.containers.get(name)
+        container = self._get_container(client, name, context=f"checking for existing sink container {name}")
+        if container is not None:
             self._stop_container(client, container.id)
-        except Exception:
-            pass
 
         return client.containers.run(
             image=image,
@@ -172,12 +175,18 @@ class SinkManager:
             sink_id = self._managed_sink_id(container)
             if sink_id is None or sink_id in desired_ids:
                 continue
+            logger.info(
+                "sink manager pruning orphaned managed container %s for sink %s",
+                getattr(container, "name", "<unknown>"),
+                sink_id,
+            )
             self._stop_container(client, container.id)
 
     def _list_managed_containers(self, client) -> list[object]:
         try:
             return list(client.containers.list(all=True))
-        except Exception:
+        except Exception as exc:
+            logger.warning("sink manager failed to list managed containers: %s", exc)
             return []
 
     def _managed_sink_id(self, container) -> str | None:
@@ -212,13 +221,27 @@ class SinkManager:
         return project == SinkManager._compose_project()
 
     @staticmethod
-    def _stop_container(client, container_id: str) -> None:
+    def _is_docker_not_found(exc: Exception) -> bool:
+        return bool(docker_errors is not None and isinstance(exc, docker_errors.NotFound))
+
+    def _get_container(self, client, container_ref: str, *, context: str):
         try:
-            container = client.containers.get(container_id)
+            return client.containers.get(container_ref)
+        except Exception as exc:
+            if self._is_docker_not_found(exc):
+                return None
+            logger.warning("sink manager failed to resolve container %s while %s: %s", container_ref, context, exc)
+            return None
+
+    def _stop_container(self, client, container_id: str) -> None:
+        container = self._get_container(client, container_id, context=f"stopping sink container {container_id}")
+        if container is None:
+            return
+        try:
             container.stop(timeout=5)
             container.remove()
-        except Exception:
-            return None
+        except Exception as exc:
+            logger.warning("sink manager failed to stop container %s cleanly: %s", container_id, exc)
 
     @staticmethod
     def _container_name(sink_id: str) -> str:
