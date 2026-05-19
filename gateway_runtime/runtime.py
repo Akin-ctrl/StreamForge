@@ -15,6 +15,7 @@ from gateway_runtime.event_validator import EventValidatorModule
 from gateway_runtime.errors import ConfigError
 from gateway_runtime.health import AdapterState, HealthEvent, HealthReporter
 from gateway_runtime.kafka_manager import KafkaManager
+from gateway_runtime.logging_utils import recent_log_entries
 from gateway_runtime.overflow import OverflowManager
 from gateway_runtime.sink_manager import SinkManager
 from gateway_runtime.validator import ValidatorModule
@@ -540,6 +541,9 @@ class GatewayRuntime:
         elif aggregate["status"] == AdapterState.DEGRADED.value:
             snapshot["status"] = "degraded"
         snapshot["components"] = aggregate["components"]
+        snapshot["recent_logs"] = recent_log_entries(
+            default_gateway_id=self._current_config.gateway_id,
+        )
         return snapshot
 
     def metrics_snapshot(self) -> str:

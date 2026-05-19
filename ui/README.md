@@ -5,11 +5,19 @@ React + TypeScript + Vite frontend for control-plane operator workflows.
 ## Implemented Views
 
 - Login + first-user bootstrap flow
+- Overview
+- Fleet
 - Gateways (list, create, approve)
-- Create Pipeline (guided pipeline builder)
+- Adapters
+- Deployments / Compose Deployment
+- Sinks
+- Events
+- Aggregates
+- Logs
 - Health
 - Alarms (list/filter, acknowledge, suppress)
 - DLQ (list/filter, detail, approve/discard, bulk approve)
+- Users
 
 ## Run Locally
 
@@ -36,5 +44,6 @@ npm run build
 
 ## Status Notes
 
-- UI baseline milestone scope is completed for Phases 1-4 tracking.
-- Future UI work should follow `PROJECT_PHASES.md` active queue and ADR-011 open P2/P3 items.
+- The current operator UI covers the core reusable-object workflow: adapters, sinks, deployments, validation/test/preflight, events, aggregates, fleet, and logs.
+- The next active UI roadmap item is general configuration UX polish.
+- Broader roadmap tracking now lives in `docs/UI_PRODUCT_ACTION_LIST.md` and `PROJECT_PHASES.md`.

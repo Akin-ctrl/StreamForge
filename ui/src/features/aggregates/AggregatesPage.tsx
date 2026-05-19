@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import { type AggregateItem, type AggregateResolution, listAggregates } from '../../shared/api/client'
 import { formatDateTime } from '../../shared/format/datetime'
@@ -200,7 +201,12 @@ export function AggregatesPage() {
             {selectedAggregate && (
               <div className="review-grid">
                 <p>
-                  <strong>Gateway:</strong> {selectedAggregate.gateway_id ?? 'Unknown'}
+                  <strong>Gateway:</strong>{' '}
+                  {selectedAggregate.gateway_id ? (
+                    <Link to={`/fleet?gateway=${encodeURIComponent(selectedAggregate.gateway_id)}`}>{selectedAggregate.gateway_id}</Link>
+                  ) : (
+                    'Unknown'
+                  )}
                 </p>
                 <p>
                   <strong>Source Table:</strong> {selectedAggregate.source_table}

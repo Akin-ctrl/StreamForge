@@ -115,7 +115,9 @@ export function PipelinesPage() {
                 return (
                   <tr key={deployment.deployment_id}>
                     <td>{deployment.deployment_id}</td>
-                    <td>{deployment.gateway_id}</td>
+                    <td>
+                      <Link to={`/fleet?gateway=${encodeURIComponent(deployment.gateway_id)}`}>{deployment.gateway_id}</Link>
+                    </td>
                     <td>{deployment.status}</td>
                     <td>{summary.adapterCount} attached</td>
                     <td>{summary.sinkCount} attached</td>

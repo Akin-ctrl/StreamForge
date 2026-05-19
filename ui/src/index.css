@@ -530,6 +530,115 @@ textarea:focus {
   font-size: 1.4rem;
 }
 
+.fleet-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.fleet-gateway-list,
+.fleet-detail-stack {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.fleet-gateway-stack {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.fleet-gateway-card {
+  display: grid;
+  gap: 0.6rem;
+  text-align: left;
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  border-radius: 0.6rem;
+  padding: 0.85rem;
+  cursor: pointer;
+}
+
+.fleet-gateway-card-selected {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 10%, var(--panel));
+}
+
+.fleet-gateway-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.fleet-card-meta,
+.fleet-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.fleet-status-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+
+.fleet-status-chip-good { background: #d6f7e8; color: #0d7049; border-color: #95ddb9; }
+.fleet-status-chip-warn { background: #fff2cb; color: #7b630d; border-color: #e7d07d; }
+.fleet-status-chip-bad { background: #ffd9e3; color: #8b1234; border-color: #f3a6bb; }
+.fleet-status-chip-neutral { background: #d8edff; color: #1b4e92; border-color: #9fc8ef; }
+
+:root[data-theme='dark'] .fleet-status-chip-good { background: #123026; color: #9de9c7; border-color: #1f5947; }
+:root[data-theme='dark'] .fleet-status-chip-warn { background: #332b11; color: #ffe6a6; border-color: #5d4b1f; }
+:root[data-theme='dark'] .fleet-status-chip-bad { background: #35141f; color: #ffb8ca; border-color: #5b1f34; }
+:root[data-theme='dark'] .fleet-status-chip-neutral { background: #122b3d; color: #a9dfff; border-color: #1e4f72; }
+
+.fleet-topology {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.8rem;
+}
+
+.topology-column {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.topology-column h4 {
+  margin: 0;
+}
+
+.topology-node {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: var(--panel-2);
+}
+
+.topology-node-empty {
+  min-height: 88px;
+  place-content: center;
+}
+
+.topology-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.topology-link:hover {
+  text-decoration: underline;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -549,6 +658,10 @@ textarea:focus {
   }
 
   .composer-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .fleet-layout {
     grid-template-columns: 1fr;
   }
 

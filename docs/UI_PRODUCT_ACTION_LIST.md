@@ -2,7 +2,11 @@
 
 This list captures the remaining product-facing UI work in strict priority order so implementation stays aligned with the accepted architecture and does not drift into demo-only shortcuts.
 
-Last updated: 2026-05-16
+Last updated: 2026-05-19
+
+Status note:
+- Items `1` through `10` below are now implemented in the current UI/control-plane/runtime stack.
+- The next active UI roadmap item is `11. P1 General configuration UX polish`.
 
 ## Priority Order
 
@@ -69,22 +73,22 @@ Last updated: 2026-05-16
 
 ## Current Delivery Status
 
-- `P0` End-to-end operator configuration: Implemented only for the current narrow wizard model; needs architecture correction for multi-adapter/multi-sink deployment composition
-- `P0` Built-in user management: Implemented for built-in auth flows
-- `P1` Global timestamp and locale handling: Implemented for timezone-aware UI presentation
-- `P1` Gateway autonomy visibility: Implemented in gateway and health views
-- `P1` Health and metrics dashboard: Implemented against current runtime/control-plane metrics
-- `P2` Responsive navigation and information architecture: Implemented for currently shipped views
-- `P0` UI information architecture correction: Partial
-- `P0` Adapters section: Partial
-- `P0` Deployment/composition builder rework: Not implemented
-- `P0` Catalog-driven adapter/sink rendering: Partial and blocked by an overly flat catalog contract
-- `P1` Protocol-aware configuration UX: Partial
-- `P1` Object ownership/reuse clarity: Not implemented
-- `P1` Connection test and preflight UX: Not implemented
-- `P1` Event and aggregate UX: Not implemented
-- `P1` Fleet operations and topology views: Not implemented
-- `P1` Logs viewer: Deferred pending backend log transport/storage
-- `P1` General configuration UX polish: Partial
-- `P2` Design-system consistency: Partial
-- `P2` Optional enterprise auth UX: Blocked on backend auth roadmap
+- `P0` End-to-end operator configuration: Implemented for reusable adapters, reusable sinks, and composed deployments with deployment-level validation, events, and aggregate controls.
+- `P0` Built-in user management: Implemented for built-in auth flows.
+- `P1` Global timestamp and locale handling: Implemented for timezone-aware UI presentation.
+- `P1` Gateway autonomy visibility: Implemented in gateway, health, fleet, and logs-adjacent views.
+- `P1` Health and metrics dashboard: Implemented against current runtime/control-plane metrics.
+- `P2` Responsive navigation and information architecture: Implemented for the currently shipped operations surface.
+- `P0` UI information architecture correction: Implemented.
+- `P0` Adapters section: Implemented.
+- `P0` Deployment/composition builder rework: Implemented.
+- `P0` Catalog-driven adapter/sink rendering: Substantially implemented with shared control-plane contract metadata; remaining work belongs to configuration UX polish rather than architecture correction.
+- `P1` Protocol-aware configuration UX: Implemented for the currently supported protocol set (`modbus_tcp`, `modbus_rtu`, `mqtt`, `opcua`) and sink types.
+- `P1` Object ownership/reuse clarity: Implemented.
+- `P1` Connection test and preflight UX: Implemented.
+- `P1` Event and aggregate UX: Implemented.
+- `P1` Fleet operations and topology views: Implemented.
+- `P1` Logs viewer: Implemented using real gateway-runtime log transport through the heartbeat/control-plane path.
+- `P1` General configuration UX polish: Next active phase.
+- `P2` Design-system consistency: Partial.
+- `P2` Optional enterprise auth UX: Blocked on backend auth roadmap.

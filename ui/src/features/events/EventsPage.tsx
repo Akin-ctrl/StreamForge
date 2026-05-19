@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import { type EventItem, listEvents } from '../../shared/api/client'
 import { formatDateTime } from '../../shared/format/datetime'
@@ -175,7 +176,12 @@ export function EventsPage() {
             {selectedEvent && (
               <div className="review-grid">
                 <p>
-                  <strong>Gateway:</strong> {selectedEvent.gateway_id ?? 'Unknown'}
+                  <strong>Gateway:</strong>{' '}
+                  {selectedEvent.gateway_id ? (
+                    <Link to={`/fleet?gateway=${encodeURIComponent(selectedEvent.gateway_id)}`}>{selectedEvent.gateway_id}</Link>
+                  ) : (
+                    'Unknown'
+                  )}
                 </p>
                 <p>
                   <strong>Asset:</strong> {selectedEvent.asset_id}

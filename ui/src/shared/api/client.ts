@@ -128,6 +128,18 @@ export type AggregateItem = {
   payload: JsonObject
 }
 
+export type LogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL'
+
+export type LogEntry = {
+  timestamp: string
+  gateway_id: string
+  level: LogLevel | string
+  logger: string
+  component: string
+  message: string
+  exception?: string | null
+}
+
 export type AlarmSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO'
 export type AlarmState = 'ACTIVE' | 'ACKNOWLEDGED' | 'CLEARED' | 'SUPPRESSED'
 
@@ -770,4 +782,29 @@ export function listAggregates(filters: {
   }
 
   return request<AggregateItem[]>(`/api/v1/aggregates?${params.toString()}`)
+}
+
+export function listLogs(filters?: {
+  gateway_id?: string
+  component?: string
+  level?: string
+  limit?: number
+}) {
+  const params = new URLSearchParams()
+
+  if (filters?.gateway_id) {
+    params.set('gateway_id', filters.gateway_id)
+  }
+  if (filters?.component) {
+    params.set('component', filters.component)
+  }
+  if (filters?.level) {
+    params.set('level', filters.level)
+  }
+  if (filters?.limit) {
+    params.set('limit', String(filters.limit))
+  }
+
+  const suffix = params.toString()
+  return request<LogEntry[]>(`/api/v1/logs${suffix ? `?${suffix}` : ''}`)
 }

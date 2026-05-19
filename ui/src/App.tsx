@@ -6,9 +6,11 @@ import { AggregatesPage } from './features/aggregates/AggregatesPage'
 import { AlarmsPage } from './features/alarms/AlarmsPage'
 import { DlqPage } from './features/dlq/DlqPage'
 import { EventsPage } from './features/events/EventsPage'
+import { FleetPage } from './features/fleet/FleetPage'
 import { LoginPage } from './features/auth/LoginPage'
 import { GatewaysPage } from './features/gateways/GatewaysPage'
 import { HealthPage } from './features/health/HealthPage'
+import { LogsPage } from './features/logs/LogsPage'
 import { OverviewPage } from './features/overview/OverviewPage'
 import { PipelineBuilderPage } from './features/pipelines/PipelineBuilderPage'
 import { PipelinesPage } from './features/pipelines/PipelinesPage'
@@ -37,6 +39,7 @@ function App() {
         >
           <Route index element={<Navigate to="/overview" replace />} />
           <Route path="overview" element={<OverviewPage />} />
+          <Route path="fleet" element={<FleetPage />} />
           <Route path="gateways" element={<GatewaysPage />} />
           <Route path="adapters" element={<AdaptersPage />} />
           <Route path="pipelines" element={<PipelinesPage />} />
@@ -44,6 +47,7 @@ function App() {
           <Route path="sinks" element={<SinksPage />} />
           <Route path="events" element={<EventsPage />} />
           <Route path="aggregates" element={<AggregatesPage />} />
+          <Route path="logs" element={<LogsPage />} />
           <Route path="alarms" element={<AlarmsPage />} />
           <Route path="dlq" element={<DlqPage />} />
           <Route path="create-pipeline" element={<PipelineBuilderPage />} />
