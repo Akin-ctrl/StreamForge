@@ -2,261 +2,143 @@
 
 This document is temporary.
 
-It exists to track the currently confirmed violations of the repository engineering standards and the ordered remediation plan.
+It now serves as the post-remediation audit tracker for the standards work. It should be deleted once the remaining gaps listed here are resolved and re-audited.
 
-Once the issues listed here have been resolved and re-audited, this file should be deleted.
+## Audit Snapshot
 
-## Scope
+- Audit date: `2026-05-19`
+- Standards baseline: [CODING_STANDARDS_COMMITMENT.md](/home/StreamForge/CODING_STANDARDS_COMMITMENT.md)
+- Branch context: `secret-remediation-foundation`
 
-This backlog is based on:
-- [CODING_STANDARDS_COMMITMENT.md](/home/StreamForge/CODING_STANDARDS_COMMITMENT.md)
-- the expanded software engineering, security engineering, and industrial / OT engineering standards now captured there
-- a production-level review of the current control-plane, runtime, adapter, sink, and UI code paths
+## What Is Now Closed
 
-## External Baselines
+The following original backlog items are now considered closed:
 
-The strengthened standards align with the expectations of:
-- NIST Secure Software Development Framework (SSDF)
-- OWASP ASVS
-- CISA Secure by Design
-- NIST OT / ICS security guidance
-- ISA / IEC 62443 industrial cybersecurity expectations
+1. Plaintext secret round-tripping
+2. Insecure auth defaults
+3. Browser `localStorage` auth token persistence
+4. Missing audit trail foundation
+5. Missing persisted roles and least-privilege RBAC
+6. Backend/frontend contract drift at the canonical schema level
+7. Mixed legacy/canonical validation tolerance
+8. Weak UI typing
+9. Adapter lifecycle inconsistency between bulk-start and single-start
+10. Oversized adapter and sink form modules
+11. Runtime `print(...)` logging in production paths
+12. Missing standards-aligned regression coverage
 
-These references are not reproduced here, but they inform the seriousness and direction of the remediation work.
+These were closed through Tracks A to D plus Track E steps 1 and 2.
 
-## Confirmed Issues
+## Current Verification Status
 
-### Critical
+The current remediation state has direct verification behind it:
 
-1. Plaintext secrets are still persisted, returned, and re-exposed through normal CRUD and UI flows.
-- Secrets are stored directly in adapter and sink config records.
-- The APIs return those records without redaction.
-- The UI rehydrates those values into editable form state and JSON fallbacks.
+- `bash scripts/check_standards_gates.sh` passes
+- `python3 -m unittest discover -s gateway_runtime/tests` passes: `70 tests`
+- `python3 -m unittest discover -s adapters/tests` passes: `43 tests`
+- targeted control-plane regression functions executed successfully in the project venv: `46 tests`
 
-Primary files:
-- [models.py](/home/StreamForge/control-plane/app/db/models.py)
-- [adapters.py](/home/StreamForge/control-plane/app/routers/adapters.py)
-- [sinks.py](/home/StreamForge/control-plane/app/routers/sinks.py)
-- [adapterForm.ts](/home/StreamForge/ui/src/features/adapters/adapterForm.ts)
-- [sinkForm.ts](/home/StreamForge/ui/src/features/sinks/sinkForm.ts)
+The control-plane project environment still does not have `pytest` installed, so the control-plane regression run currently uses a lightweight local runner instead of `pytest` itself. That is tracked below as a remaining verification gap, not as a hidden success.
 
-2. Secure defaults are not enforced in authentication and session handling.
-- The control plane still has unsafe auth-related defaults.
-- The UI stores bearer tokens in browser `localStorage`.
-
-Primary files:
-- [settings.py](/home/StreamForge/control-plane/app/core/settings.py)
-- [main.py](/home/StreamForge/control-plane/app/main.py)
-- [session.ts](/home/StreamForge/ui/src/shared/auth/session.ts)
-
-3. There is no real audit trail for operationally significant changes.
-- Deployments, adapters, sinks, and gateway approvals do not capture enough actor metadata.
-- The system cannot reliably answer who changed what, when, and why.
-
-Primary files:
-- [models.py](/home/StreamForge/control-plane/app/db/models.py)
-- [deployments.py](/home/StreamForge/control-plane/app/routers/deployments.py)
-- [adapters.py](/home/StreamForge/control-plane/app/routers/adapters.py)
-- [sinks.py](/home/StreamForge/control-plane/app/routers/sinks.py)
-- [gateways.py](/home/StreamForge/control-plane/app/routers/gateways.py)
-
-4. Sensitive infrastructure values are treated as ordinary UI fields.
-- Passwords, webhook targets, and DB connection values are surfaced directly in normal authoring and review paths.
-
-Primary files:
-- [MqttConfigSection.tsx](/home/StreamForge/ui/src/features/adapters/components/MqttConfigSection.tsx)
-- [OpcuaConfigSection.tsx](/home/StreamForge/ui/src/features/adapters/components/OpcuaConfigSection.tsx)
-- [TimescaleSinkSection.tsx](/home/StreamForge/ui/src/features/sinks/components/TimescaleSinkSection.tsx)
-- [SinkReviewPanel.tsx](/home/StreamForge/ui/src/features/sinks/components/SinkReviewPanel.tsx)
+## Remaining Confirmed Gaps
 
 ### High
 
-5. Core runtime modules still use `print(...)` instead of structured logging.
+1. Broad `except Exception` handling is still too common in runtime, adapter, sink, and support infrastructure code.
+- This remains the largest unresolved engineering-discipline issue.
+- Some outer containment boundaries are deliberate and acceptable, but many inner catches are still broader than they should be.
 
 Primary files:
-- [runtime.py](/home/StreamForge/gateway_runtime/runtime.py)
-- [validator.py](/home/StreamForge/gateway_runtime/validator.py)
-- [event_validator.py](/home/StreamForge/gateway_runtime/event_validator.py)
-- [aggregator.py](/home/StreamForge/gateway_runtime/aggregator.py)
-- [adapter_manager.py](/home/StreamForge/gateway_runtime/adapter_manager.py)
-- [sink_manager.py](/home/StreamForge/gateway_runtime/sink_manager.py)
+- [gateway_runtime/kafka_manager.py](/home/StreamForge/gateway_runtime/kafka_manager.py)
+- [gateway_runtime/validator.py](/home/StreamForge/gateway_runtime/validator.py)
+- [gateway_runtime/event_validator.py](/home/StreamForge/gateway_runtime/event_validator.py)
+- [gateway_runtime/aggregator.py](/home/StreamForge/gateway_runtime/aggregator.py)
+- [gateway_runtime/overflow.py](/home/StreamForge/gateway_runtime/overflow.py)
+- [adapters/adapter_mqtt/mqtt_adapter.py](/home/StreamForge/adapters/adapter_mqtt/mqtt_adapter.py)
+- [adapters/adapter_opcua/opcua_adapter.py](/home/StreamForge/adapters/adapter_opcua/opcua_adapter.py)
+- [sinks/sink_alert_router/main.py](/home/StreamForge/sinks/sink_alert_router/main.py)
+- [sinks/sink_http/main.py](/home/StreamForge/sinks/sink_http/main.py)
+- [sinks/sink_kafka/main.py](/home/StreamForge/sinks/sink_kafka/main.py)
+- [sinks/sink_timescaledb/main.py](/home/StreamForge/sinks/sink_timescaledb/main.py)
 
-6. Least privilege is not truly implemented.
-- The user model is still effectively admin vs non-admin.
-- Non-admin users collapse into engineer-level capability.
-- Fine-grained role persistence and enforcement are missing.
-
-Primary files:
-- [models.py](/home/StreamForge/control-plane/app/db/models.py)
-- [security.py](/home/StreamForge/control-plane/app/core/security.py)
-- [users.py](/home/StreamForge/control-plane/app/schemas/users.py)
-- [UsersPage.tsx](/home/StreamForge/ui/src/features/users/UsersPage.tsx)
-
-7. The frontend duplicates backend contract logic instead of consuming one authoritative source of truth.
-- Protocol defaults, field semantics, and config shaping are hardcoded in frontend modules despite the backend catalog.
+2. The UI still carries fallback option tables that duplicate backend catalog semantics.
+- The core contract ownership is much better now, but several protocol-aware components still restate catalog options locally as fallbacks.
+- This is a smaller issue than before, but it is still real drift risk against the single-source-of-truth standard.
 
 Primary files:
-- [adapterForm.ts](/home/StreamForge/ui/src/features/adapters/adapterForm.ts)
-- [sinkForm.ts](/home/StreamForge/ui/src/features/sinks/sinkForm.ts)
-- [catalog.py](/home/StreamForge/control-plane/app/routers/catalog.py)
-
-8. Validation still permits mixed legacy and canonical shapes instead of enforcing one clear model.
-
-Primary file:
-- [config_validation.py](/home/StreamForge/control-plane/app/core/config_validation.py)
-
-9. Internal plumbing is still exposed too directly in operator-facing flows.
-- Internal topics, DSNs, and transport details remain too central in ordinary forms.
-
-Primary files:
-- [adapterForm.ts](/home/StreamForge/ui/src/features/adapters/adapterForm.ts)
-- [sinkForm.ts](/home/StreamForge/ui/src/features/sinks/sinkForm.ts)
-- [catalog.py](/home/StreamForge/control-plane/app/routers/catalog.py)
+- [ui/src/features/adapters/components/ModbusPointsEditor.tsx](/home/StreamForge/ui/src/features/adapters/components/ModbusPointsEditor.tsx)
+- [ui/src/features/adapters/components/ModbusRtuConfigSection.tsx](/home/StreamForge/ui/src/features/adapters/components/ModbusRtuConfigSection.tsx)
+- [ui/src/features/adapters/components/MqttConfigSection.tsx](/home/StreamForge/ui/src/features/adapters/components/MqttConfigSection.tsx)
+- [ui/src/features/adapters/components/OpcuaConfigSection.tsx](/home/StreamForge/ui/src/features/adapters/components/OpcuaConfigSection.tsx)
+- [ui/src/features/sinks/components/HttpSinkSection.tsx](/home/StreamForge/ui/src/features/sinks/components/HttpSinkSection.tsx)
+- [ui/src/features/sinks/components/AlertRouterSinkSection.tsx](/home/StreamForge/ui/src/features/sinks/components/AlertRouterSinkSection.tsx)
 
 ### Medium
 
-10. Weak typing is still present in production UI code.
-
-Primary file:
-- [AdaptersPage.tsx](/home/StreamForge/ui/src/features/adapters/AdaptersPage.tsx)
-
-11. Runtime lifecycle hardening is inconsistent between equivalent startup paths.
-- The adapter manager still behaves differently between bulk start and single start.
-
-Primary file:
-- [adapter_manager.py](/home/StreamForge/gateway_runtime/adapter_manager.py)
-
-12. Broad `except Exception` handling remains too common in infrastructure code.
+3. Internal routing and transport plumbing is reduced, but not fully out of operator-facing advanced forms.
+- This is no longer a normal-flow issue.
+- It remains a design and safety concern in advanced sections, where internal Kafka bootstrap, source topic, consumer group, and telemetry topic fields are still directly editable.
 
 Primary files:
-- [adapter_manager.py](/home/StreamForge/gateway_runtime/adapter_manager.py)
-- [sink_manager.py](/home/StreamForge/gateway_runtime/sink_manager.py)
-- [validator.py](/home/StreamForge/gateway_runtime/validator.py)
-- [event_validator.py](/home/StreamForge/gateway_runtime/event_validator.py)
-- [aggregator.py](/home/StreamForge/gateway_runtime/aggregator.py)
+- [ui/src/features/sinks/components/TimescaleSinkSection.tsx](/home/StreamForge/ui/src/features/sinks/components/TimescaleSinkSection.tsx)
+- [ui/src/features/sinks/components/AlertRouterSinkSection.tsx](/home/StreamForge/ui/src/features/sinks/components/AlertRouterSinkSection.tsx)
+- [ui/src/features/adapters/components/OpcuaConfigSection.tsx](/home/StreamForge/ui/src/features/adapters/components/OpcuaConfigSection.tsx)
 
-13. Some new form modules are too large and mix too many responsibilities.
-
-Primary files:
-- [adapterForm.ts](/home/StreamForge/ui/src/features/adapters/adapterForm.ts)
-- [sinkForm.ts](/home/StreamForge/ui/src/features/sinks/sinkForm.ts)
-
-14. Documentation and intent comments are still too thin in several non-trivial new modules.
+4. The new standards gate is present, but it is not yet wired into automated CI or a top-level project task runner.
+- The repository now has an explicit enforcement script.
+- There is still no `.github/workflows` pipeline or equivalent repo-level automation to run it automatically.
 
 Primary files:
-- [adapterForm.ts](/home/StreamForge/ui/src/features/adapters/adapterForm.ts)
-- [sinkForm.ts](/home/StreamForge/ui/src/features/sinks/sinkForm.ts)
-- [AdaptersPage.tsx](/home/StreamForge/ui/src/features/adapters/AdaptersPage.tsx)
-- [SinksPage.tsx](/home/StreamForge/ui/src/features/sinks/SinksPage.tsx)
+- [scripts/check_standards_gates.sh](/home/StreamForge/scripts/check_standards_gates.sh)
+- [README.md](/home/StreamForge/README.md)
 
-## Remediation Backlog
+5. Control-plane regression execution is still more fragile than it should be.
+- The control-plane local venv and running container do not currently include `pytest`.
+- The tests themselves exist and pass, but the default developer path for running them is not as smooth or explicit as it should be.
 
-### P0: Security and Control Integrity
+Primary files:
+- [control-plane/requirements.txt](/home/StreamForge/control-plane/requirements.txt)
+- [control-plane/tests/test_secrets.py](/home/StreamForge/control-plane/tests/test_secrets.py)
+- [control-plane/tests/test_settings_security.py](/home/StreamForge/control-plane/tests/test_settings_security.py)
+- [control-plane/tests/test_auth_session.py](/home/StreamForge/control-plane/tests/test_auth_session.py)
+- [control-plane/tests/test_audit.py](/home/StreamForge/control-plane/tests/test_audit.py)
+- [control-plane/tests/test_rbac.py](/home/StreamForge/control-plane/tests/test_rbac.py)
+- [control-plane/tests/test_config_validation.py](/home/StreamForge/control-plane/tests/test_config_validation.py)
+- [control-plane/tests/test_catalog_contracts.py](/home/StreamForge/control-plane/tests/test_catalog_contracts.py)
 
-1. Remove plaintext secret round-tripping.
-- Stop returning raw secret values from adapter and sink APIs.
-- Introduce masked or secret-reference-based handling.
-- Remove secret echo from review panels and JSON fallbacks.
+## Status By Original Backlog Item
 
-2. Remove insecure auth defaults.
-- Eliminate unsafe JWT and admin-password defaults.
-- Fail fast outside explicit dev-only bootstrap paths.
+- Item 1: closed
+- Item 2: closed
+- Item 3: closed
+- Item 4: closed
+- Item 5: closed
+- Item 6: mostly closed, with residual UI fallback duplication
+- Item 7: closed
+- Item 8: partially closed, with residual advanced-form plumbing exposure
+- Item 9: closed
+- Item 10: open in the broader runtime/adapter/sink surface
+- Item 11: closed
+- Item 12: closed
+- Item 13: closed
+- Item 14: closed enough for current scope
+- Item 15: closed
+- Item 16: partially closed, because enforcement is present but not automated
+- Item 17: complete as an audit pass, but this file stays until the remaining gaps above are resolved
 
-3. Replace browser `localStorage` token persistence.
-- Move to a safer session strategy or isolate the current pattern as a documented temporary compromise.
+## Recommended Next Order
 
-4. Add audit fields for operational actions.
-- Capture `created_by`, `updated_by`, `activated_by`, `approved_by`, and timestamps where appropriate.
+1. Narrow broad exception handling in runtime, adapter, sink, and support infrastructure modules
+2. Remove local fallback option tables from UI protocol components so catalog metadata remains authoritative
+3. Decide which advanced routing/transport fields should remain editable versus admin-only or fully system-managed
+4. Wire the standards gate into an automated project entry point or CI workflow
+5. Make control-plane regression execution first-class for developers
 
-5. Implement real role persistence and least privilege.
-- Persist explicit roles.
-- Align enforcement with those roles.
+## Delete Condition
 
-### P1: Contract and Model Discipline
+Delete this file only when:
 
-6. Make the backend contract the single source of truth.
-- Reduce hardcoded frontend protocol defaults and shapes.
-- Consume shared backend catalog/schema metadata wherever practical.
-
-7. Tighten validation to one canonical shape.
-- Remove accidental mixed legacy/canonical tolerance unless explicitly transitional.
-
-8. Reduce low-level transport and infrastructure plumbing in normal UX.
-- Move DSNs, internal topics, and similar details behind advanced or admin-facing surfaces.
-
-### P1: Runtime Engineering Cleanup
-
-9. Replace all operational `print(...)` calls with structured logging.
-
-10. Narrow broad exception handling.
-- Use more explicit exception types.
-- Treat broad catches as deliberate containment boundaries, not default style.
-
-11. Fix lifecycle consistency in runtime managers.
-- Make single-start and bulk-start behavior consistent.
-- Ensure pruning and managed-container behavior are deterministic.
-
-### P2: Typing, Structure, and Readability
-
-12. Remove weak typing in the UI.
-- Replace `any` and similar shortcuts with explicit domain types.
-
-13. Split oversized form modules.
-- Separate defaults, hydration, parsing, serialization, and secret-field handling.
-
-14. Add missing documentation and intent comments.
-- Focus first on modules with complex transformation or operational logic.
-
-### P3: Verification and Enforcement
-
-15. Add standards-aligned tests.
-- Secret redaction
-- auth default hard-fail behavior
-- audit metadata persistence
-- role enforcement
-- canonical validation behavior
-- runtime lifecycle and logging behavior where practical
-
-16. Add review gates.
-- stronger lint and typing enforcement
-- ban operational `print(...)` usage
-- detect insecure defaults
-
-17. Re-run a formal standards audit.
-- confirm what is fixed
-- document what remains
-- delete this file once the backlog is truly complete
-
-## Recommended Execution Order
-
-1. plaintext secrets
-2. insecure auth defaults
-3. session and token handling
-4. audit trail
-5. real roles and permissions
-6. backend/frontend contract consolidation
-7. strict validation
-8. runtime logging and exception cleanup
-9. lifecycle consistency
-10. typing cleanup
-11. module splitting
-12. documentation
-13. tests and enforcement
-14. final audit and file removal
-
-## Working Tracks
-
-### Track A: Security Foundation
-- items 1 to 5
-
-### Track B: Contract Cleanup
-- items 6 to 8
-
-### Track C: Runtime Discipline
-- items 9 to 11
-
-### Track D: Code Quality Cleanup
-- items 12 to 14
-
-### Track E: Verification
-- items 15 to 17
+- the remaining confirmed gaps above are resolved
+- the standards gate still passes
+- the test matrix still passes
+- a final audit finds no remaining confirmed backlog items worth tracking separately
