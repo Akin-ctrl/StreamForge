@@ -14,7 +14,13 @@ export function AlertRouterSinkSection({ contract, form, setForm }: AlertRouterS
   return (
     <article className="card">
       <div className="page-header">
-        <h3>Alert Router</h3>
+        <div className="card-header-copy">
+          <h3>Alert Router</h3>
+          <p className="muted">
+            Define where alarms should go without exposing the underlying ingress routing that the platform manages for
+            this sink.
+          </p>
+        </div>
       </div>
       <div className="inline-grid">
         <label>

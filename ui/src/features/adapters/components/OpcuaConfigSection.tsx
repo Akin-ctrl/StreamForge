@@ -31,7 +31,13 @@ export function OpcuaConfigSection({ contract, form, setForm }: OpcuaConfigSecti
   return (
     <article className="card">
       <div className="page-header">
-        <h3>OPC UA</h3>
+        <div className="card-header-copy">
+          <h3>OPC UA</h3>
+          <p className="muted">
+            Define the endpoint, session behavior, and monitored items so the session reads as one understandable
+            source connection.
+          </p>
+        </div>
       </div>
       <div className="inline-grid">
         <label>
@@ -82,7 +88,10 @@ export function OpcuaConfigSection({ contract, form, setForm }: OpcuaConfigSecti
 
       <div className="nested-card card builder-section">
         <div className="page-header">
-          <h4>Monitored Items</h4>
+          <div className="card-header-copy">
+            <h4>Monitored Items</h4>
+            <p className="muted">Each monitored item should clearly tie a node to the normalized parameter it emits.</p>
+          </div>
           <button
             className="btn btn-secondary"
             onClick={() =>
@@ -97,7 +106,14 @@ export function OpcuaConfigSection({ contract, form, setForm }: OpcuaConfigSecti
           <p className="muted">Add the nodes this session should monitor.</p>
         ) : (
           form.monitoredItems.map((item, index) => (
-            <div className="rule-stack" key={item.uiId}>
+            <div className="rule-card" key={item.uiId}>
+              <div className="rule-card-header">
+                <div>
+                  <strong>Monitored Item {index + 1}</strong>
+                  <p className="muted">Describe the node, normalized parameter, and runtime sampling behavior.</p>
+                </div>
+              </div>
+              <div className="rule-stack">
               <div className="inline-grid">
                 <input
                   placeholder="Node ID"
@@ -183,6 +199,7 @@ export function OpcuaConfigSection({ contract, form, setForm }: OpcuaConfigSecti
                 >
                   Remove
                 </button>
+              </div>
               </div>
             </div>
           ))

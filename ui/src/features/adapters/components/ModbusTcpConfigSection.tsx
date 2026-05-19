@@ -14,7 +14,13 @@ export function ModbusTcpConfigSection({ contract, form, setForm }: ModbusTcpCon
   return (
     <article className="card">
       <div className="page-header">
-        <h3>Modbus TCP</h3>
+        <div className="card-header-copy">
+          <h3>Modbus TCP</h3>
+          <p className="muted">
+            Define the target controller, polling cadence, and the points this connection should normalize into
+            telemetry.
+          </p>
+        </div>
       </div>
       <div className="inline-grid">
         <label>

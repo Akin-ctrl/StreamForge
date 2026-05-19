@@ -8,7 +8,16 @@ export function ActionResultPanel({ result }: ActionResultPanelProps) {
   return (
     <article className={`card action-result action-result-${result.tone}`}>
       <div className="page-header">
-        <h3>{result.title}</h3>
+        <div className="card-header-copy">
+          <h3>{result.title}</h3>
+          <p className="muted">
+            {result.tone === 'success'
+              ? 'The latest operator check passed.'
+              : result.tone === 'warning'
+                ? 'Review the warnings before saving or deploying.'
+                : 'Fix the highlighted issues before continuing.'}
+          </p>
+        </div>
         <span className="muted">{result.tone === 'success' ? 'Passed' : result.tone === 'warning' ? 'Attention' : 'Failed'}</span>
       </div>
       <p>{result.summary}</p>

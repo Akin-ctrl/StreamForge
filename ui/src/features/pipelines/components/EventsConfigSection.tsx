@@ -27,7 +27,13 @@ export function EventsConfigSection({ form, setForm, onError }: EventsConfigSect
   return (
     <article className="card">
       <div className="page-header">
-        <h3>Events</h3>
+        <div className="card-header-copy">
+          <h3>Events</h3>
+          <p className="muted">
+            Control whether this deployment emits clean event records and, if needed, review the routing topics in the
+            advanced section.
+          </p>
+        </div>
       </div>
       <label className="toggle-label">
         <input
@@ -41,6 +47,7 @@ export function EventsConfigSection({ form, setForm, onError }: EventsConfigSect
       <details className="card nested-card advanced-block" open>
         <summary>Advanced</summary>
         <div className="builder-section">
+          <p className="muted">These routing topics usually remain stable once the deployment shape is agreed.</p>
           <div className="inline-grid">
             <label>
               Raw Topic

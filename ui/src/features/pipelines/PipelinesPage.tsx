@@ -7,21 +7,28 @@ import {
   listDeployments,
 } from '../../shared/api/client'
 import { summarizeDeployment } from '../../shared/config/deployments'
+import { DataTableCard } from '../../shared/data-display/DataTableCard'
+import { MetricCard } from '../../shared/data-display/MetricCard'
 import { formatDateTime } from '../../shared/format/datetime'
+import { PageCallout } from '../../shared/layout/PageCallout'
 import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 
 export function PipelinesPage() {
   const { timezone } = useOperatorPreferences()
   const [deployments, setDeployments] = useState<DeploymentItem[]>([])
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = async () => {
+    setLoading(true)
     setError(null)
     try {
       const deploymentRows = await listDeployments()
       setDeployments(deploymentRows)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load deployments')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -50,7 +57,7 @@ export function PipelinesPage() {
   )
 
   return (
-    <section>
+    <section className="section-grid">
       <div className="page-header">
         <div>
           <h2>Deployments</h2>
@@ -69,34 +76,37 @@ export function PipelinesPage() {
         </div>
       </div>
 
+      <PageCallout title="How to use this view">
+        <p className="muted">
+          Review saved gateway compositions here, then open one deployment when you need to adjust attached objects or
+          deployment-level processing policy.
+        </p>
+      </PageCallout>
+
       {error && <p className="error">{error}</p>}
+      {loading && (
+        <article className="card empty-state">
+          <p>Loading deployments...</p>
+          <p className="muted">Fetching saved deployment compositions and their attached object counts.</p>
+        </article>
+      )}
 
       <div className="overview-kpis">
-        <article className="card">
-          <h3>Total Deployments</h3>
-          <p className="overview-kpi-value">{deployments.length}</p>
-          <p className="muted">Saved deployment compositions</p>
-        </article>
-        <article className="card">
-          <h3>Active</h3>
-          <p className="overview-kpi-value">{activeCount}</p>
-          <p className="muted">Gateways currently pointed at an active deployment</p>
-        </article>
-        <article className="card">
-          <h3>Attached Adapters</h3>
-          <p className="overview-kpi-value">{totalAttachedAdapters}</p>
-          <p className="muted">Adapter attachments across all deployments</p>
-        </article>
-        <article className="card">
-          <h3>Attached Sinks</h3>
-          <p className="overview-kpi-value">{totalAttachedSinks}</p>
-          <p className="muted">Sink attachments across all deployments</p>
-        </article>
+        <MetricCard detail="Saved deployment compositions" title="Total Deployments" value={deployments.length} />
+        <MetricCard
+          detail="Gateways currently pointed at an active deployment"
+          title="Active"
+          value={activeCount}
+        />
+        <MetricCard detail="Adapter attachments across all deployments" title="Attached Adapters" value={totalAttachedAdapters} />
+        <MetricCard detail="Sink attachments across all deployments" title="Attached Sinks" value={totalAttachedSinks} />
       </div>
 
       <div className="overview-grid">
-        <article className="card">
-          <h3>Deployment Inventory</h3>
+        <DataTableCard
+          description="Review saved deployment compositions, where they run, and how many reusable objects each one attaches."
+          title="Deployment Inventory"
+        >
           <table className="table">
             <thead>
               <tr>
@@ -123,12 +133,14 @@ export function PipelinesPage() {
                     <td>{summary.sinkCount} attached</td>
                     <td>{formatDateTime(deployment.created_at, timezone, { includeTimezone: true })}</td>
                     <td>
-                      <Link className="btn btn-secondary" to={`/pipelines/${encodeURIComponent(deployment.deployment_id)}/edit`}>
-                        Edit
-                      </Link>{' '}
-                      <button className="btn btn-secondary" onClick={() => void onDelete(deployment.deployment_id)} type="button">
-                        Delete
-                      </button>
+                      <div className="table-actions">
+                        <Link className="btn btn-secondary" to={`/pipelines/${encodeURIComponent(deployment.deployment_id)}/edit`}>
+                          Edit
+                        </Link>
+                        <button className="btn btn-secondary" onClick={() => void onDelete(deployment.deployment_id)} type="button">
+                          Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 )
@@ -142,7 +154,7 @@ export function PipelinesPage() {
               )}
             </tbody>
           </table>
-        </article>
+        </DataTableCard>
       </div>
     </section>
   )

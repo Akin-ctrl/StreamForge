@@ -2,7 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 
 import { type LogEntry, listLogs } from '../../shared/api/client'
+import { DataTableCard } from '../../shared/data-display/DataTableCard'
+import { DetailPanel } from '../../shared/data-display/DetailPanel'
+import { FilterPanel } from '../../shared/data-display/FilterPanel'
+import { StatusChip } from '../../shared/data-display/StatusChip'
 import { formatDateTime } from '../../shared/format/datetime'
+import { PageCallout } from '../../shared/layout/PageCallout'
 import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 import { normalizeFilterValue } from '../../shared/telemetry/filters'
 
@@ -27,10 +32,6 @@ function logLevelTone(level: string): 'good' | 'warn' | 'bad' | 'neutral' {
     return 'good'
   }
   return 'neutral'
-}
-
-function levelChipClass(level: string): string {
-  return `fleet-status-chip fleet-status-chip-${logLevelTone(level)}`
 }
 
 export function LogsPage() {
@@ -70,19 +71,10 @@ export function LogsPage() {
   }
 
   useEffect(() => {
-    const nextGateway = searchParams.get('gateway') ?? ''
-    const nextComponent = searchParams.get('component') ?? ''
-    const nextLevel = searchParams.get('level') ?? ''
-    if (nextGateway !== gatewayFilter) {
-      setGatewayFilter(nextGateway)
-    }
-    if (nextComponent !== componentFilter) {
-      setComponentFilter(nextComponent)
-    }
-    if (nextLevel !== levelFilter) {
-      setLevelFilter(nextLevel)
-    }
-  }, [searchParams, gatewayFilter, componentFilter, levelFilter])
+    setGatewayFilter(searchParams.get('gateway') ?? '')
+    setComponentFilter(searchParams.get('component') ?? '')
+    setLevelFilter(searchParams.get('level') ?? '')
+  }, [searchParams])
 
   useEffect(() => {
     const nextParams = new URLSearchParams()
@@ -110,6 +102,11 @@ export function LogsPage() {
   const selectedLog = items.find((item) => logEntryKey(item) === selectedLogKey) ?? null
   const components = useMemo(() => uniqueValues(items.map((item) => item.component)), [items])
   const gateways = useMemo(() => uniqueValues(items.map((item) => item.gateway_id)), [items])
+  const clearFilters = () => {
+    setGatewayFilter('')
+    setComponentFilter('')
+    setLevelFilter('')
+  }
 
   return (
     <section className="section-grid">
@@ -126,7 +123,18 @@ export function LogsPage() {
         </button>
       </div>
 
-      <div className="card alarm-filters">
+      <PageCallout title="How to use this view">
+        <p className="muted">
+          Filter the recent runtime log tail by gateway, component, or level, then inspect one entry at a time for
+          exception context and operator-facing troubleshooting.
+        </p>
+      </PageCallout>
+
+      <FilterPanel
+        description="Narrow the recent runtime log tail by gateway, component, or severity."
+        onClear={clearFilters}
+        title="Filters"
+      >
         <label>
           Gateway ID
           <input
@@ -166,14 +174,22 @@ export function LogsPage() {
             ))}
           </select>
         </label>
-      </div>
+      </FilterPanel>
 
-      {loading && <p>Loading recent runtime logs...</p>}
+      {loading && (
+        <article className="card empty-state">
+          <p>Loading recent runtime logs...</p>
+          <p className="muted">Fetching the current gateway-runtime log tail carried through heartbeat state.</p>
+        </article>
+      )}
       {error && <p className="error">{error}</p>}
 
       {!loading && (
         <div className="alarm-layout">
-          <div className="card">
+          <DataTableCard
+            description={`${items.length} log line(s) currently match the selected filters.`}
+            title="Recent Runtime Logs"
+          >
             <table className="table">
               <thead>
                 <tr>
@@ -197,7 +213,7 @@ export function LogsPage() {
                       <td>{item.gateway_id}</td>
                       <td>{item.component}</td>
                       <td>
-                        <span className={levelChipClass(String(item.level))}>{item.level}</span>
+                        <StatusChip label={String(item.level)} tone={logLevelTone(String(item.level))} />
                       </td>
                       <td>{item.message}</td>
                     </tr>
@@ -210,44 +226,51 @@ export function LogsPage() {
                 )}
               </tbody>
             </table>
-          </div>
+          </DataTableCard>
 
-          <div className="card alarm-detail">
-            <h3>Log Detail</h3>
-            {!selectedLog && (
-              <p className="muted">Select a log line to inspect the gateway, logger, and exception details.</p>
-            )}
-            {selectedLog && (
+          <DetailPanel
+            description="Select a log line to inspect the gateway, logger, and exception details."
+            title="Log Detail"
+          >
+            {selectedLog ? (
               <div className="review-grid">
-                <p>
-                  <strong>Gateway:</strong>{' '}
-                  <Link to={`/fleet?gateway=${encodeURIComponent(selectedLog.gateway_id)}`}>{selectedLog.gateway_id}</Link>
-                </p>
-                <p>
-                  <strong>Component:</strong> {selectedLog.component}
-                </p>
-                <p>
-                  <strong>Level:</strong> <span className={levelChipClass(String(selectedLog.level))}>{selectedLog.level}</span>
-                </p>
-                <p>
-                  <strong>Logger:</strong> {selectedLog.logger}
-                </p>
-                <p>
-                  <strong>Captured:</strong> {formatDateTime(selectedLog.timestamp, timezone, { includeTimezone: true })}
-                </p>
+                <div className="detail-list">
+                  <div className="detail-item">
+                    <span className="summary-label">Gateway</span>
+                    <div>
+                      <Link to={`/fleet?gateway=${encodeURIComponent(selectedLog.gateway_id)}`}>{selectedLog.gateway_id}</Link>
+                    </div>
+                  </div>
+                  <div className="detail-item">
+                    <span className="summary-label">Component</span>
+                    <strong>{selectedLog.component}</strong>
+                  </div>
+                  <div className="detail-item">
+                    <span className="summary-label">Level</span>
+                    <StatusChip label={String(selectedLog.level)} tone={logLevelTone(String(selectedLog.level))} />
+                  </div>
+                  <div className="detail-item">
+                    <span className="summary-label">Logger</span>
+                    <strong>{selectedLog.logger}</strong>
+                  </div>
+                  <div className="detail-item">
+                    <span className="summary-label">Captured</span>
+                    <strong>{formatDateTime(selectedLog.timestamp, timezone, { includeTimezone: true })}</strong>
+                  </div>
+                </div>
                 <div>
                   <strong>Message</strong>
                   <pre className="json-preview">{selectedLog.message}</pre>
                 </div>
-                {selectedLog.exception && (
+                {selectedLog.exception ? (
                   <div>
                     <strong>Exception</strong>
                     <pre className="json-preview">{selectedLog.exception}</pre>
                   </div>
-                )}
+                ) : null}
               </div>
-            )}
-          </div>
+            ) : null}
+          </DetailPanel>
         </div>
       )}
     </section>

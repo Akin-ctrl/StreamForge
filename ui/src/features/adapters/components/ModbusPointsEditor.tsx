@@ -18,7 +18,10 @@ export function ModbusPointsEditor({ contract, form, setForm }: ModbusPointsEdit
   return (
     <div className="nested-card card builder-section">
       <div className="page-header">
-        <h4>Points</h4>
+        <div className="card-header-copy">
+          <h4>Points</h4>
+          <p className="muted">Group each parameter’s address, data type, scaling, and classification in one place.</p>
+        </div>
         <button
           className="btn btn-secondary"
           onClick={() => setForm((current) => ({ ...current, points: [...current.points, createDefaultPointForm(contract)] }))}
@@ -31,7 +34,14 @@ export function ModbusPointsEditor({ contract, form, setForm }: ModbusPointsEdit
         <p className="muted">Add the parameters or state points this connection should read.</p>
       ) : (
         form.points.map((point, index) => (
-          <div className="rule-stack" key={point.uiId}>
+          <div className="rule-card" key={point.uiId}>
+            <div className="rule-card-header">
+              <div>
+                <strong>Point {index + 1}</strong>
+                <p className="muted">Describe the source address, data type, and normalized signal metadata.</p>
+              </div>
+            </div>
+            <div className="rule-stack">
             <div className="inline-grid">
               <input
                 placeholder="Point name"
@@ -179,6 +189,7 @@ export function ModbusPointsEditor({ contract, form, setForm }: ModbusPointsEdit
               >
                 Remove
               </button>
+            </div>
             </div>
           </div>
         ))

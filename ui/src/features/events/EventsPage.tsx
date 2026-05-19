@@ -2,7 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { type EventItem, listEvents } from '../../shared/api/client'
+import { DataTableCard } from '../../shared/data-display/DataTableCard'
+import { DetailPanel } from '../../shared/data-display/DetailPanel'
+import { FilterPanel } from '../../shared/data-display/FilterPanel'
 import { formatDateTime } from '../../shared/format/datetime'
+import { PageCallout } from '../../shared/layout/PageCallout'
 import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 import { localDateTimeToIso, normalizeFilterValue, recordKey } from '../../shared/telemetry/filters'
 
@@ -61,6 +65,14 @@ export function EventsPage() {
   const selectedEvent = items.find((item) => recordKey(item.source_table, item.record_id) === selectedEventKey) ?? null
   const eventTypes = useMemo(() => uniqueValues(items.map((item) => item.event_type)), [items])
   const classifications = useMemo(() => uniqueValues(items.map((item) => item.classification)), [items])
+  const clearFilters = () => {
+    setGatewayFilter('')
+    setAssetFilter('')
+    setEventTypeFilter('')
+    setClassificationFilter('')
+    setStartTime('')
+    setEndTime('')
+  }
 
   return (
     <section className="section-grid">
@@ -77,7 +89,18 @@ export function EventsPage() {
         </button>
       </div>
 
-      <div className="card alarm-filters">
+      <PageCallout title="How to use this view">
+        <p className="muted">
+          Filter down to a small event set first, then use the detail panel to inspect state transitions and the
+          persisted payload without leaving the operator surface.
+        </p>
+      </PageCallout>
+
+      <FilterPanel
+        description="Narrow the event inventory by gateway, asset, classification, or time range."
+        onClear={clearFilters}
+        title="Filters"
+      >
         <label>
           Gateway ID
           <input value={gatewayFilter} onChange={(event) => setGatewayFilter(event.target.value)} placeholder="Any gateway" />
@@ -122,14 +145,22 @@ export function EventsPage() {
           To
           <input type="datetime-local" value={endTime} onChange={(event) => setEndTime(event.target.value)} />
         </label>
-      </div>
+      </FilterPanel>
 
-      {loading && <p>Loading event records...</p>}
+      {loading && (
+        <article className="card empty-state">
+          <p>Loading event records...</p>
+          <p className="muted">Fetching the latest filtered event rows from the configured event sink.</p>
+        </article>
+      )}
       {error && <p className="error">{error}</p>}
 
       {!loading && (
         <div className="alarm-layout">
-          <div className="card">
+          <DataTableCard
+            description={`${items.length} record(s) currently match the selected filters.`}
+            title="Event Inventory"
+          >
             <table className="table">
               <thead>
                 <tr>
@@ -166,35 +197,42 @@ export function EventsPage() {
                 )}
               </tbody>
             </table>
-          </div>
+          </DataTableCard>
 
-          <div className="card alarm-detail">
-            <h3>Event Detail</h3>
-            {!selectedEvent && (
-              <p className="muted">Select an event to inspect state transitions and the persisted payload.</p>
-            )}
-            {selectedEvent && (
+          <DetailPanel
+            description="Select an event to inspect state transitions and the persisted payload."
+            title="Event Detail"
+          >
+            {selectedEvent ? (
               <div className="review-grid">
-                <p>
-                  <strong>Gateway:</strong>{' '}
-                  {selectedEvent.gateway_id ? (
-                    <Link to={`/fleet?gateway=${encodeURIComponent(selectedEvent.gateway_id)}`}>{selectedEvent.gateway_id}</Link>
-                  ) : (
-                    'Unknown'
-                  )}
-                </p>
-                <p>
-                  <strong>Asset:</strong> {selectedEvent.asset_id}
-                </p>
-                <p>
-                  <strong>Occurred:</strong> {formatDateTime(selectedEvent.gateway_time, timezone, { includeTimezone: true })}
-                </p>
-                <p>
-                  <strong>Device Time:</strong> {formatDateTime(selectedEvent.device_time, timezone, { includeTimezone: true })}
-                </p>
-                <p>
-                  <strong>Source Table:</strong> {selectedEvent.source_table}
-                </p>
+                <div className="detail-list">
+                  <div className="detail-item">
+                    <span className="summary-label">Gateway</span>
+                    <div>
+                      {selectedEvent.gateway_id ? (
+                        <Link to={`/fleet?gateway=${encodeURIComponent(selectedEvent.gateway_id)}`}>{selectedEvent.gateway_id}</Link>
+                      ) : (
+                        'Unknown'
+                      )}
+                    </div>
+                  </div>
+                  <div className="detail-item">
+                    <span className="summary-label">Asset</span>
+                    <strong>{selectedEvent.asset_id}</strong>
+                  </div>
+                  <div className="detail-item">
+                    <span className="summary-label">Occurred</span>
+                    <strong>{formatDateTime(selectedEvent.gateway_time, timezone, { includeTimezone: true })}</strong>
+                  </div>
+                  <div className="detail-item">
+                    <span className="summary-label">Device Time</span>
+                    <strong>{formatDateTime(selectedEvent.device_time, timezone, { includeTimezone: true })}</strong>
+                  </div>
+                  <div className="detail-item">
+                    <span className="summary-label">Source Table</span>
+                    <strong>{selectedEvent.source_table}</strong>
+                  </div>
+                </div>
                 <div>
                   <strong>Previous State</strong>
                   <pre className="json-preview">{JSON.stringify(selectedEvent.previous_state, null, 2)}</pre>
@@ -212,8 +250,8 @@ export function EventsPage() {
                   <pre className="json-preview">{JSON.stringify(selectedEvent.payload, null, 2)}</pre>
                 </div>
               </div>
-            )}
-          </div>
+            ) : null}
+          </DetailPanel>
         </div>
       )}
     </section>

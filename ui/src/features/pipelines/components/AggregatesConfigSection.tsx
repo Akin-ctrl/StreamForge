@@ -27,7 +27,13 @@ export function AggregatesConfigSection({ form, setForm, onError }: AggregatesCo
   return (
     <article className="card">
       <div className="page-header">
-        <h3>Aggregates</h3>
+        <div className="card-header-copy">
+          <h3>Aggregates</h3>
+          <p className="muted">
+            Decide whether this deployment should publish aggregate windows and keep the stream settings readable before
+            activation.
+          </p>
+        </div>
       </div>
       <label className="toggle-label">
         <input
@@ -39,6 +45,7 @@ export function AggregatesConfigSection({ form, setForm, onError }: AggregatesCo
       </label>
 
       <div className="nested-card card builder-section">
+        <p className="muted">Choose the source stream and enable only the aggregate windows this gateway needs.</p>
         <label>
           Source Topic
           <input
@@ -99,6 +106,7 @@ export function AggregatesConfigSection({ form, setForm, onError }: AggregatesCo
       <details className="card nested-card advanced-block">
         <summary>Advanced JSON</summary>
         <div className="builder-section">
+          <p className="muted">Use the JSON editor to review or bulk-edit the aggregate wiring when needed.</p>
           <label>
             Aggregates Config JSON
             <textarea rows={8} value={jsonDraft} onChange={(event) => setJsonDraft(event.target.value)} />

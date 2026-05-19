@@ -13,7 +13,12 @@ export function TimescaleSinkSection({ form, setForm }: TimescaleSinkSectionProp
   return (
     <article className="card">
       <div className="page-header">
-        <h3>TimescaleDB</h3>
+        <div className="card-header-copy">
+          <h3>TimescaleDB</h3>
+          <p className="muted">
+            Keep the database target readable here. The platform handles the internal ingestion routing around it.
+          </p>
+        </div>
       </div>
       <div className="inline-grid">
         <label>

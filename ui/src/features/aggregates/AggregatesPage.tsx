@@ -2,7 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { type AggregateItem, type AggregateResolution, listAggregates } from '../../shared/api/client'
+import { DataTableCard } from '../../shared/data-display/DataTableCard'
+import { DetailPanel } from '../../shared/data-display/DetailPanel'
+import { FilterPanel } from '../../shared/data-display/FilterPanel'
 import { formatDateTime } from '../../shared/format/datetime'
+import { PageCallout } from '../../shared/layout/PageCallout'
 import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 import { localDateTimeToIso, normalizeFilterValue, recordKey } from '../../shared/telemetry/filters'
 
@@ -68,6 +72,14 @@ export function AggregatesPage() {
     items.find((item) => recordKey(item.source_table, item.record_id) === selectedAggregateKey) ?? null
   const parameters = useMemo(() => uniqueValues(items.map((item) => item.parameter)), [items])
   const classifications = useMemo(() => uniqueValues(items.map((item) => item.classification)), [items])
+  const clearFilters = () => {
+    setGatewayFilter('')
+    setAssetFilter('')
+    setParameterFilter('')
+    setClassificationFilter('')
+    setStartTime('')
+    setEndTime('')
+  }
 
   return (
     <section className="section-grid">
@@ -82,6 +94,13 @@ export function AggregatesPage() {
           Refresh
         </button>
       </div>
+
+      <PageCallout title="How to use this view">
+        <p className="muted">
+          Use the resolution toggle first, then filter down to the asset and parameter you care about before opening
+          the detail panel for percentiles and sample quality.
+        </p>
+      </PageCallout>
 
       <div className="card tab-strip">
         <button
@@ -100,7 +119,11 @@ export function AggregatesPage() {
         </button>
       </div>
 
-      <div className="card alarm-filters">
+      <FilterPanel
+        description="Narrow the aggregate inventory by gateway, asset, parameter, classification, or time."
+        onClear={clearFilters}
+        title="Filters"
+      >
         <label>
           Gateway ID
           <input value={gatewayFilter} onChange={(event) => setGatewayFilter(event.target.value)} placeholder="Any gateway" />
@@ -145,14 +168,22 @@ export function AggregatesPage() {
           To
           <input type="datetime-local" value={endTime} onChange={(event) => setEndTime(event.target.value)} />
         </label>
-      </div>
+      </FilterPanel>
 
-      {loading && <p>Loading aggregate records...</p>}
+      {loading && (
+        <article className="card empty-state">
+          <p>Loading aggregate records...</p>
+          <p className="muted">Fetching the latest aggregate windows from the configured aggregate sink.</p>
+        </article>
+      )}
       {error && <p className="error">{error}</p>}
 
       {!loading && (
         <div className="alarm-layout">
-          <div className="card">
+          <DataTableCard
+            description={`${items.length} ${resolution} aggregate record(s) currently match the selected filters.`}
+            title="Aggregate Inventory"
+          >
             <table className="table">
               <thead>
                 <tr>
@@ -191,51 +222,67 @@ export function AggregatesPage() {
                 )}
               </tbody>
             </table>
-          </div>
+          </DataTableCard>
 
-          <div className="card alarm-detail">
-            <h3>Aggregate Detail</h3>
-            {!selectedAggregate && (
-              <p className="muted">Select an aggregate window to inspect percentile and quality details.</p>
-            )}
-            {selectedAggregate && (
+          <DetailPanel
+            description="Select an aggregate window to inspect percentile and quality details."
+            title="Aggregate Detail"
+          >
+            {selectedAggregate ? (
               <div className="review-grid">
-                <p>
-                  <strong>Gateway:</strong>{' '}
-                  {selectedAggregate.gateway_id ? (
-                    <Link to={`/fleet?gateway=${encodeURIComponent(selectedAggregate.gateway_id)}`}>{selectedAggregate.gateway_id}</Link>
-                  ) : (
-                    'Unknown'
-                  )}
-                </p>
-                <p>
-                  <strong>Source Table:</strong> {selectedAggregate.source_table}
-                </p>
-                <p>
-                  <strong>Window Start:</strong> {formatDateTime(selectedAggregate.window_start, timezone, { includeTimezone: true })}
-                </p>
-                <p>
-                  <strong>Window End:</strong> {formatDateTime(selectedAggregate.window_end, timezone, { includeTimezone: true })}
-                </p>
-                <p>
-                  <strong>Stddev:</strong> {formatMetric(selectedAggregate.stddev)}
-                </p>
-                <p>
-                  <strong>P50 / P95 / P99:</strong> {formatMetric(selectedAggregate.p50)} / {formatMetric(selectedAggregate.p95)} / {formatMetric(selectedAggregate.p99)}
-                </p>
-                <p>
-                  <strong>Good / Suspect / Uncertain / Bad:</strong> {selectedAggregate.good_samples} / {selectedAggregate.suspect_samples} / {selectedAggregate.uncertain_samples} / {selectedAggregate.bad_samples}
-                </p>
-                <p>
-                  <strong>Percent Good:</strong> {formatMetric(selectedAggregate.pct_good)}
-                </p>
+                <div className="detail-list">
+                  <div className="detail-item">
+                    <span className="summary-label">Gateway</span>
+                    <div>
+                      {selectedAggregate.gateway_id ? (
+                        <Link to={`/fleet?gateway=${encodeURIComponent(selectedAggregate.gateway_id)}`}>{selectedAggregate.gateway_id}</Link>
+                      ) : (
+                        'Unknown'
+                      )}
+                    </div>
+                  </div>
+                  <div className="detail-item">
+                    <span className="summary-label">Source Table</span>
+                    <strong>{selectedAggregate.source_table}</strong>
+                  </div>
+                  <div className="detail-item">
+                    <span className="summary-label">Window Start</span>
+                    <strong>{formatDateTime(selectedAggregate.window_start, timezone, { includeTimezone: true })}</strong>
+                  </div>
+                  <div className="detail-item">
+                    <span className="summary-label">Window End</span>
+                    <strong>{formatDateTime(selectedAggregate.window_end, timezone, { includeTimezone: true })}</strong>
+                  </div>
+                  <div className="detail-item">
+                    <span className="summary-label">Stddev</span>
+                    <strong>{formatMetric(selectedAggregate.stddev)}</strong>
+                  </div>
+                  <div className="detail-item">
+                    <span className="summary-label">P50 / P95 / P99</span>
+                    <strong>
+                      {formatMetric(selectedAggregate.p50)} / {formatMetric(selectedAggregate.p95)} /{' '}
+                      {formatMetric(selectedAggregate.p99)}
+                    </strong>
+                  </div>
+                  <div className="detail-item">
+                    <span className="summary-label">Good / Suspect / Uncertain / Bad</span>
+                    <strong>
+                      {selectedAggregate.good_samples} / {selectedAggregate.suspect_samples} /{' '}
+                      {selectedAggregate.uncertain_samples} / {selectedAggregate.bad_samples}
+                    </strong>
+                  </div>
+                  <div className="detail-item">
+                    <span className="summary-label">Percent Good</span>
+                    <strong>{formatMetric(selectedAggregate.pct_good)}</strong>
+                  </div>
+                </div>
                 <div>
                   <strong>Payload</strong>
                   <pre className="json-preview">{JSON.stringify(selectedAggregate.payload, null, 2)}</pre>
                 </div>
               </div>
-            )}
-          </div>
+            ) : null}
+          </DetailPanel>
         </div>
       )}
     </section>

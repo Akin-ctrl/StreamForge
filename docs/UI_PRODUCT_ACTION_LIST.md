@@ -62,10 +62,16 @@ Status note:
 11. `P1` General configuration UX polish
    - Improve summaries, empty states, loading/error handling, and sink-specific form ergonomics.
    - Reduce the current table-and-raw-form feel for complex operator workflows.
+   - Improve readability, operator ergonomics, and information hierarchy across dense forms, review panels, and inventory tables.
+   - Fix layout/alignment issues that make complex pages harder to scan and use.
+   - Make the UI hold its shape and readability better under browser zoom, larger text, and wider operator display setups.
 
 12. `P2` Design-system consistency and reusable UI primitives
    - Strengthen reusable components for forms, cards, badges, detail panes, and status surfaces.
    - Keep this behind the higher-priority information-architecture and configuration-model work.
+   - Establish a more coherent visual design language for spacing, typography, alignment, and component rhythm.
+   - Improve cross-page consistency so the product no longer feels visually uneven or improvised.
+   - Build reusable layout and component primitives that preserve readability and structure across different screen sizes and zoom levels.
 
 13. `P2` Optional enterprise auth UX
    - Add OAuth/OIDC entry points and role-aware UX only after the backend auth path is implemented.

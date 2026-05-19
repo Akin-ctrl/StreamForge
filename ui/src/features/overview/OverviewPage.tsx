@@ -12,8 +12,11 @@ import {
   listGateways,
   listSinks,
 } from '../../shared/api/client'
+import { DataTableCard } from '../../shared/data-display/DataTableCard'
+import { MetricCard } from '../../shared/data-display/MetricCard'
 import { summarizeDeployment } from '../../shared/config/deployments'
 import { formatDateTime } from '../../shared/format/datetime'
+import { PageCallout } from '../../shared/layout/PageCallout'
 import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 
 export function OverviewPage() {
@@ -56,43 +59,49 @@ export function OverviewPage() {
   const approvedGateways = gateways.filter((item) => item.approved).length
 
   return (
-    <section>
+    <section className="section-grid">
       <div className="page-header">
-        <h2>Overview</h2>
-        <button className="btn" onClick={() => void refresh()} type="button">
-          Refresh
-        </button>
+        <div>
+          <h2>Overview</h2>
+          <p className="muted">
+            Start here for a quick operator snapshot of configured gateways, reusable objects, and recent deployment
+            activity.
+          </p>
+        </div>
+        <div className="page-actions">
+          <button className="btn" onClick={() => void refresh()} type="button">
+            Refresh
+          </button>
+        </div>
       </div>
 
+      <PageCallout title="How to use this view">
+        <p className="muted">
+          Use this page as the operator jump-off point, then move into Fleet, Deployments, Events, Aggregates, or Logs
+          when a specific surface needs deeper attention.
+        </p>
+      </PageCallout>
+
       {error && <p className="error">{error}</p>}
-      {loading && <p>Loading overview...</p>}
+      {loading && (
+        <article className="card empty-state">
+          <p>Loading overview...</p>
+          <p className="muted">Fetching gateway, deployment, adapter, sink, and control-plane health summaries.</p>
+        </article>
+      )}
 
       <div className="overview-kpis">
-        <article className="card">
-          <h3>Gateways</h3>
-          <p className="overview-kpi-value">{gateways.length}</p>
-          <p className="muted">Approved: {approvedGateways}</p>
-        </article>
-        <article className="card">
-          <h3>Deployments</h3>
-          <p className="overview-kpi-value">{deployments.length}</p>
-          <p className="muted">Active gateway compositions</p>
-        </article>
-        <article className="card">
-          <h3>Adapters</h3>
-          <p className="overview-kpi-value">{adapters.length}</p>
-          <p className="muted">Configured source connections</p>
-        </article>
-        <article className="card">
-          <h3>Sinks</h3>
-          <p className="overview-kpi-value">{sinks.length}</p>
-          <p className="muted">Configured delivery targets</p>
-        </article>
+        <MetricCard detail={`Approved: ${approvedGateways}`} title="Gateways" value={gateways.length} />
+        <MetricCard detail="Active gateway compositions" title="Deployments" value={deployments.length} />
+        <MetricCard detail="Configured source connections" title="Adapters" value={adapters.length} />
+        <MetricCard detail="Configured delivery targets" title="Sinks" value={sinks.length} />
       </div>
 
       <div className="overview-grid">
-        <article className="card">
-          <h3>Recent Deployments</h3>
+        <DataTableCard
+          description="A quick view of the latest saved deployment compositions."
+          title="Recent Deployments"
+        >
           <table className="table">
             <thead>
               <tr>
@@ -118,12 +127,19 @@ export function OverviewPage() {
                   </tr>
                 )
               })}
+              {deployments.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="muted">No deployments configured yet.</td>
+                </tr>
+              )}
             </tbody>
           </table>
-        </article>
+        </DataTableCard>
 
-        <article className="card">
-          <h3>Gateways</h3>
+        <DataTableCard
+          description="Recent gateway records and their current configuration posture."
+          title="Gateways"
+        >
           <table className="table">
             <thead>
               <tr>
@@ -142,24 +158,38 @@ export function OverviewPage() {
                   <td>{formatDateTime(item.last_config_sync_at || null, timezone, { includeTimezone: true })}</td>
                 </tr>
               ))}
+              {gateways.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="muted">No gateways configured yet.</td>
+                </tr>
+              )}
             </tbody>
           </table>
-        </article>
+        </DataTableCard>
 
-        <article className="card">
-          <h3>Control Plane Health</h3>
-          <p>
-            <strong>Service:</strong> {health?.status || 'unknown'}
-          </p>
-          <p>
-            <strong>Database:</strong> {health?.dependencies?.database || 'unknown'}
-          </p>
-          <p>
-            <strong>Healthy Gateways:</strong> {health?.gateway_states?.healthy ?? 0}
-          </p>
-          <p>
-            <strong>Degraded Gateways:</strong> {health?.gateway_states?.degraded ?? 0}
-          </p>
+        <article className="card review-section">
+          <div className="card-header-copy">
+            <h3>Control Plane Health</h3>
+            <p className="muted">Current service and dependency posture reported by the control plane.</p>
+          </div>
+          <div className="summary-grid">
+            <div className="summary-item">
+              <span className="summary-label">Service</span>
+              <strong>{health?.status || 'unknown'}</strong>
+            </div>
+            <div className="summary-item">
+              <span className="summary-label">Database</span>
+              <strong>{health?.dependencies?.database || 'unknown'}</strong>
+            </div>
+            <div className="summary-item">
+              <span className="summary-label">Healthy Gateways</span>
+              <strong>{health?.gateway_states?.healthy ?? 0}</strong>
+            </div>
+            <div className="summary-item">
+              <span className="summary-label">Degraded Gateways</span>
+              <strong>{health?.gateway_states?.degraded ?? 0}</strong>
+            </div>
+          </div>
         </article>
       </div>
     </section>

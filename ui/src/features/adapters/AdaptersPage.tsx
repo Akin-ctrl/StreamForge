@@ -14,12 +14,14 @@ import {
   validateAdapterDraft,
 } from '../../shared/api/client'
 import { buildAdapterUsage, summarizeAdapterConfig } from '../../shared/config/deployments'
+import { MetricCard } from '../../shared/data-display/MetricCard'
 import { ActionResultPanel } from '../../shared/forms/ActionResultPanel'
 import {
   connectionTestToViewModel,
   type ActionResultViewModel,
   validationResultToViewModel,
 } from '../../shared/forms/validationIssues'
+import { PageCallout } from '../../shared/layout/PageCallout'
 import {
   adapterToForm,
   applyAdapterConfigJson,
@@ -167,188 +169,258 @@ export function AdaptersPage() {
   }
 
   return (
-    <section>
+    <section className="section-grid">
       <div className="page-header">
-        <h2>Adapters</h2>
-        <button className="btn" onClick={() => void refresh()} type="button">
-          Refresh
-        </button>
+        <div>
+          <h2>Adapters</h2>
+          <p className="muted">
+            Configure reusable protocol connections here, then attach those saved adapter objects to deployments. One
+            adapter instance represents one source connection or session and may contain many mapped parameters inside
+            its config.
+          </p>
+        </div>
+        <div className="page-actions">
+          <button className="btn" onClick={() => void refresh()} type="button">
+            Refresh
+          </button>
+        </div>
       </div>
 
-      <p className="muted">
-        Configure reusable protocol connections here, then attach those saved adapter objects to deployments. One
-        adapter instance represents one source connection or session and may contain many mapped parameters inside its
-        config.
-      </p>
+      <PageCallout title="Recommended workflow">
+        <p className="muted">
+          Define the connection, validate it, run a connection test when practical, then attach the saved adapter to
+          one or more deployments.
+        </p>
+      </PageCallout>
 
       {error && <p className="error">{error}</p>}
-      {loading && <p>Loading adapters...</p>}
+      {loading && (
+        <article className="card empty-state">
+          <p>Loading adapters...</p>
+          <p className="muted">Fetching saved adapters, deployment usage, and control-plane catalog metadata.</p>
+        </article>
+      )}
 
-      <div className="overview-kpis">
-        <article className="card">
-          <h3>Supported Types</h3>
-          <p className="overview-kpi-value">{catalogAdapters.length}</p>
-          <p className="muted">Published by the catalog</p>
-        </article>
-        <article className="card">
-          <h3>Configured Adapters</h3>
-          <p className="overview-kpi-value">{items.length}</p>
-          <p className="muted">Persisted adapter instances</p>
-        </article>
-        <article className="card">
-          <h3>Deployments Using Adapters</h3>
-          <p className="overview-kpi-value">{deployments.filter((deployment) => deployment.adapter_ids.length > 0).length}</p>
-          <p className="muted">Deployment compositions with ingress sources</p>
-        </article>
-      </div>
-
-      <div className="composer-layout">
-        <div className="builder-section">
-          <article className="card">
-            <div className="page-header">
-              <h3>{editingId ? 'Edit Saved Adapter' : 'Create Saved Adapter'}</h3>
-              {editingId && (
-                <button className="btn btn-secondary" onClick={() => resetForm(form.adapterType)} type="button">
-                  Cancel Edit
-                </button>
-              )}
-            </div>
-            <AdapterBasicsSection
-              adapterId={form.adapterId}
-              adapterOptions={catalogAdapters.map((adapter) => ({ value: adapter.adapter_type, label: adapter.label }))}
-              adapterType={form.adapterType}
-              description={form.description}
-              editing={Boolean(editingId)}
-              name={form.name}
-              onAdapterIdChange={(value) => setForm((current) => ({ ...current, adapterId: value }))}
-              onAdapterTypeChange={(value) =>
-                setForm(buildDefaultAdapterForm(value, catalogAdapters.find((adapter) => adapter.adapter_type === value)))
-              }
-              onDescriptionChange={(value) => setForm((current) => ({ ...current, description: value }))}
-              onNameChange={(value) => setForm((current) => ({ ...current, name: value }))}
-              onStatusChange={(value) => setForm((current) => ({ ...current, status: value }))}
-              status={form.status}
+      {!loading && (
+        <>
+          <div className="overview-kpis">
+            <MetricCard detail="Published by the catalog" title="Supported Types" value={catalogAdapters.length} />
+            <MetricCard detail="Persisted adapter instances" title="Configured Adapters" value={items.length} />
+            <MetricCard
+              detail="Deployment compositions with ingress sources"
+              title="Deployments Using Adapters"
+              value={deployments.filter((deployment) => deployment.adapter_ids.length > 0).length}
             />
-            {renderProtocolSection()}
-            <details className="card nested-card advanced-block">
-              <summary>Advanced JSON</summary>
-              <div className="builder-section">
-                <label>
-                  Adapter Config JSON
-                  <textarea rows={14} value={configJson} onChange={(event) => setConfigJson(event.target.value)} />
-                </label>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => {
-                    try {
-                      setForm((current) => applyAdapterConfigJson(current, configJson, currentContract))
-                      setError(null)
-                    } catch (jsonError) {
-                      setError(jsonError instanceof Error ? jsonError.message : 'Invalid adapter JSON')
-                    }
-                  }}
-                  type="button"
-                >
-                  Apply JSON
-                </button>
-              </div>
-            </details>
-            {actionResult && <ActionResultPanel result={actionResult} />}
-            <div className="page-actions">
-              <button className="btn btn-secondary" disabled={actionPending !== null} onClick={() => void onValidate()} type="button">
-                {actionPending === 'validate' ? 'Validating…' : 'Validate'}
-              </button>
-              <button className="btn btn-secondary" disabled={actionPending !== null} onClick={() => void onTestConnection()} type="button">
-                {actionPending === 'test' ? 'Testing…' : 'Test Connection'}
-              </button>
-              <button className="btn" disabled={actionPending !== null} onClick={() => void onSubmit()} type="button">
-                {editingId ? 'Update Adapter' : 'Create Adapter'}
-              </button>
-            </div>
-          </article>
+          </div>
 
-          <article className="card">
-            <div className="page-header">
-              <h3>Supported Types</h3>
-            </div>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Adapter</th>
-                  <th>Fields</th>
-                  <th>Usage</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {catalogAdapters.map((adapter) => (
-                  <tr key={adapter.adapter_type}>
-                    <td>{adapter.label}</td>
-                    <td>{adapter.fields.length}</td>
-                    <td>{usageRows.filter((usage) => usage.adapter.adapter_type === adapter.adapter_type).length} configured</td>
-                    <td>
-                      <button className="btn btn-secondary" onClick={() => startCreate(adapter.adapter_type)} type="button">
-                        Start Config
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </article>
-        </div>
+          <div className="wizard-steps" aria-label="Adapter authoring flow">
+            <span className="wizard-step active">1. Define</span>
+            <span className="wizard-step active">2. Validate</span>
+            <span className="wizard-step active">3. Test</span>
+            <span className="wizard-step">4. Save For Reuse</span>
+          </div>
 
-        <AdapterReviewPanel form={form} />
-      </div>
-
-      <div className="overview-grid">
-        <article className="card">
-          <h3>Configured Adapters</h3>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Adapter ID</th>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Usage</th>
-                <th>Summary</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {usageRows.map((usage) => (
-                <tr key={usage.adapter.adapter_id}>
-                  <td>{usage.adapter.adapter_id}</td>
-                  <td>{usage.adapter.name}</td>
-                  <td>{usage.adapter.adapter_type}</td>
-                  <td>{usage.adapter.status}</td>
-                  <td>
-                    {usage.deploymentIds.length} deployment(s)
-                    {usage.gatewayIds.length > 0 ? ` across ${usage.gatewayIds.length} gateway(s)` : ''}
-                  </td>
-                  <td>{summarizeAdapterConfig(usage.adapter.adapter_type, usage.adapter.config)}</td>
-                  <td>
-                    <button className="btn btn-secondary" onClick={() => startEdit(usage.adapter)} type="button">
-                      Edit
-                    </button>{' '}
-                    <button className="btn btn-secondary" onClick={() => void onDelete(usage.adapter.adapter_id)} type="button">
-                      Delete
+          <div className="composer-layout">
+            <div className="builder-section">
+              <article className="card">
+                <div className="page-header">
+                  <div className="card-header-copy">
+                    <h3>{editingId ? 'Edit Saved Adapter' : 'Create Saved Adapter'}</h3>
+                    <p className="muted">
+                      Keep the source connection readable here, then use the summary on the right to confirm reuse
+                      posture before saving.
+                    </p>
+                  </div>
+                  {editingId && (
+                    <button className="btn btn-secondary" onClick={() => resetForm(form.adapterType)} type="button">
+                      Cancel Edit
                     </button>
-                  </td>
-                </tr>
-              ))}
-              {usageRows.length === 0 && (
-                <tr>
-                  <td className="muted" colSpan={7}>
-                    No adapters configured yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </article>
-      </div>
+                  )}
+                </div>
+                <AdapterBasicsSection
+                  adapterId={form.adapterId}
+                  adapterOptions={catalogAdapters.map((adapter) => ({ value: adapter.adapter_type, label: adapter.label }))}
+                  adapterType={form.adapterType}
+                  description={form.description}
+                  editing={Boolean(editingId)}
+                  name={form.name}
+                  onAdapterIdChange={(value) => setForm((current) => ({ ...current, adapterId: value }))}
+                  onAdapterTypeChange={(value) =>
+                    setForm(
+                      buildDefaultAdapterForm(
+                        value,
+                        catalogAdapters.find((adapter) => adapter.adapter_type === value),
+                      ),
+                    )
+                  }
+                  onDescriptionChange={(value) => setForm((current) => ({ ...current, description: value }))}
+                  onNameChange={(value) => setForm((current) => ({ ...current, name: value }))}
+                  onStatusChange={(value) => setForm((current) => ({ ...current, status: value }))}
+                  status={form.status}
+                />
+                {renderProtocolSection()}
+                <details className="card nested-card advanced-block">
+                  <summary>Advanced JSON</summary>
+                  <div className="builder-section">
+                    <p className="muted">
+                      Use the JSON editor for catalog-backed fields that are easier to review in bulk. Secret values are
+                      still handled separately.
+                    </p>
+                    <label>
+                      Adapter Config JSON
+                      <textarea rows={14} value={configJson} onChange={(event) => setConfigJson(event.target.value)} />
+                    </label>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        try {
+                          setForm((current) => applyAdapterConfigJson(current, configJson, currentContract))
+                          setError(null)
+                        } catch (jsonError) {
+                          setError(jsonError instanceof Error ? jsonError.message : 'Invalid adapter JSON')
+                        }
+                      }}
+                      type="button"
+                    >
+                      Apply JSON
+                    </button>
+                  </div>
+                </details>
+                {actionResult && <ActionResultPanel result={actionResult} />}
+                <div className="page-actions">
+                  <button
+                    className="btn btn-secondary"
+                    disabled={actionPending !== null}
+                    onClick={() => void onValidate()}
+                    type="button"
+                  >
+                    {actionPending === 'validate' ? 'Validating…' : 'Validate'}
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    disabled={actionPending !== null}
+                    onClick={() => void onTestConnection()}
+                    type="button"
+                  >
+                    {actionPending === 'test' ? 'Testing…' : 'Test Connection'}
+                  </button>
+                  <button className="btn" disabled={actionPending !== null} onClick={() => void onSubmit()} type="button">
+                    {editingId ? 'Update Adapter' : 'Create Adapter'}
+                  </button>
+                </div>
+              </article>
+
+              <article className="card table-card">
+                <div className="page-header">
+                  <div className="card-header-copy">
+                    <h3>Supported Types</h3>
+                    <p className="muted table-caption">Start a new adapter from a catalog-backed protocol template.</p>
+                  </div>
+                </div>
+                <div className="table-scroll">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Adapter</th>
+                        <th>Fields</th>
+                        <th>Usage</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {catalogAdapters.map((adapter) => (
+                        <tr key={adapter.adapter_type}>
+                          <td>{adapter.label}</td>
+                          <td>{adapter.fields.length}</td>
+                          <td>
+                            {usageRows.filter((usage) => usage.adapter.adapter_type === adapter.adapter_type).length}{' '}
+                            configured
+                          </td>
+                          <td>
+                            <div className="table-actions">
+                              <button
+                                className="btn btn-secondary"
+                                onClick={() => startCreate(adapter.adapter_type)}
+                                type="button"
+                              >
+                                Start Config
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+            </div>
+
+            <AdapterReviewPanel form={form} />
+          </div>
+
+          <div className="overview-grid">
+            <article className="card table-card">
+              <div className="card-header-copy">
+                <h3>Configured Adapters</h3>
+                <p className="muted table-caption">
+                  Review saved adapter objects, where they are reused, and how much mapping detail each one carries.
+                </p>
+              </div>
+              <div className="table-scroll">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Adapter ID</th>
+                      <th>Name</th>
+                      <th>Type</th>
+                      <th>Status</th>
+                      <th>Usage</th>
+                      <th>Summary</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usageRows.map((usage) => (
+                      <tr key={usage.adapter.adapter_id}>
+                        <td>{usage.adapter.adapter_id}</td>
+                        <td>{usage.adapter.name}</td>
+                        <td>{usage.adapter.adapter_type}</td>
+                        <td>{usage.adapter.status}</td>
+                        <td>
+                          {usage.deploymentIds.length} deployment(s)
+                          {usage.gatewayIds.length > 0 ? ` across ${usage.gatewayIds.length} gateway(s)` : ''}
+                        </td>
+                        <td>{summarizeAdapterConfig(usage.adapter.adapter_type, usage.adapter.config)}</td>
+                        <td>
+                          <div className="table-actions">
+                            <button className="btn btn-secondary" onClick={() => startEdit(usage.adapter)} type="button">
+                              Edit
+                            </button>
+                            <button
+                              className="btn btn-secondary"
+                              onClick={() => void onDelete(usage.adapter.adapter_id)}
+                              type="button"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {usageRows.length === 0 && (
+                      <tr>
+                        <td className="muted" colSpan={7}>
+                          No adapters configured yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          </div>
+        </>
+      )}
     </section>
   )
 }

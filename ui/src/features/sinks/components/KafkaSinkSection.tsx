@@ -13,7 +13,12 @@ export function KafkaSinkSection({ form, setForm }: KafkaSinkSectionProps) {
   return (
     <article className="card">
       <div className="page-header">
-        <h3>Kafka Forwarder</h3>
+        <div className="card-header-copy">
+          <h3>Kafka Forwarder</h3>
+          <p className="muted">
+            Define the downstream Kafka destination while the platform keeps source routing and ingestion wiring stable.
+          </p>
+        </div>
       </div>
       <div className="inline-grid">
         <label>

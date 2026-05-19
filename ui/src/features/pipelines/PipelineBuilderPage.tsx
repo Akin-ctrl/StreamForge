@@ -23,6 +23,7 @@ import {
   formToUpdatePayload,
   type DeploymentFormState,
 } from './deploymentForm'
+import { PageCallout } from '../../shared/layout/PageCallout'
 import { AdapterSelectionSection } from './components/AdapterSelectionSection'
 import { AggregatesConfigSection } from './components/AggregatesConfigSection'
 import { DeploymentBasicsSection } from './components/DeploymentBasicsSection'
@@ -178,7 +179,7 @@ export function PipelineBuilderPage() {
   const preflightViewModel: ActionResultViewModel | null = preflightResult ? preflightToViewModel(preflightResult) : null
 
   return (
-    <section>
+    <section className="section-grid">
       <div className="page-header">
         <div>
           <h2>{editing ? 'Edit Deployment' : 'Compose Deployment'}</h2>
@@ -200,13 +201,32 @@ export function PipelineBuilderPage() {
         </div>
       </div>
 
+      <PageCallout title="Recommended workflow">
+        <p className="muted">
+          Choose the gateway, attach saved adapters and sinks, tune validation and processing, run preflight, then save
+          the deployment composition.
+        </p>
+      </PageCallout>
+
       {error && <p className="error">{error}</p>}
       {loading ? (
-        <p>Loading deployment composer...</p>
+        <article className="card empty-state">
+          <p>Loading deployment composer...</p>
+          <p className="muted">Fetching saved gateways, adapters, sinks, and deployment details.</p>
+        </article>
       ) : (
-        <div className="composer-layout">
-          <div className="builder-section">
-            {preflightViewModel && <ActionResultPanel result={preflightViewModel} />}
+        <>
+          <div className="wizard-steps" aria-label="Deployment composition flow">
+            <span className="wizard-step active">1. Assign Gateway</span>
+            <span className="wizard-step active">2. Attach Objects</span>
+            <span className="wizard-step active">3. Tune Processing</span>
+            <span className="wizard-step active">4. Preflight</span>
+            <span className="wizard-step">5. Save</span>
+          </div>
+
+          <div className="composer-layout">
+            <div className="builder-section">
+              {preflightViewModel && <ActionResultPanel result={preflightViewModel} />}
             <DeploymentBasicsSection
               deploymentId={form.deploymentId}
               editing={editing}
@@ -224,19 +244,20 @@ export function PipelineBuilderPage() {
             <ValidationConfigSection form={form} onError={setError} setForm={setForm} />
             <EventsConfigSection form={form} onError={setError} setForm={setForm} />
             <AggregatesConfigSection form={form} onError={setError} setForm={setForm} />
-          </div>
+            </div>
 
-          <DeploymentReviewPanel
-            aggregatesEnabled={form.aggregatesEnabled}
-            deploymentId={form.deploymentId}
-            eventsEnabled={form.eventsEnabled}
-            gatewayId={form.gatewayId}
-            selectedAdapters={selectedAdapters}
-            selectedSinks={selectedSinks}
-            status={form.status}
-            validationEnabled={form.validationEnabled}
-          />
-        </div>
+            <DeploymentReviewPanel
+              aggregatesEnabled={form.aggregatesEnabled}
+              deploymentId={form.deploymentId}
+              eventsEnabled={form.eventsEnabled}
+              gatewayId={form.gatewayId}
+              selectedAdapters={selectedAdapters}
+              selectedSinks={selectedSinks}
+              status={form.status}
+              validationEnabled={form.validationEnabled}
+            />
+          </div>
+        </>
       )}
     </section>
   )

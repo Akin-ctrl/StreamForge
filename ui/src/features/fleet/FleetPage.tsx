@@ -25,14 +25,13 @@ import {
   runtimeStatus,
   runtimeTone,
 } from '../../shared/fleet/status'
+import { MetricCard } from '../../shared/data-display/MetricCard'
+import { StatusChip } from '../../shared/data-display/StatusChip'
 import { formatDateTime } from '../../shared/format/datetime'
 import { formatBytes, formatNumber } from '../../shared/format/metrics'
+import { PageCallout } from '../../shared/layout/PageCallout'
 import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 import { TopologyView } from './components/TopologyView'
-
-function statusChipClass(tone: 'good' | 'warn' | 'bad' | 'neutral'): string {
-  return `fleet-status-chip fleet-status-chip-${tone}`
-}
 
 export function FleetPage() {
   const { timezone } = useOperatorPreferences()
@@ -128,39 +127,48 @@ export function FleetPage() {
         </div>
       </div>
 
+      <PageCallout title="How to use this view">
+        <p className="muted">
+          Start with the fleet inventory on the left, then drill into one gateway at a time to inspect heartbeat
+          freshness, runtime health, attached deployments, and the active topology.
+        </p>
+      </PageCallout>
+
       {error && <p className="error">{error}</p>}
-      {loading && <p>Loading fleet visibility...</p>}
+      {loading && (
+        <article className="card empty-state">
+          <p>Loading fleet visibility...</p>
+          <p className="muted">Fetching gateways, deployments, reusable objects, and the latest runtime health.</p>
+        </article>
+      )}
 
       {!loading && (
         <>
           <div className="overview-kpis">
-            <article className="card">
-              <h3>Gateways</h3>
-              <p className="overview-kpi-value">{gateways.length}</p>
-              <p className="muted">Approved: {health?.gateway_states?.approved ?? gateways.filter((item) => item.approved).length}</p>
-            </article>
-            <article className="card">
-              <h3>Healthy Runtime</h3>
-              <p className="overview-kpi-value">{health?.gateway_states?.healthy ?? 0}</p>
-              <p className="muted">Degraded: {health?.gateway_states?.degraded ?? 0}</p>
-            </article>
-            <article className="card">
-              <h3>Active Deployments</h3>
-              <p className="overview-kpi-value">{activeDeploymentCount}</p>
-              <p className="muted">Across all gateways</p>
-            </article>
-            <article className="card">
-              <h3>Offline Heartbeats</h3>
-              <p className="overview-kpi-value">
-                {gateways.filter((gateway) => heartbeatState(gateway.last_seen_at) === 'offline').length}
-              </p>
-              <p className="muted">Never seen: {gateways.filter((gateway) => heartbeatState(gateway.last_seen_at) === 'never-seen').length}</p>
-            </article>
+            <MetricCard
+              detail={`Approved: ${health?.gateway_states?.approved ?? gateways.filter((item) => item.approved).length}`}
+              title="Gateways"
+              value={gateways.length}
+            />
+            <MetricCard
+              detail={`Degraded: ${health?.gateway_states?.degraded ?? 0}`}
+              title="Healthy Runtime"
+              value={health?.gateway_states?.healthy ?? 0}
+            />
+            <MetricCard detail="Across all gateways" title="Active Deployments" value={activeDeploymentCount} />
+            <MetricCard
+              detail={`Never seen: ${gateways.filter((gateway) => heartbeatState(gateway.last_seen_at) === 'never-seen').length}`}
+              title="Offline Heartbeats"
+              value={gateways.filter((gateway) => heartbeatState(gateway.last_seen_at) === 'offline').length}
+            />
           </div>
 
           <div className="fleet-layout">
             <article className="card fleet-gateway-list">
-              <h3>Gateway Inventory</h3>
+              <div className="card-header-copy">
+                <h3>Gateway Inventory</h3>
+                <p className="muted">Choose one gateway to inspect its runtime posture, deployment attachment, and topology.</p>
+              </div>
               <div className="fleet-gateway-stack">
                 {gatewayContexts.map((context) => {
                   const activeDeployment = context.activeDeployment
@@ -186,8 +194,8 @@ export function FleetPage() {
                           <p className="muted">{context.gateway.hostname}</p>
                         </div>
                         <div className="fleet-chip-row">
-                          <span className={statusChipClass(runtimeTone(runtime))}>{runtime}</span>
-                          <span className={statusChipClass(heartbeatTone(heartbeat))}>{heartbeatLabel(heartbeat)}</span>
+                          <StatusChip label={runtime} tone={runtimeTone(runtime)} />
+                          <StatusChip label={heartbeatLabel(heartbeat)} tone={heartbeatTone(heartbeat)} />
                         </div>
                       </div>
                       <div className="fleet-card-meta">
@@ -220,12 +228,14 @@ export function FleetPage() {
                       </div>
                       <div className="page-actions">
                         <div className="fleet-chip-row">
-                          <span className={statusChipClass(runtimeTone(runtimeStatus(selectedContext.gateway)))}>
-                            {runtimeStatus(selectedContext.gateway)}
-                          </span>
-                          <span className={statusChipClass(heartbeatTone(heartbeatState(selectedContext.gateway.last_seen_at)))}>
-                            {heartbeatLabel(heartbeatState(selectedContext.gateway.last_seen_at))}
-                          </span>
+                          <StatusChip
+                            label={runtimeStatus(selectedContext.gateway)}
+                            tone={runtimeTone(runtimeStatus(selectedContext.gateway))}
+                          />
+                          <StatusChip
+                            label={heartbeatLabel(heartbeatState(selectedContext.gateway.last_seen_at))}
+                            tone={heartbeatTone(heartbeatState(selectedContext.gateway.last_seen_at))}
+                          />
                         </div>
                         <Link className="btn btn-secondary" to={`/logs?gateway=${encodeURIComponent(selectedContext.gateway.gateway_id)}`}>
                           View Logs
