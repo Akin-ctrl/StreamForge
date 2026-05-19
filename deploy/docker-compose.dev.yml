@@ -42,6 +42,7 @@ services:
     environment:
       SF_DATABASE_URL: postgresql+psycopg://streamforge:streamforge@postgres:5432/streamforge
       SF_JWT_SECRET: streamforge-dev-secret
+      SF_CONFIG_SECRET_KEY: VaLKC29arWaHqoljiNX-eVQ-dMkpeDbugFT7G_0G2is=
     healthcheck:
       test:
         [

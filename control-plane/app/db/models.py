@@ -109,6 +109,24 @@ class Sink(Base):
     )
 
 
+class ConfigSecret(Base):
+    """Encrypted secret value associated with an adapter or sink."""
+
+    __tablename__ = "config_secrets"
+    __table_args__ = (
+        UniqueConstraint("owner_kind", "owner_public_id", "field_name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    owner_kind: Mapped[str] = mapped_column(String(32), index=True)
+    owner_public_id: Mapped[str] = mapped_column(String(128), index=True)
+    field_name: Mapped[str] = mapped_column(String(128))
+    ciphertext: Mapped[str] = mapped_column(String(4096))
+    key_version: Mapped[str] = mapped_column(String(32), default="v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Deployment(Base):
     """Composed gateway deployment containing adapters, sinks, and dataflow rules."""
 

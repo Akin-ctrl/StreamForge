@@ -16,7 +16,12 @@ export function TimescaleSinkSection({ form, setForm }: TimescaleSinkSectionProp
       <div className="inline-grid">
         <label>
           Database DSN
-          <input value={form.dbDsn} onChange={(event) => setForm((current) => ({ ...current, dbDsn: event.target.value }))} />
+          <input
+            placeholder={form.dbDsnConfigured ? 'Leave blank to keep current DSN' : ''}
+            value={form.dbDsn}
+            onChange={(event) => setForm((current) => ({ ...current, dbDsn: event.target.value }))}
+          />
+          {form.dbDsnConfigured && <span className="muted">Database credentials are already configured.</span>}
         </label>
         <label>
           Table

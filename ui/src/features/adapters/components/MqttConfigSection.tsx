@@ -58,9 +58,11 @@ export function MqttConfigSection({ form, setForm }: MqttConfigSectionProps) {
           Password
           <input
             type="password"
+            placeholder={form.passwordConfigured ? 'Leave blank to keep current password' : ''}
             value={form.password}
             onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
           />
+          {form.passwordConfigured && <span className="muted">A password is already configured for this adapter.</span>}
         </label>
         <label>
           QoS

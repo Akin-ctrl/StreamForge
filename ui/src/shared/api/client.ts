@@ -44,12 +44,17 @@ export type GatewayItem = {
   created_at: string
 }
 
+export type SecretFieldStatus = {
+  configured: boolean
+}
+
 export type AdapterItem = {
   adapter_id: string
   name: string
   adapter_type: string
   status: string
   config: Record<string, unknown>
+  secret_status: Record<string, SecretFieldStatus>
   description?: string | null
   created_at: string
   updated_at: string
@@ -60,6 +65,7 @@ export type SinkItem = {
   name: string
   sink_type: string
   config: Record<string, unknown>
+  secret_status: Record<string, SecretFieldStatus>
   status: string
   description?: string | null
   created_at: string
@@ -330,6 +336,7 @@ export function createAdapter(payload: {
   adapter_type: string
   status: string
   config: Record<string, unknown>
+  secrets?: Record<string, string | null>
   description?: string | null
 }) {
   return request<AdapterItem>('/api/v1/adapters', {
@@ -344,6 +351,7 @@ export function updateAdapter(
     name?: string
     status?: string
     config?: Record<string, unknown>
+    secrets?: Record<string, string | null>
     description?: string | null
   },
 ) {
@@ -368,6 +376,7 @@ export function createSink(payload: {
   name: string
   sink_type: string
   config: Record<string, unknown>
+  secrets?: Record<string, string | null>
   status: string
   description?: string | null
 }) {
@@ -383,6 +392,7 @@ export function updateSink(
     name?: string
     sink_type?: string
     config?: Record<string, unknown>
+    secrets?: Record<string, string | null>
     status?: string
     description?: string | null
   },
