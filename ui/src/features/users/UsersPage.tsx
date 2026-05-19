@@ -1,10 +1,14 @@
 import { FormEvent, useEffect, useState } from 'react'
 
-import { UserItem, createUser, deleteUser, getCurrentUser, listUsers } from '../../shared/api/client'
+import { type UserCreatePayload, type UserItem, type UserRole, createUser, deleteUser, getCurrentUser, listUsers } from '../../shared/api/client'
 import { useOperatorPreferences } from '../../shared/preferences/PreferencesProvider'
 import { formatDateTime } from '../../shared/format/datetime'
 
-const ROLE_OPTIONS = ['Viewer', 'Operator', 'Engineer', 'Admin'] as const
+const ROLE_OPTIONS: UserRole[] = ['Viewer', 'Operator', 'Engineer', 'Admin']
+
+function isUserRole(value: string): value is UserRole {
+  return ROLE_OPTIONS.includes(value as UserRole)
+}
 
 export function UsersPage() {
   const { timezone } = useOperatorPreferences()
@@ -47,7 +51,7 @@ export function UsersPage() {
       setError('Username is required')
       return
     }
-    if (!ROLE_OPTIONS.includes(role as (typeof ROLE_OPTIONS)[number])) {
+    if (!isUserRole(role)) {
       setError('Choose a valid role')
       return
     }
@@ -60,11 +64,12 @@ export function UsersPage() {
     setError(null)
     setSuccess(null)
     try {
-      await createUser({
+      const payload: UserCreatePayload = {
         username,
         password,
         role,
-      })
+      }
+      await createUser(payload)
       formElement.reset()
       setSuccess(`User ${username} created with ${role} access.`)
       await refresh()

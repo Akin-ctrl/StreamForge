@@ -1,4 +1,6 @@
 import type { AdapterItem, DeploymentItem, SinkItem } from '../api/client'
+import { asJsonObject, asNumber, asString } from './json'
+import type { JsonObject } from '../types/json'
 
 export type DeploymentSummary = {
   adapterCount: number
@@ -20,32 +22,21 @@ export type SinkUsage = {
   gatewayIds: string[]
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return null
-  }
-  return value as Record<string, unknown>
-}
-
-function asString(value: unknown, fallback = ''): string {
-  return typeof value === 'string' ? value : fallback
-}
-
-function asNumber(value: unknown, fallback = 0): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
-}
-
 export function summarizeDeployment(deployment: DeploymentItem): DeploymentSummary {
   return {
     adapterCount: deployment.adapter_ids.length,
     sinkCount: deployment.sink_ids.length,
-    validationEnabled: Boolean(asRecord(deployment.validation_config)?.enabled),
-    eventsConfigured: Boolean(asRecord(deployment.events_config)?.enabled || Object.keys(deployment.events_config || {}).length > 0),
-    aggregatesConfigured: Boolean(asRecord(deployment.aggregates_config)?.enabled || Object.keys(deployment.aggregates_config || {}).length > 0),
+    validationEnabled: Boolean(asJsonObject(deployment.validation_config)?.enabled),
+    eventsConfigured: Boolean(
+      asJsonObject(deployment.events_config)?.enabled || Object.keys(deployment.events_config || {}).length > 0,
+    ),
+    aggregatesConfigured: Boolean(
+      asJsonObject(deployment.aggregates_config)?.enabled || Object.keys(deployment.aggregates_config || {}).length > 0,
+    ),
   }
 }
 
-export function summarizeAdapterConfig(adapterType: string, config: Record<string, unknown>): string {
+export function summarizeAdapterConfig(adapterType: string, config: JsonObject): string {
   if (adapterType === 'modbus_tcp') {
     const host = asString(config.host, 'unknown-host')
     const port = asNumber(config.port, 502)
@@ -87,7 +78,7 @@ export function buildAdapterUsage(adapters: AdapterItem[], deployments: Deployme
   })
 }
 
-export function summarizeSinkConfig(sinkType: string, config: Record<string, unknown>): string {
+export function summarizeSinkConfig(sinkType: string, config: JsonObject): string {
   if (sinkType === 'timescaledb') {
     const table = asString(config.table, 'telemetry_clean')
     const topic = asString(config.topic, 'telemetry.clean')

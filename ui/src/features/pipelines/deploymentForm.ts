@@ -1,4 +1,6 @@
-import type { DeploymentItem } from '../../shared/api/client'
+import type { DeploymentCreatePayload, DeploymentItem, DeploymentUpdatePayload } from '../../shared/api/client'
+import { asBoolean, asJsonObject, asString, toNumberString } from '../../shared/config/json'
+import type { JsonObject } from '../../shared/types/json'
 
 export type RangeRuleForm = {
   parameter: string
@@ -56,45 +58,24 @@ export type DeploymentFormState = {
   aggregate1minWindowSeconds: string
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return null
-  }
-
-  return value as Record<string, unknown>
-}
-
-function asString(value: unknown, fallback = ''): string {
-  return typeof value === 'string' ? value : fallback
-}
-
-function asBoolean(value: unknown, fallback = false): boolean {
-  return typeof value === 'boolean' ? value : fallback
-}
-
-function asNumber(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
-}
-
-function toNumberString(value: unknown, fallback = ''): string {
-  const numeric = asNumber(value)
-  return numeric === null ? fallback : String(numeric)
-}
-
-function mapRulesObject(
+function mapRulesObject<T>(
   value: unknown,
-  mapper: (parameter: string, config: unknown) => Record<string, string> | null,
-): Record<string, string>[] {
-  const record = asRecord(value)
+  mapper: (parameter: string, config: unknown) => T | null,
+): T[] {
+  const record = asJsonObject(value)
   if (!record) {
     return []
   }
 
   return Object.entries(record)
     .map(([parameter, config]) => mapper(parameter, config))
-    .filter((entry): entry is Record<string, string> => Boolean(entry))
+    .filter((entry): entry is T => entry !== null)
 }
 
+/**
+ * Deployment form helpers intentionally keep the config translation logic local to the
+ * deployment feature so the page can stay focused on orchestration and validation flow.
+ */
 export function buildDefaultDeploymentForm(): DeploymentFormState {
   return {
     deploymentId: 'deployment-demo-01',
@@ -129,12 +110,12 @@ export function buildDefaultDeploymentForm(): DeploymentFormState {
 
 export function deploymentToForm(deployment: DeploymentItem): DeploymentFormState {
   const defaults = buildDefaultDeploymentForm()
-  const validation = asRecord(deployment.validation_config) || {}
-  const events = asRecord(deployment.events_config) || {}
-  const aggregates = asRecord(deployment.aggregates_config) || {}
-  const resolutions = asRecord(aggregates.resolutions) || {}
-  const aggregate1s = asRecord(resolutions['1s']) || {}
-  const aggregate1min = asRecord(resolutions['1min']) || {}
+  const validation = asJsonObject(deployment.validation_config) || {}
+  const events = asJsonObject(deployment.events_config) || {}
+  const aggregates = asJsonObject(deployment.aggregates_config) || {}
+  const resolutions = asJsonObject(aggregates.resolutions) || {}
+  const aggregate1s = asJsonObject(resolutions['1s']) || {}
+  const aggregate1min = asJsonObject(resolutions['1min']) || {}
 
   return {
     deploymentId: deployment.deployment_id,
@@ -149,7 +130,7 @@ export function deploymentToForm(deployment: DeploymentItem): DeploymentFormStat
     validationDlqTopic: asString(validation.dlq_topic, defaults.validationDlqTopic),
     validationAlarmTopic: asString(validation.alarm_topic, defaults.validationAlarmTopic),
     rangeRules: mapRulesObject(validation.ranges, (parameter, config) => {
-      const range = asRecord(config)
+      const range = asJsonObject(config)
       if (!range) {
         return null
       }
@@ -158,18 +139,18 @@ export function deploymentToForm(deployment: DeploymentItem): DeploymentFormStat
         min: toNumberString(range.min),
         max: toNumberString(range.max),
       }
-    }) as RangeRuleForm[],
+    }),
     rateRules: mapRulesObject(validation.rate_of_change, (parameter, config) => ({
       parameter,
       limit: toNumberString(config),
-    })) as RateRuleForm[],
+    })),
     gapRules: mapRulesObject(validation.gap_detection, (parameter, config) => ({
       parameter,
       seconds: toNumberString(config),
-    })) as GapRuleForm[],
+    })),
     alarmRules: Array.isArray(validation.alarm_rules)
       ? validation.alarm_rules.map((rule) => {
-          const alarmRule = asRecord(rule) || {}
+          const alarmRule = asJsonObject(rule) || {}
           return {
             parameter: asString(alarmRule.parameter),
             type: asString(alarmRule.type),
@@ -205,7 +186,7 @@ function toOptionalNumber(value: string): number | null {
   return Number.isFinite(numeric) ? numeric : null
 }
 
-function buildValidationConfig(form: DeploymentFormState): Record<string, unknown> {
+function buildValidationConfig(form: DeploymentFormState): JsonObject {
   const ranges = Object.fromEntries(
     form.rangeRules
       .filter((rule) => rule.parameter.trim())
@@ -255,7 +236,7 @@ function buildValidationConfig(form: DeploymentFormState): Record<string, unknow
   }
 }
 
-function buildEventsConfig(form: DeploymentFormState): Record<string, unknown> {
+function buildEventsConfig(form: DeploymentFormState): JsonObject {
   return {
     enabled: form.eventsEnabled,
     raw_topic: form.eventsRawTopic,
@@ -264,7 +245,7 @@ function buildEventsConfig(form: DeploymentFormState): Record<string, unknown> {
   }
 }
 
-function buildAggregatesConfig(form: DeploymentFormState): Record<string, unknown> {
+function buildAggregatesConfig(form: DeploymentFormState): JsonObject {
   return {
     enabled: form.aggregatesEnabled,
     source_topic: form.aggregatesSourceTopic,
@@ -283,7 +264,7 @@ function buildAggregatesConfig(form: DeploymentFormState): Record<string, unknow
   }
 }
 
-export function formToCreatePayload(form: DeploymentFormState) {
+export function formToCreatePayload(form: DeploymentFormState): DeploymentCreatePayload {
   return {
     deployment_id: form.deploymentId.trim(),
     name: form.name.trim(),
@@ -297,7 +278,7 @@ export function formToCreatePayload(form: DeploymentFormState) {
   }
 }
 
-export function formToUpdatePayload(form: DeploymentFormState) {
+export function formToUpdatePayload(form: DeploymentFormState): DeploymentUpdatePayload {
   return {
     name: form.name.trim(),
     status: form.status,
@@ -321,62 +302,63 @@ export function buildAggregatesJson(form: DeploymentFormState): string {
   return JSON.stringify(buildAggregatesConfig(form), null, 2)
 }
 
+function buildDraftDeployment(
+  form: DeploymentFormState,
+  overrides: Pick<DeploymentItem, 'validation_config' | 'events_config' | 'aggregates_config'>,
+): DeploymentItem {
+  return {
+    deployment_id: form.deploymentId,
+    name: form.name,
+    gateway_id: form.gatewayId,
+    status: form.status,
+    adapter_ids: form.adapterIds,
+    sink_ids: form.sinkIds,
+    validation_config: overrides.validation_config,
+    events_config: overrides.events_config,
+    aggregates_config: overrides.aggregates_config,
+    created_at: '',
+    updated_at: '',
+  }
+}
+
 export function applyValidationJson(form: DeploymentFormState, text: string): DeploymentFormState {
-  const parsed = JSON.parse(text) as Record<string, unknown>
+  const parsed = JSON.parse(text) as JsonObject
   return {
     ...form,
-    ...deploymentToForm({
-      deployment_id: form.deploymentId,
-      name: form.name,
-      gateway_id: form.gatewayId,
-      status: form.status,
-      adapter_ids: form.adapterIds,
-      sink_ids: form.sinkIds,
+    ...deploymentToForm(
+      buildDraftDeployment(form, {
       validation_config: parsed,
       events_config: buildEventsConfig(form),
       aggregates_config: buildAggregatesConfig(form),
-      created_at: '',
-      updated_at: '',
-    }),
+      }),
+    ),
   }
 }
 
 export function applyEventsJson(form: DeploymentFormState, text: string): DeploymentFormState {
-  const parsed = JSON.parse(text) as Record<string, unknown>
+  const parsed = JSON.parse(text) as JsonObject
   return {
     ...form,
-    ...deploymentToForm({
-      deployment_id: form.deploymentId,
-      name: form.name,
-      gateway_id: form.gatewayId,
-      status: form.status,
-      adapter_ids: form.adapterIds,
-      sink_ids: form.sinkIds,
+    ...deploymentToForm(
+      buildDraftDeployment(form, {
       validation_config: buildValidationConfig(form),
       events_config: parsed,
       aggregates_config: buildAggregatesConfig(form),
-      created_at: '',
-      updated_at: '',
-    }),
+      }),
+    ),
   }
 }
 
 export function applyAggregatesJson(form: DeploymentFormState, text: string): DeploymentFormState {
-  const parsed = JSON.parse(text) as Record<string, unknown>
+  const parsed = JSON.parse(text) as JsonObject
   return {
     ...form,
-    ...deploymentToForm({
-      deployment_id: form.deploymentId,
-      name: form.name,
-      gateway_id: form.gatewayId,
-      status: form.status,
-      adapter_ids: form.adapterIds,
-      sink_ids: form.sinkIds,
+    ...deploymentToForm(
+      buildDraftDeployment(form, {
       validation_config: buildValidationConfig(form),
       events_config: buildEventsConfig(form),
       aggregates_config: parsed,
-      created_at: '',
-      updated_at: '',
-    }),
+      }),
+    ),
   }
 }

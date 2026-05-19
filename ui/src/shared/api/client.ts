@@ -1,3 +1,5 @@
+import type { JsonObject, JsonPrimitive } from '../types/json'
+
 const CONTROL_PLANE_URL = import.meta.env.VITE_CONTROL_PLANE_URL?.toString() || ''
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -33,8 +35,8 @@ export type GatewayItem = {
   last_config_sync_at?: string | null
   last_config_version?: string | null
   last_seen_at?: string | null
-  runtime_health?: Record<string, unknown> | null
-  system_metrics?: Record<string, unknown> | null
+  runtime_health?: JsonObject | null
+  system_metrics?: JsonObject | null
   created_at: string
 }
 
@@ -47,7 +49,7 @@ export type AdapterItem = {
   name: string
   adapter_type: string
   status: string
-  config: Record<string, unknown>
+  config: JsonObject
   secret_status: Record<string, SecretFieldStatus>
   description?: string | null
   created_at: string
@@ -58,7 +60,7 @@ export type SinkItem = {
   sink_id: string
   name: string
   sink_type: string
-  config: Record<string, unknown>
+  config: JsonObject
   secret_status: Record<string, SecretFieldStatus>
   status: string
   description?: string | null
@@ -73,9 +75,9 @@ export type DeploymentItem = {
   status: string
   adapter_ids: string[]
   sink_ids: string[]
-  validation_config: Record<string, unknown>
-  events_config: Record<string, unknown>
-  aggregates_config: Record<string, unknown>
+  validation_config: JsonObject
+  events_config: JsonObject
+  aggregates_config: JsonObject
   created_at: string
   updated_at: string
 }
@@ -102,7 +104,7 @@ export type AlarmItem = {
   suppressed_at: string | null
   suppressed_by: string | null
   duration_seconds: number | null
-  metadata: Record<string, unknown>
+  metadata: JsonObject
   created_at: string
   updated_at: string
 }
@@ -135,8 +137,8 @@ export type DlqItem = {
   action_completed_at: string | null
   last_error: string | null
   failed_at: string
-  original_payload: Record<string, unknown>
-  preview_payload: Record<string, unknown>
+  original_payload: JsonObject
+  preview_payload: JsonObject
   created_at: string
   updated_at: string
 }
@@ -155,10 +157,12 @@ export type UserTokenResponse = {
   expires_at: string
 }
 
+export type UserRole = 'Viewer' | 'Operator' | 'Engineer' | 'Admin'
+
 export type UserItem = {
   username: string
-  role: string
-  roles: string[]
+  role: UserRole
+  roles: UserRole[]
   permissions: string[]
   created_at: string
 }
@@ -173,7 +177,7 @@ export type CatalogField = {
   label: string
   input_type: string
   required: boolean
-  default: string | number | boolean | null
+  default: JsonPrimitive
   help_text?: string | null
   advanced?: boolean
   repeatable?: boolean
@@ -213,6 +217,82 @@ export type CatalogResponse = {
 
 export type BootstrapStatusResponse = {
   bootstrap_required: boolean
+}
+
+export type UserCreatePayload = {
+  username: string
+  password: string
+  role?: UserRole
+}
+
+export type GatewayCreatePayload = {
+  gateway_id: string
+  hostname: string
+  hardware_info?: JsonObject
+  approved?: boolean
+}
+
+export type AdapterSecretsPayload = Record<string, string | null>
+
+export type AdapterCreatePayload = {
+  adapter_id: string
+  name: string
+  adapter_type: string
+  status: string
+  config: JsonObject
+  secrets?: AdapterSecretsPayload
+  description?: string | null
+}
+
+export type AdapterUpdatePayload = {
+  name?: string
+  status?: string
+  config?: JsonObject
+  secrets?: AdapterSecretsPayload
+  description?: string | null
+}
+
+export type SinkSecretsPayload = Record<string, string | null>
+
+export type SinkCreatePayload = {
+  sink_id: string
+  name: string
+  sink_type: string
+  config: JsonObject
+  secrets?: SinkSecretsPayload
+  status: string
+  description?: string | null
+}
+
+export type SinkUpdatePayload = {
+  name?: string
+  sink_type?: string
+  config?: JsonObject
+  secrets?: SinkSecretsPayload
+  status?: string
+  description?: string | null
+}
+
+export type DeploymentCreatePayload = {
+  deployment_id: string
+  name: string
+  gateway_id: string
+  status: string
+  adapter_ids: string[]
+  sink_ids: string[]
+  validation_config: JsonObject
+  events_config: JsonObject
+  aggregates_config: JsonObject
+}
+
+export type DeploymentUpdatePayload = {
+  name?: string
+  status?: string
+  adapter_ids?: string[]
+  sink_ids?: string[]
+  validation_config?: JsonObject
+  events_config?: JsonObject
+  aggregates_config?: JsonObject
 }
 
 async function readError(response: Response, fallbackMessage: string): Promise<string> {
@@ -291,11 +371,7 @@ export function getCurrentUser() {
   return request<UserItem>('/api/v1/auth/me')
 }
 
-export function createUser(payload: {
-  username: string
-  password: string
-  role?: string
-}) {
+export function createUser(payload: UserCreatePayload) {
   return request<UserItem>('/api/v1/users', {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -312,12 +388,7 @@ export function listGateways() {
   return request<GatewayItem[]>('/api/v1/gateways')
 }
 
-export function createGateway(payload: {
-  gateway_id: string
-  hostname: string
-  hardware_info?: Record<string, unknown>
-  approved?: boolean
-}) {
+export function createGateway(payload: GatewayCreatePayload) {
   return request<GatewayItem>('/api/v1/gateways', {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -335,31 +406,14 @@ export function listAdapters() {
   return request<AdapterItem[]>('/api/v1/adapters')
 }
 
-export function createAdapter(payload: {
-  adapter_id: string
-  name: string
-  adapter_type: string
-  status: string
-  config: Record<string, unknown>
-  secrets?: Record<string, string | null>
-  description?: string | null
-}) {
+export function createAdapter(payload: AdapterCreatePayload) {
   return request<AdapterItem>('/api/v1/adapters', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
 }
 
-export function updateAdapter(
-  adapterId: string,
-  payload: {
-    name?: string
-    status?: string
-    config?: Record<string, unknown>
-    secrets?: Record<string, string | null>
-    description?: string | null
-  },
-) {
+export function updateAdapter(adapterId: string, payload: AdapterUpdatePayload) {
   return request<AdapterItem>(`/api/v1/adapters/${encodeURIComponent(adapterId)}`, {
     method: 'PUT',
     body: JSON.stringify(payload),
@@ -376,32 +430,14 @@ export function listSinks() {
   return request<SinkItem[]>('/api/v1/sinks')
 }
 
-export function createSink(payload: {
-  sink_id: string
-  name: string
-  sink_type: string
-  config: Record<string, unknown>
-  secrets?: Record<string, string | null>
-  status: string
-  description?: string | null
-}) {
+export function createSink(payload: SinkCreatePayload) {
   return request<SinkItem>('/api/v1/sinks', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
 }
 
-export function updateSink(
-  sinkId: string,
-  payload: {
-    name?: string
-    sink_type?: string
-    config?: Record<string, unknown>
-    secrets?: Record<string, string | null>
-    status?: string
-    description?: string | null
-  },
-) {
+export function updateSink(sinkId: string, payload: SinkUpdatePayload) {
   return request<SinkItem>(`/api/v1/sinks/${encodeURIComponent(sinkId)}`, {
     method: 'PUT',
     body: JSON.stringify(payload),
@@ -422,35 +458,14 @@ export function getDeployment(deploymentId: string) {
   return request<DeploymentItem>(`/api/v1/deployments/${encodeURIComponent(deploymentId)}`)
 }
 
-export function createDeployment(payload: {
-  deployment_id: string
-  name: string
-  gateway_id: string
-  status: string
-  adapter_ids: string[]
-  sink_ids: string[]
-  validation_config: Record<string, unknown>
-  events_config: Record<string, unknown>
-  aggregates_config: Record<string, unknown>
-}) {
+export function createDeployment(payload: DeploymentCreatePayload) {
   return request<DeploymentItem>('/api/v1/deployments', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
 }
 
-export function updateDeployment(
-  deploymentId: string,
-  payload: {
-    name?: string
-    status?: string
-    adapter_ids?: string[]
-    sink_ids?: string[]
-    validation_config?: Record<string, unknown>
-    events_config?: Record<string, unknown>
-    aggregates_config?: Record<string, unknown>
-  },
-) {
+export function updateDeployment(deploymentId: string, payload: DeploymentUpdatePayload) {
   return request<DeploymentItem>(`/api/v1/deployments/${encodeURIComponent(deploymentId)}`, {
     method: 'PUT',
     body: JSON.stringify(payload),
