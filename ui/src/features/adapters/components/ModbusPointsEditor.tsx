@@ -1,8 +1,11 @@
 import type { Dispatch, SetStateAction } from 'react'
 
+import type { CatalogAdapterType } from '../../../shared/api/client'
+import { getCatalogOptions } from '../../../shared/config/catalog'
 import { createDefaultPointForm, type AdapterFormState, type ModbusPointForm } from '../adapterForm'
 
 type ModbusPointsEditorProps = {
+  contract?: CatalogAdapterType
   form: AdapterFormState
   setForm: Dispatch<SetStateAction<AdapterFormState>>
 }
@@ -11,14 +14,46 @@ function updatePoint(points: ModbusPointForm[], index: number, nextPoint: Modbus
   return points.map((point, pointIndex) => (pointIndex === index ? nextPoint : point))
 }
 
-export function ModbusPointsEditor({ form, setForm }: ModbusPointsEditorProps) {
+const fallbackMemoryAreas = [
+  { value: 'holding_register', label: 'Holding Register' },
+  { value: 'input_register', label: 'Input Register' },
+  { value: 'coil', label: 'Coil' },
+  { value: 'discrete_input', label: 'Discrete Input' },
+]
+
+const fallbackDataTypes = [
+  { value: 'bool', label: 'Boolean' },
+  { value: 'int16', label: 'int16' },
+  { value: 'uint16', label: 'uint16' },
+  { value: 'int32', label: 'int32' },
+  { value: 'uint32', label: 'uint32' },
+  { value: 'float32', label: 'float32' },
+  { value: 'float64', label: 'float64' },
+]
+
+const fallbackEndian = [
+  { value: 'big', label: 'Big' },
+  { value: 'little', label: 'Little' },
+]
+
+const fallbackClassification = [
+  { value: 'telemetry', label: 'Telemetry' },
+  { value: 'event', label: 'Event' },
+]
+
+export function ModbusPointsEditor({ contract, form, setForm }: ModbusPointsEditorProps) {
+  const memoryAreas = getCatalogOptions(contract, 'points', 'memory_area')
+  const dataTypes = getCatalogOptions(contract, 'points', 'data_type')
+  const endian = getCatalogOptions(contract, 'points', 'byte_order')
+  const classificationOptions = getCatalogOptions(contract, 'points', 'classification')
+
   return (
     <div className="nested-card card builder-section">
       <div className="page-header">
         <h4>Points</h4>
         <button
           className="btn btn-secondary"
-          onClick={() => setForm((current) => ({ ...current, points: [...current.points, createDefaultPointForm()] }))}
+          onClick={() => setForm((current) => ({ ...current, points: [...current.points, createDefaultPointForm(contract)] }))}
           type="button"
         >
           Add Point
@@ -49,10 +84,11 @@ export function ModbusPointsEditor({ form, setForm }: ModbusPointsEditorProps) {
                   }))
                 }
               >
-                <option value="holding_register">Holding Register</option>
-                <option value="input_register">Input Register</option>
-                <option value="coil">Coil</option>
-                <option value="discrete_input">Discrete Input</option>
+                {(memoryAreas.length > 0 ? memoryAreas : fallbackMemoryAreas).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
               <input
                 placeholder="Address"
@@ -73,13 +109,11 @@ export function ModbusPointsEditor({ form, setForm }: ModbusPointsEditorProps) {
                   }))
                 }
               >
-                <option value="bool">Boolean</option>
-                <option value="int16">int16</option>
-                <option value="uint16">uint16</option>
-                <option value="int32">int32</option>
-                <option value="uint32">uint32</option>
-                <option value="float32">float32</option>
-                <option value="float64">float64</option>
+                {(dataTypes.length > 0 ? dataTypes : fallbackDataTypes).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
             </div>
             <div className="inline-grid">
@@ -92,8 +126,11 @@ export function ModbusPointsEditor({ form, setForm }: ModbusPointsEditorProps) {
                   }))
                 }
               >
-                <option value="big">Byte Order: Big</option>
-                <option value="little">Byte Order: Little</option>
+                {(endian.length > 0 ? endian : fallbackEndian).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    Byte Order: {option.label}
+                  </option>
+                ))}
               </select>
               <select
                 value={point.word_order}
@@ -104,8 +141,11 @@ export function ModbusPointsEditor({ form, setForm }: ModbusPointsEditorProps) {
                   }))
                 }
               >
-                <option value="big">Word Order: Big</option>
-                <option value="little">Word Order: Little</option>
+                {(endian.length > 0 ? endian : fallbackEndian).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    Word Order: {option.label}
+                  </option>
+                ))}
               </select>
               <input
                 placeholder="Scale"
@@ -148,8 +188,11 @@ export function ModbusPointsEditor({ form, setForm }: ModbusPointsEditorProps) {
                   }))
                 }
               >
-                <option value="telemetry">Telemetry</option>
-                <option value="event">Event</option>
+                {(classificationOptions.length > 0 ? classificationOptions : fallbackClassification).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
               <input
                 placeholder="Event type (optional)"

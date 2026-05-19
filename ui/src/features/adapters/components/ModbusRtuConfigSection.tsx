@@ -1,14 +1,25 @@
 import type { Dispatch, SetStateAction } from 'react'
 
+import type { CatalogAdapterType } from '../../../shared/api/client'
+import { getCatalogOptions } from '../../../shared/config/catalog'
 import type { AdapterFormState } from '../adapterForm'
 import { ModbusPointsEditor } from './ModbusPointsEditor'
 
 type ModbusRtuConfigSectionProps = {
+  contract?: CatalogAdapterType
   form: AdapterFormState
   setForm: Dispatch<SetStateAction<AdapterFormState>>
 }
 
-export function ModbusRtuConfigSection({ form, setForm }: ModbusRtuConfigSectionProps) {
+const fallbackParity = [
+  { value: 'N', label: 'None' },
+  { value: 'E', label: 'Even' },
+  { value: 'O', label: 'Odd' },
+]
+
+export function ModbusRtuConfigSection({ contract, form, setForm }: ModbusRtuConfigSectionProps) {
+  const parityOptions = getCatalogOptions(contract, 'connection', 'parity')
+
   return (
     <article className="card">
       <div className="page-header">
@@ -30,9 +41,11 @@ export function ModbusRtuConfigSection({ form, setForm }: ModbusRtuConfigSection
         <label>
           Parity
           <select value={form.parity} onChange={(event) => setForm((current) => ({ ...current, parity: event.target.value }))}>
-            <option value="N">None</option>
-            <option value="E">Even</option>
-            <option value="O">Odd</option>
+            {(parityOptions.length > 0 ? parityOptions : fallbackParity).map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </label>
       </div>
@@ -58,7 +71,7 @@ export function ModbusRtuConfigSection({ form, setForm }: ModbusRtuConfigSection
         Default Asset ID
         <input value={form.defaultAssetId} onChange={(event) => setForm((current) => ({ ...current, defaultAssetId: event.target.value }))} />
       </label>
-      <ModbusPointsEditor form={form} setForm={setForm} />
+      <ModbusPointsEditor contract={contract} form={form} setForm={setForm} />
       <details className="card nested-card advanced-block">
         <summary>Advanced</summary>
         <div className="inline-grid">

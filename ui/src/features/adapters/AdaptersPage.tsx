@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   type AdapterItem,
   type CatalogAdapterType,
+  type DeploymentItem,
   createAdapter,
   deleteAdapter,
   getCatalog,
@@ -30,7 +31,7 @@ import { OpcuaConfigSection } from './components/OpcuaConfigSection'
 export function AdaptersPage() {
   const [catalogAdapters, setCatalogAdapters] = useState<CatalogAdapterType[]>([])
   const [items, setItems] = useState<AdapterItem[]>([])
-  const [deployments, setDeployments] = useState<any[]>([])
+  const [deployments, setDeployments] = useState<DeploymentItem[]>([])
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<AdapterFormState>(buildDefaultAdapterForm('modbus_tcp'))
   const [configJson, setConfigJson] = useState(buildAdapterConfigJson(buildDefaultAdapterForm('modbus_tcp')))
@@ -56,15 +57,21 @@ export function AdaptersPage() {
     void refresh()
   }, [])
 
+  const currentContract = useMemo(
+    () => catalogAdapters.find((adapter) => adapter.adapter_type === form.adapterType),
+    [catalogAdapters, form.adapterType],
+  )
+
   useEffect(() => {
-    setConfigJson(buildAdapterConfigJson(form))
-  }, [form])
+    setConfigJson(buildAdapterConfigJson(form, currentContract))
+  }, [form, currentContract])
 
   const usageRows = useMemo(() => buildAdapterUsage(items, deployments), [items, deployments])
 
   const resetForm = (nextType = form.adapterType) => {
     setEditingId(null)
-    setForm(buildDefaultAdapterForm(nextType))
+    const nextContract = catalogAdapters.find((adapter) => adapter.adapter_type === nextType)
+    setForm(buildDefaultAdapterForm(nextType, nextContract))
   }
 
   const startCreate = (nextType: string) => {
@@ -73,16 +80,17 @@ export function AdaptersPage() {
 
   const startEdit = (item: AdapterItem) => {
     setEditingId(item.adapter_id)
-    setForm(adapterToForm(item))
+    const nextContract = catalogAdapters.find((adapter) => adapter.adapter_type === item.adapter_type)
+    setForm(adapterToForm(item, nextContract))
   }
 
   const onSubmit = async () => {
     setError(null)
     try {
       if (editingId) {
-        await updateAdapter(editingId, formToUpdateAdapterPayload(form))
+        await updateAdapter(editingId, formToUpdateAdapterPayload(form, currentContract))
       } else {
-        await createAdapter(formToCreateAdapterPayload(form))
+        await createAdapter(formToCreateAdapterPayload(form, currentContract))
       }
       await refresh()
       resetForm(form.adapterType)
@@ -106,18 +114,18 @@ export function AdaptersPage() {
 
   const renderProtocolSection = () => {
     if (form.adapterType === 'modbus_rtu') {
-      return <ModbusRtuConfigSection form={form} setForm={setForm} />
+      return <ModbusRtuConfigSection contract={currentContract} form={form} setForm={setForm} />
     }
 
     if (form.adapterType === 'mqtt') {
-      return <MqttConfigSection form={form} setForm={setForm} />
+      return <MqttConfigSection contract={currentContract} form={form} setForm={setForm} />
     }
 
     if (form.adapterType === 'opcua') {
-      return <OpcuaConfigSection form={form} setForm={setForm} />
+      return <OpcuaConfigSection contract={currentContract} form={form} setForm={setForm} />
     }
 
-    return <ModbusTcpConfigSection form={form} setForm={setForm} />
+    return <ModbusTcpConfigSection contract={currentContract} form={form} setForm={setForm} />
   }
 
   return (
@@ -174,7 +182,9 @@ export function AdaptersPage() {
               editing={Boolean(editingId)}
               name={form.name}
               onAdapterIdChange={(value) => setForm((current) => ({ ...current, adapterId: value }))}
-              onAdapterTypeChange={(value) => setForm(buildDefaultAdapterForm(value))}
+              onAdapterTypeChange={(value) =>
+                setForm(buildDefaultAdapterForm(value, catalogAdapters.find((adapter) => adapter.adapter_type === value)))
+              }
               onDescriptionChange={(value) => setForm((current) => ({ ...current, description: value }))}
               onNameChange={(value) => setForm((current) => ({ ...current, name: value }))}
               onStatusChange={(value) => setForm((current) => ({ ...current, status: value }))}
@@ -192,7 +202,7 @@ export function AdaptersPage() {
                   className="btn btn-secondary"
                   onClick={() => {
                     try {
-                      setForm((current) => applyAdapterConfigJson(current, configJson))
+                      setForm((current) => applyAdapterConfigJson(current, configJson, currentContract))
                       setError(null)
                     } catch (jsonError) {
                       setError(jsonError instanceof Error ? jsonError.message : 'Invalid adapter JSON')

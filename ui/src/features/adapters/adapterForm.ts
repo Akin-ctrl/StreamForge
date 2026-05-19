@@ -1,4 +1,5 @@
-import type { AdapterItem } from '../../shared/api/client'
+import type { AdapterItem, CatalogAdapterType } from '../../shared/api/client'
+import { getCatalogBooleanDefault, getCatalogStringDefault, getInternalFieldKeys } from '../../shared/config/catalog'
 
 export type ModbusPointForm = {
   point_name: string
@@ -77,6 +78,11 @@ export type AdapterFormState = {
   monitoredItems: OpcuaMonitoredItemForm[]
   outputTopic: string
   eventsTopic: string
+  passthroughConfig: Record<string, unknown>
+}
+
+function cloneConfig<T extends Record<string, unknown>>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -109,97 +115,98 @@ function parseNumber(value: string, fallback?: number) {
   return Number.isFinite(numeric) ? numeric : fallback
 }
 
-function createDefaultPoint(): ModbusPointForm {
+function createDefaultPoint(contract?: CatalogAdapterType): ModbusPointForm {
   return {
     point_name: '',
-    memory_area: 'holding_register',
+    memory_area: getCatalogStringDefault(contract, 'points', 'memory_area', 'holding_register'),
     address: '',
-    data_type: 'float32',
-    byte_order: 'big',
-    word_order: 'big',
-    scale: '1',
-    offset: '0',
+    data_type: getCatalogStringDefault(contract, 'points', 'data_type', 'float32'),
+    byte_order: getCatalogStringDefault(contract, 'points', 'byte_order', 'big'),
+    word_order: getCatalogStringDefault(contract, 'points', 'word_order', 'big'),
+    scale: getCatalogStringDefault(contract, 'points', 'scale', '1'),
+    offset: getCatalogStringDefault(contract, 'points', 'offset', '0'),
     unit: '',
-    classification: 'telemetry',
+    classification: getCatalogStringDefault(contract, 'points', 'classification', 'telemetry'),
     event_type: '',
   }
 }
 
-function createDefaultMqttMapping(): MqttMappingForm {
+function createDefaultMqttMapping(contract?: CatalogAdapterType): MqttMappingForm {
   return {
     json_field: '',
     parameter: '',
     unit: '',
-    data_type: 'float32',
+    data_type: getCatalogStringDefault(contract, 'subscriptions', 'data_type', 'float32'),
   }
 }
 
-function createDefaultMqttSubscription(): MqttSubscriptionForm {
+function createDefaultMqttSubscription(contract?: CatalogAdapterType): MqttSubscriptionForm {
   return {
     topic_filter: '',
-    message_type: 'telemetry',
-    payload_format: 'json',
+    message_type: getCatalogStringDefault(contract, 'subscriptions', 'message_type', 'telemetry'),
+    payload_format: getCatalogStringDefault(contract, 'subscriptions', 'payload_format', 'json'),
     asset_id_override: '',
-    qos: '1',
-    mappings: [createDefaultMqttMapping()],
+    qos: getCatalogStringDefault(contract, 'subscriptions', 'qos', '1'),
+    mappings: [createDefaultMqttMapping(contract)],
   }
 }
 
-function createDefaultMonitoredItem(): OpcuaMonitoredItemForm {
+function createDefaultMonitoredItem(contract?: CatalogAdapterType): OpcuaMonitoredItemForm {
   return {
     node_id: '',
     parameter: '',
     unit: '',
     asset_id_override: '',
-    sampling_interval_ms: '1000',
-    queue_size: '1',
-    monitoring_mode: 'reporting',
+    sampling_interval_ms: getCatalogStringDefault(contract, 'monitored_items', 'sampling_interval_ms', '1000'),
+    queue_size: getCatalogStringDefault(contract, 'monitored_items', 'queue_size', '1'),
+    monitoring_mode: getCatalogStringDefault(contract, 'monitored_items', 'monitoring_mode', 'reporting'),
   }
 }
 
-export function buildDefaultAdapterForm(adapterType: string): AdapterFormState {
+export function buildDefaultAdapterForm(adapterType: string, contract?: CatalogAdapterType): AdapterFormState {
   return {
     adapterId: 'adapter-01',
     name: 'Adapter 01',
     adapterType,
     status: 'active',
     description: '',
-    defaultAssetId: 'asset-01',
-    host: 'modbus-simulator',
-    port: '502',
-    unitId: '1',
-    pollIntervalMs: '1000',
-    serialPort: '/dev/ttyUSB0',
-    baudrate: '9600',
-    bytesize: '8',
-    parity: 'N',
-    stopbits: '1',
-    timeout: '1',
-    brokerHost: 'mqtt-broker',
-    brokerPort: '1883',
-    clientId: 'streamforge-mqtt',
-    username: '',
+    defaultAssetId: getCatalogStringDefault(contract, 'output', 'asset_id', 'asset-01'),
+    host: getCatalogStringDefault(contract, 'connection', 'host', 'modbus-simulator'),
+    port: getCatalogStringDefault(contract, 'connection', 'port', '502'),
+    unitId: getCatalogStringDefault(contract, 'connection', 'unit_id', '1'),
+    pollIntervalMs: getCatalogStringDefault(contract, 'connection', 'poll_interval_ms', '1000'),
+    serialPort: getCatalogStringDefault(contract, 'connection', 'serial_port', '/dev/ttyUSB0'),
+    baudrate: getCatalogStringDefault(contract, 'connection', 'baudrate', '9600'),
+    bytesize: getCatalogStringDefault(contract, 'connection', 'bytesize', '8'),
+    parity: getCatalogStringDefault(contract, 'connection', 'parity', 'N'),
+    stopbits: getCatalogStringDefault(contract, 'connection', 'stopbits', '1'),
+    timeout: getCatalogStringDefault(contract, 'connection', 'timeout', '1'),
+    brokerHost: getCatalogStringDefault(contract, 'connection', 'broker_host', 'mqtt-broker'),
+    brokerPort: getCatalogStringDefault(contract, 'connection', 'broker_port', '1883'),
+    clientId: getCatalogStringDefault(contract, 'connection', 'client_id', 'streamforge-mqtt'),
+    username: getCatalogStringDefault(contract, 'connection', 'username', ''),
     password: '',
     passwordConfigured: false,
-    qos: '1',
-    keepaliveSeconds: '60',
-    connectTimeoutSeconds: '5',
-    cleanStart: true,
-    endpoint: 'opc.tcp://opcua-server:4840',
-    authMode: 'anonymous',
-    publishingIntervalMs: '1000',
-    securityMode: 'None',
-    securityPolicy: 'None',
+    qos: getCatalogStringDefault(contract, 'subscriptions', 'qos', '1'),
+    keepaliveSeconds: getCatalogStringDefault(contract, 'advanced', 'keepalive_seconds', '60'),
+    connectTimeoutSeconds: getCatalogStringDefault(contract, 'advanced', 'connect_timeout_seconds', '5'),
+    cleanStart: getCatalogBooleanDefault(contract, 'advanced', 'clean_start', true),
+    endpoint: getCatalogStringDefault(contract, 'connection', 'endpoint', 'opc.tcp://opcua-server:4840'),
+    authMode: getCatalogStringDefault(contract, 'connection', 'auth_mode', 'anonymous'),
+    publishingIntervalMs: getCatalogStringDefault(contract, 'subscription', 'publishing_interval_ms', '1000'),
+    securityMode: getCatalogStringDefault(contract, 'advanced', 'security_mode', 'None'),
+    securityPolicy: getCatalogStringDefault(contract, 'advanced', 'security_policy', 'None'),
     points: [],
     subscriptions: [],
     monitoredItems: [],
-    outputTopic: 'telemetry.raw',
-    eventsTopic: 'events.raw',
+    outputTopic: getCatalogStringDefault(contract, 'output', 'topic', 'telemetry.raw'),
+    eventsTopic: getCatalogStringDefault(contract, 'output', 'events_topic', 'events.raw'),
+    passthroughConfig: {},
   }
 }
 
-export function adapterToForm(adapter: AdapterItem): AdapterFormState {
-  const defaults = buildDefaultAdapterForm(adapter.adapter_type)
+export function adapterToForm(adapter: AdapterItem, contract?: CatalogAdapterType): AdapterFormState {
+  const defaults = buildDefaultAdapterForm(adapter.adapter_type, contract)
   const config = adapter.config || {}
   const output = asRecord(config.output) || {}
   const advanced = asRecord(config.advanced) || {}
@@ -219,7 +226,7 @@ export function adapterToForm(adapter: AdapterItem): AdapterFormState {
     port: toStringValue(config.port, defaults.port),
     unitId: toStringValue(config.unit_id, defaults.unitId),
     pollIntervalMs: toStringValue(config.poll_interval_ms, defaults.pollIntervalMs),
-    serialPort: asString(config.serial_port || config.port, defaults.serialPort),
+    serialPort: asString(config.serial_port, defaults.serialPort),
     baudrate: toStringValue(config.baudrate, defaults.baudrate),
     bytesize: toStringValue(config.bytesize, defaults.bytesize),
     parity: asString(config.parity, defaults.parity),
@@ -240,22 +247,22 @@ export function adapterToForm(adapter: AdapterItem): AdapterFormState {
     endpoint: asString(config.endpoint, defaults.endpoint),
     authMode: asString(config.auth_mode, defaults.authMode),
     publishingIntervalMs: toStringValue(subscriptionConfig.publishing_interval_ms, defaults.publishingIntervalMs),
-    securityMode: asString(advanced.security_mode ?? config.security_mode, defaults.securityMode),
-    securityPolicy: asString(advanced.security_policy ?? config.security_policy, defaults.securityPolicy),
+    securityMode: asString(advanced.security_mode, defaults.securityMode),
+    securityPolicy: asString(advanced.security_policy, defaults.securityPolicy),
     points: Array.isArray(config.points)
       ? config.points.map((point) => {
           const pointRecord = asRecord(point) || {}
           return {
             point_name: asString(pointRecord.point_name),
-            memory_area: asString(pointRecord.memory_area, 'holding_register'),
+            memory_area: asString(pointRecord.memory_area, createDefaultPoint(contract).memory_area),
             address: toStringValue(pointRecord.address),
-            data_type: asString(pointRecord.data_type, 'float32'),
-            byte_order: asString(pointRecord.byte_order, 'big'),
-            word_order: asString(pointRecord.word_order, 'big'),
-            scale: toStringValue(pointRecord.scale, '1'),
-            offset: toStringValue(pointRecord.offset, '0'),
+            data_type: asString(pointRecord.data_type, createDefaultPoint(contract).data_type),
+            byte_order: asString(pointRecord.byte_order, createDefaultPoint(contract).byte_order),
+            word_order: asString(pointRecord.word_order, createDefaultPoint(contract).word_order),
+            scale: toStringValue(pointRecord.scale, createDefaultPoint(contract).scale),
+            offset: toStringValue(pointRecord.offset, createDefaultPoint(contract).offset),
             unit: asString(pointRecord.unit),
-            classification: asString(pointRecord.classification, 'telemetry'),
+            classification: asString(pointRecord.classification, createDefaultPoint(contract).classification),
             event_type: asString(pointRecord.event_type),
           }
         })
@@ -265,10 +272,10 @@ export function adapterToForm(adapter: AdapterItem): AdapterFormState {
           const subscriptionRecord = asRecord(subscription) || {}
           return {
             topic_filter: asString(subscriptionRecord.topic_filter),
-            message_type: asString(subscriptionRecord.message_type, 'telemetry'),
-            payload_format: asString(subscriptionRecord.payload_format, 'json'),
+            message_type: asString(subscriptionRecord.message_type, createDefaultMqttSubscription(contract).message_type),
+            payload_format: asString(subscriptionRecord.payload_format, createDefaultMqttSubscription(contract).payload_format),
             asset_id_override: asString(subscriptionRecord.asset_id_override),
-            qos: toStringValue(subscriptionRecord.qos, '1'),
+            qos: toStringValue(subscriptionRecord.qos, createDefaultMqttSubscription(contract).qos),
             mappings: Array.isArray(subscriptionRecord.mappings)
               ? subscriptionRecord.mappings.map((mapping) => {
                   const mappingRecord = asRecord(mapping) || {}
@@ -276,7 +283,7 @@ export function adapterToForm(adapter: AdapterItem): AdapterFormState {
                     json_field: asString(mappingRecord.json_field),
                     parameter: asString(mappingRecord.parameter),
                     unit: asString(mappingRecord.unit),
-                    data_type: asString(mappingRecord.data_type, 'float32'),
+                    data_type: asString(mappingRecord.data_type, createDefaultMqttMapping(contract).data_type),
                   }
                 })
               : [],
@@ -291,14 +298,15 @@ export function adapterToForm(adapter: AdapterItem): AdapterFormState {
             parameter: asString(itemRecord.parameter),
             unit: asString(itemRecord.unit),
             asset_id_override: asString(itemRecord.asset_id_override),
-            sampling_interval_ms: toStringValue(itemRecord.sampling_interval_ms, '1000'),
-            queue_size: toStringValue(itemRecord.queue_size, '1'),
-            monitoring_mode: asString(itemRecord.monitoring_mode, 'reporting'),
+            sampling_interval_ms: toStringValue(itemRecord.sampling_interval_ms, createDefaultMonitoredItem(contract).sampling_interval_ms),
+            queue_size: toStringValue(itemRecord.queue_size, createDefaultMonitoredItem(contract).queue_size),
+            monitoring_mode: asString(itemRecord.monitoring_mode, createDefaultMonitoredItem(contract).monitoring_mode),
           }
         })
       : defaults.monitoredItems,
     outputTopic: asString(output.topic, defaults.outputTopic),
     eventsTopic: asString(output.events_topic, defaults.eventsTopic),
+    passthroughConfig: cloneConfig(config),
   }
 }
 
@@ -318,24 +326,76 @@ function serializePoint(point: ModbusPointForm) {
   }
 }
 
-function buildConfig(form: AdapterFormState): Record<string, unknown> {
+function baseConfig(form: AdapterFormState) {
+  const config = cloneConfig(form.passthroughConfig)
+  for (const key of [
+    'host',
+    'port',
+    'unit_id',
+    'poll_interval_ms',
+    'serial_port',
+    'baudrate',
+    'bytesize',
+    'parity',
+    'stopbits',
+    'timeout',
+    'broker_host',
+    'broker_port',
+    'client_id',
+    'username',
+    'qos',
+    'endpoint',
+    'auth_mode',
+    'points',
+    'registers',
+    'coils',
+    'subscriptions',
+    'subscription',
+    'monitored_items',
+    'output',
+    'advanced',
+  ]) {
+    delete config[key]
+  }
+  return config
+}
+
+function buildOutput(form: AdapterFormState, contract?: CatalogAdapterType) {
+  const existingOutput = asRecord(form.passthroughConfig.output) || {}
+  const output: Record<string, unknown> = {
+    ...cloneConfig(existingOutput),
+    asset_id: form.defaultAssetId,
+    kafka_bootstrap: asString(existingOutput.kafka_bootstrap, getCatalogStringDefault(contract, 'output', 'kafka_bootstrap', 'kafka:9092')),
+    topic: form.outputTopic,
+  }
+
+  if (form.eventsTopic.trim()) {
+    output.events_topic = form.eventsTopic
+  } else {
+    delete output.events_topic
+  }
+
+  return output
+}
+
+function buildConfig(form: AdapterFormState, contract?: CatalogAdapterType): Record<string, unknown> {
+  const config = baseConfig(form)
+
   if (form.adapterType === 'modbus_tcp') {
     return {
+      ...config,
       host: form.host,
       port: parseNumber(form.port, 502),
       unit_id: parseNumber(form.unitId, 1),
       poll_interval_ms: parseNumber(form.pollIntervalMs, 1000),
       points: form.points.filter((point) => point.point_name.trim()).map(serializePoint),
-      output: {
-        asset_id: form.defaultAssetId,
-        topic: form.outputTopic,
-        events_topic: form.eventsTopic,
-      },
+      output: buildOutput(form, contract),
     }
   }
 
   if (form.adapterType === 'modbus_rtu') {
     return {
+      ...config,
       serial_port: form.serialPort,
       baudrate: parseNumber(form.baudrate, 9600),
       bytesize: parseNumber(form.bytesize, 8),
@@ -345,16 +405,14 @@ function buildConfig(form: AdapterFormState): Record<string, unknown> {
       unit_id: parseNumber(form.unitId, 1),
       poll_interval_ms: parseNumber(form.pollIntervalMs, 1000),
       points: form.points.filter((point) => point.point_name.trim()).map(serializePoint),
-      output: {
-        asset_id: form.defaultAssetId,
-        topic: form.outputTopic,
-        events_topic: form.eventsTopic,
-      },
+      output: buildOutput(form, contract),
     }
   }
 
   if (form.adapterType === 'mqtt') {
+    const existingAdvanced = asRecord(form.passthroughConfig.advanced) || {}
     return {
+      ...config,
       broker_host: form.brokerHost,
       broker_port: parseNumber(form.brokerPort, 1883),
       client_id: form.clientId,
@@ -377,12 +435,9 @@ function buildConfig(form: AdapterFormState): Record<string, unknown> {
               data_type: mapping.data_type,
             })),
         })),
-      output: {
-        asset_id: form.defaultAssetId,
-        topic: form.outputTopic,
-        events_topic: form.eventsTopic,
-      },
+      output: buildOutput(form, contract),
       advanced: {
+        ...cloneConfig(existingAdvanced),
         keepalive_seconds: parseNumber(form.keepaliveSeconds, 60),
         connect_timeout_seconds: parseNumber(form.connectTimeoutSeconds, 5),
         clean_start: form.cleanStart,
@@ -390,11 +445,15 @@ function buildConfig(form: AdapterFormState): Record<string, unknown> {
     }
   }
 
+  const existingAdvanced = asRecord(form.passthroughConfig.advanced) || {}
+  const existingSubscription = asRecord(form.passthroughConfig.subscription) || {}
   return {
+    ...config,
     endpoint: form.endpoint,
     auth_mode: form.authMode,
     ...(form.username.trim() ? { username: form.username } : {}),
     subscription: {
+      ...cloneConfig(existingSubscription),
       publishing_interval_ms: parseNumber(form.publishingIntervalMs, 1000),
     },
     monitored_items: form.monitoredItems
@@ -408,14 +467,57 @@ function buildConfig(form: AdapterFormState): Record<string, unknown> {
         queue_size: parseNumber(item.queue_size, 1),
         monitoring_mode: item.monitoring_mode,
       })),
-    output: {
-      asset_id: form.defaultAssetId,
-      topic: form.outputTopic,
-    },
+    output: buildOutput(form, contract),
     advanced: {
+      ...cloneConfig(existingAdvanced),
       security_mode: form.securityMode,
       security_policy: form.securityPolicy,
     },
+  }
+}
+
+function stripInternalAdapterConfig(config: Record<string, unknown>, contract?: CatalogAdapterType) {
+  const safeConfig = cloneConfig(config)
+  const output = asRecord(safeConfig.output)
+  if (output) {
+    for (const fieldKey of getInternalFieldKeys(contract, 'output')) {
+      delete output[fieldKey]
+    }
+  }
+  return safeConfig
+}
+
+function mergeAdapterConfigJson(
+  adapterType: string,
+  currentFullConfig: Record<string, unknown>,
+  parsed: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged = cloneConfig(currentFullConfig)
+  const currentOutput = asRecord(currentFullConfig.output) || {}
+  const parsedOutput = asRecord(parsed.output)
+  merged.output = parsedOutput ? { ...cloneConfig(currentOutput), ...cloneConfig(parsedOutput) } : cloneConfig(currentOutput)
+
+  if (adapterType === 'mqtt') {
+    const currentAdvanced = asRecord(currentFullConfig.advanced) || {}
+    const parsedAdvanced = asRecord(parsed.advanced)
+    merged.advanced = parsedAdvanced ? { ...cloneConfig(currentAdvanced), ...cloneConfig(parsedAdvanced) } : cloneConfig(currentAdvanced)
+  } else if (adapterType === 'opcua') {
+    const currentAdvanced = asRecord(currentFullConfig.advanced) || {}
+    const parsedAdvanced = asRecord(parsed.advanced)
+    const currentSubscription = asRecord(currentFullConfig.subscription) || {}
+    const parsedSubscription = asRecord(parsed.subscription)
+    merged.advanced = parsedAdvanced ? { ...cloneConfig(currentAdvanced), ...cloneConfig(parsedAdvanced) } : cloneConfig(currentAdvanced)
+    merged.subscription = parsedSubscription
+      ? { ...cloneConfig(currentSubscription), ...cloneConfig(parsedSubscription) }
+      : cloneConfig(currentSubscription)
+  }
+
+  return {
+    ...merged,
+    ...cloneConfig(parsed),
+    output: merged.output,
+    ...(adapterType === 'mqtt' ? { advanced: merged.advanced } : {}),
+    ...(adapterType === 'opcua' ? { advanced: merged.advanced, subscription: merged.subscription } : {}),
   }
 }
 
@@ -431,23 +533,31 @@ function buildSecrets(form: AdapterFormState): Record<string, string | null> | u
   return { password: form.password.trim() }
 }
 
-export function buildAdapterConfigJson(form: AdapterFormState): string {
-  return JSON.stringify(buildConfig(form), null, 2)
+export function buildAdapterConfigJson(form: AdapterFormState, contract?: CatalogAdapterType): string {
+  return JSON.stringify(stripInternalAdapterConfig(buildConfig(form, contract), contract), null, 2)
 }
 
-export function applyAdapterConfigJson(form: AdapterFormState, text: string): AdapterFormState {
+export function applyAdapterConfigJson(
+  form: AdapterFormState,
+  text: string,
+  contract?: CatalogAdapterType,
+): AdapterFormState {
   const parsed = JSON.parse(text) as Record<string, unknown>
-  const nextForm = adapterToForm({
-    adapter_id: form.adapterId,
-    name: form.name,
-    adapter_type: form.adapterType,
-    status: form.status,
-    description: form.description || null,
-    config: parsed,
-    secret_status: {},
-    created_at: '',
-    updated_at: '',
-  })
+  const mergedConfig = mergeAdapterConfigJson(form.adapterType, buildConfig(form, contract), parsed)
+  const nextForm = adapterToForm(
+    {
+      adapter_id: form.adapterId,
+      name: form.name,
+      adapter_type: form.adapterType,
+      status: form.status,
+      description: form.description || null,
+      config: mergedConfig,
+      secret_status: {},
+      created_at: '',
+      updated_at: '',
+    },
+    contract,
+  )
   return {
     ...nextForm,
     password: '',
@@ -455,42 +565,42 @@ export function applyAdapterConfigJson(form: AdapterFormState, text: string): Ad
   }
 }
 
-export function formToCreateAdapterPayload(form: AdapterFormState) {
+export function formToCreateAdapterPayload(form: AdapterFormState, contract?: CatalogAdapterType) {
   const secrets = buildSecrets(form)
   return {
     adapter_id: form.adapterId.trim(),
     name: form.name.trim(),
     adapter_type: form.adapterType,
     status: form.status,
-    config: buildConfig(form),
+    config: buildConfig(form, contract),
     ...(secrets ? { secrets } : {}),
     description: form.description.trim() || null,
   }
 }
 
-export function formToUpdateAdapterPayload(form: AdapterFormState) {
+export function formToUpdateAdapterPayload(form: AdapterFormState, contract?: CatalogAdapterType) {
   const secrets = buildSecrets(form)
   return {
     name: form.name.trim(),
     status: form.status,
-    config: buildConfig(form),
+    config: buildConfig(form, contract),
     ...(secrets ? { secrets } : {}),
     description: form.description.trim() || null,
   }
 }
 
-export function createDefaultPointForm() {
-  return createDefaultPoint()
+export function createDefaultPointForm(contract?: CatalogAdapterType) {
+  return createDefaultPoint(contract)
 }
 
-export function createDefaultMqttSubscriptionForm() {
-  return createDefaultMqttSubscription()
+export function createDefaultMqttSubscriptionForm(contract?: CatalogAdapterType) {
+  return createDefaultMqttSubscription(contract)
 }
 
-export function createDefaultMqttMappingForm() {
-  return createDefaultMqttMapping()
+export function createDefaultMqttMappingForm(contract?: CatalogAdapterType) {
+  return createDefaultMqttMapping(contract)
 }
 
-export function createDefaultMonitoredItemForm() {
-  return createDefaultMonitoredItem()
+export function createDefaultMonitoredItemForm(contract?: CatalogAdapterType) {
+  return createDefaultMonitoredItem(contract)
 }

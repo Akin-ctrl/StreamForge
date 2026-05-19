@@ -1,5 +1,7 @@
 import type { Dispatch, SetStateAction } from 'react'
 
+import type { CatalogAdapterType } from '../../../shared/api/client'
+import { getCatalogOptions } from '../../../shared/config/catalog'
 import {
   createDefaultMqttMappingForm,
   createDefaultMqttSubscriptionForm,
@@ -9,6 +11,7 @@ import {
 } from '../adapterForm'
 
 type MqttConfigSectionProps = {
+  contract?: CatalogAdapterType
   form: AdapterFormState
   setForm: Dispatch<SetStateAction<AdapterFormState>>
 }
@@ -25,7 +28,28 @@ function updateMapping(mappings: MqttMappingForm[], index: number, nextMapping: 
   return mappings.map((mapping, mappingIndex) => (mappingIndex === index ? nextMapping : mapping))
 }
 
-export function MqttConfigSection({ form, setForm }: MqttConfigSectionProps) {
+const fallbackMessageTypes = [
+  { value: 'telemetry', label: 'Telemetry' },
+  { value: 'event', label: 'Event' },
+]
+
+const fallbackPayloadFormats = [{ value: 'json', label: 'JSON' }]
+
+const fallbackDataTypes = [
+  { value: 'bool', label: 'Boolean' },
+  { value: 'int16', label: 'int16' },
+  { value: 'uint16', label: 'uint16' },
+  { value: 'int32', label: 'int32' },
+  { value: 'uint32', label: 'uint32' },
+  { value: 'float32', label: 'float32' },
+  { value: 'float64', label: 'float64' },
+]
+
+export function MqttConfigSection({ contract, form, setForm }: MqttConfigSectionProps) {
+  const messageTypes = getCatalogOptions(contract, 'subscriptions', 'message_type')
+  const payloadFormats = getCatalogOptions(contract, 'subscriptions', 'payload_format')
+  const dataTypes = getCatalogOptions(contract, 'subscriptions', 'data_type')
+
   return (
     <article className="card">
       <div className="page-header">
@@ -75,7 +99,9 @@ export function MqttConfigSection({ form, setForm }: MqttConfigSectionProps) {
           <h4>Subscriptions</h4>
           <button
             className="btn btn-secondary"
-            onClick={() => setForm((current) => ({ ...current, subscriptions: [...current.subscriptions, createDefaultMqttSubscriptionForm()] }))}
+            onClick={() =>
+              setForm((current) => ({ ...current, subscriptions: [...current.subscriptions, createDefaultMqttSubscriptionForm(contract)] }))
+            }
             type="button"
           >
             Add Subscription
@@ -112,8 +138,11 @@ export function MqttConfigSection({ form, setForm }: MqttConfigSectionProps) {
                     }))
                   }
                 >
-                  <option value="telemetry">Telemetry</option>
-                  <option value="event">Event</option>
+                  {(messageTypes.length > 0 ? messageTypes : fallbackMessageTypes).map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
                 <select
                   value={subscription.payload_format}
@@ -127,7 +156,11 @@ export function MqttConfigSection({ form, setForm }: MqttConfigSectionProps) {
                     }))
                   }
                 >
-                  <option value="json">JSON</option>
+                  {(payloadFormats.length > 0 ? payloadFormats : fallbackPayloadFormats).map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
                 <input
                   placeholder="Asset override"
@@ -174,7 +207,7 @@ export function MqttConfigSection({ form, setForm }: MqttConfigSectionProps) {
                         ...current,
                         subscriptions: updateSubscription(current.subscriptions, subscriptionIndex, {
                           ...subscription,
-                          mappings: [...subscription.mappings, createDefaultMqttMappingForm()],
+                          mappings: [...subscription.mappings, createDefaultMqttMappingForm(contract)],
                         }),
                       }))
                     }
@@ -251,13 +284,11 @@ export function MqttConfigSection({ form, setForm }: MqttConfigSectionProps) {
                           }))
                         }
                       >
-                        <option value="bool">Boolean</option>
-                        <option value="int16">int16</option>
-                        <option value="uint16">uint16</option>
-                        <option value="int32">int32</option>
-                        <option value="uint32">uint32</option>
-                        <option value="float32">float32</option>
-                        <option value="float64">float64</option>
+                        {(dataTypes.length > 0 ? dataTypes : fallbackDataTypes).map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
                       </select>
                       <button
                         className="btn btn-secondary"
