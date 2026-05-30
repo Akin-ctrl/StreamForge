@@ -1,202 +1,235 @@
 # StreamForge
 
-**A Kafka-centric industrial data gateway that dynamically connects OT systems to modern IT, cloud, and AI platforms with zero data loss, full decoupling, and real-time observability.**
+StreamForge is an in-progress industrial data gateway for moving OT data into
+modern data systems without treating the edge as an afterthought.
 
-## Overview
-StreamForge is a protocol-agnostic streaming platform that bridges the gap between Operational Technology (OT) and Information Technology (IT) environments. Built on Apache Kafka as the authoritative data backbone, it provides reliable, replayable, and scalable data flows across manufacturing, oil & gas, utilities, and smart factory environments.
+It is designed around a simple idea: every gateway should be able to collect
+industrial signals, write them to a durable local stream backbone, keep running
+through network and sink outages, and expose enough control-plane visibility for
+operators and data teams to understand what is happening.
 
-## Key Features
+The project keeps Kafka-compatible client semantics while moving the embedded
+edge broker direction to Redpanda. The local development/runtime path is now
+Redpanda-backed, but production packaging and image-pull templates are still
+pending.
 
-- **Zero Data Loss**: Kafka-first architecture ensures data durability even during network, database, or cloud outages
-- **Protocol Agnostic**: Native support for Modbus, OPC UA, MQTT, XBee, LoRa, and custom industrial protocols
-- **Dynamic Configuration**: Runtime reconfiguration without redeploying gateways or restarting services
-- **Edge + Cloud**: Works fully offline, on-premise, or in hybrid cloud deployments
-- **Semantic Data Classification**: First-class support for telemetry, events, alarms, and logs
-- **Real-time Observability**: Unified view of data flows, health metrics, and system topology
-- **AI-Powered Copilot**: Intelligent assistant for configuration optimization and anomaly detection
+## Why I Built This
 
-## Architecture
+I studied electrical and electronics engineering, and my interests sit where
+industrial automation, robotics, digital twins, data engineering, and AI meet.
+In industrial environments, the OT/IT gap is hard to miss: PLCs, SCADA systems,
+sensors, and machines produce valuable signals, but getting those signals into
+reliable, replayable, AI-ready pipelines is still harder than it should be.
 
-The system is composed of two distinct planes:
+StreamForge is my attempt to bridge that gap architecturally. It treats
+industrial data as something that must survive bad networks, sink failures,
+offline periods, changing downstream systems, and operator handoffs while still
+remaining understandable to people working close to the equipment.
 
-### Control Plane (Configuration & Orchestration)
-- **Config & Control API**: REST API for managing gateways, deployments/pipelines, sinks, and related configuration
-- **UI**: Web interface for adapter, sink, and deployment management plus monitoring
-- **AI Copilot**: Intelligent assistant for optimization and troubleshooting
-- **Control Database**: PostgreSQL for configuration state and audit trails
+## Current Status
 
-### Data Plane (Data Movement)
-- **Gateway Runtime**: Edge daemon that manages protocol adapters and local Kafka
-- **Protocol Adapters**: Containerized plugins for industrial protocols (Modbus, OPC UA, MQTT, XBee)
-- **Local Kafka**: Embedded Kafka on each gateway (the only Kafka StreamForge manages)
-- **Sink Services**: Push data to customer's destinations (databases, cloud, or their own Kafka)
+StreamForge is not a finished production product yet. It is a serious
+engineering project with a working core and an honest production-readiness queue.
 
-## Project Structure
+Implemented today:
 
-```
-streamforge/
-├── docs/                      # Comprehensive documentation
-│   ├── ARCHITECTURE.md        # System architecture and design decisions
-│   ├── DATA_FLOW.md          # End-to-end data flow documentation
-│   ├── ADAPTERS_AND_DEPLOYMENTS_SPEC.md # Operator model and protocol configuration spec
-│   ├── DEPLOYMENT.md         # Deployment patterns and guides
-│   └── SECURITY.md           # Security model and best practices
-├── control-plane/            # Configuration & control API (FastAPI)
-├── gateway_runtime/          # Edge daemon (Python)
-├── adapters/                 # Protocol adapter implementations
-│   ├── adapter_modbus_tcp/  # Modbus TCP adapter
-│   ├── adapter_modbus_rtu/  # Modbus RTU adapter
-│   ├── adapter_opcua/       # OPC UA adapter
-│   ├── adapter_mqtt/        # MQTT adapter
-│   └── adapter_xbee/        # XBee adapter
-├── ui/                      # Web interface (React/TypeScript)
-├── copilot/                 # AI Copilot service (Python)
-├── sinks/                   # Sink service implementations
-├── schemas/                 # Avro/JSON schema definitions
-└── deploy/                  # Docker Compose and Kubernetes manifests
-```
+- reusable adapter, sink, and deployment objects
+- protocol-aware forms for Modbus TCP, Modbus RTU, MQTT, and OPC UA
+- TimescaleDB, Kafka-compatible, HTTP, and alert-routing sink paths
+- gateway runtime with local stream processing, validation, aggregation, logs,
+  health, and overflow controls
+- control-plane APIs for configuration, auth, RBAC, audit, alarms, DLQ, events,
+  aggregates, fleet, logs, and operator checks
+- React operator UI for adapters, sinks, deployments, validation/test/preflight,
+  events, aggregates, fleet, logs, alarms, DLQ, health, and users
+- regression coverage across control plane, runtime, adapters, sinks, and UI
+  workflows
+
+Still in progress:
+
+- production packaging for the Redpanda-backed gateway/runtime stack
+- production-grade gateway onboarding and approval flow
+- gateway-executed physical-device connection tests
+- topology redesign into a clearer architecture/dataflow view
+- fresh-stack, failure-path, and full pre-AI verification gates
+- documentation cleanup so implemented behavior and planned behavior stay
+  clearly separated
+
+## Architecture At A Glance
+
+StreamForge is split into a control plane and a data plane.
+
+### Control Plane
+
+- FastAPI service for configuration, auth, RBAC, audit, gateway state, and
+  operator workflows
+- PostgreSQL-backed configuration and audit state
+- React/TypeScript UI for operators and engineers
+- Catalog-driven configuration contracts for adapters and sinks
+
+### Data Plane
+
+- Gateway runtime that runs at the edge
+- Containerized protocol adapters for industrial sources
+- Local Kafka-compatible stream backbone backed by Redpanda in the local
+  dev/runtime stack
+- Validator, event validator, aggregator, overflow controller, and managed sink
+  processes
+- Sink services that write to databases, HTTP endpoints, alert destinations, or
+  customer-owned Kafka-compatible systems
+
+The browser UI talks to the central control plane. Remote gateways call out to
+the control plane for configuration and heartbeat updates. The frontend does not
+need direct network access to gateways in different physical locations.
 
 ## Core Principles
 
-### 1. Kafka is the System of Record
-All industrial data **must** first be written to Kafka. Everything else is downstream and replaceable. This eliminates:
-- Data loss during sink failures
-- Tight coupling between data producers and consumers
-- Vendor lock-in
-- Unrecoverable failures
+### 1. The Edge Stream Is The Local Source Of Truth
 
-### 2. Control Plane ≠ Data Plane
-Configuration logic is completely separated from data movement. The control plane defines *what should happen*, the data plane *makes it happen*.
+Industrial data should land first in a durable local stream on the gateway.
+Everything downstream should be replaceable and replayable.
 
-### 3. Semantic Data Classification
-Data is classified at ingestion:
-- **Telemetry**: Continuous numeric measurements (pressure, temperature, vibration)
-- **Events**: Discrete state changes (valve opened, motor stopped)
-- **Alarms**: Events with severity and lifecycle (overpressure, fire detected)
-- **Logs**: Operational messages (adapter crashed, connection lost)
+Today this is implemented with Kafka-compatible clients and a Redpanda-backed
+local dev/runtime stack. Production packaging is still pending, so the current
+claim is local/runtime readiness rather than a finished production install
+model.
 
-### 4. Edge-First Design
-Gateways are fully self-contained with embedded Kafka. No central Kafka required—external Kafka is just another sink option for customers needing multi-gateway aggregation.
+### 2. Control Plane And Data Plane Stay Separate
 
-## Quick Start
+The control plane defines what should run. The gateway runtime makes it happen
+locally. If the control plane is unavailable, gateways should keep running from
+their last known good configuration.
 
-### Prerequisites
-- Docker & Docker Compose
-- Python 3.11+
-- Node.js 18+
-- Kafka cluster (local or remote)
+### 3. Industrial Data Needs Semantics
 
-### Local Development Setup
+StreamForge separates data into:
 
-```bash
-# Clone and navigate
-cd ~/industrial-data-gateway
+- telemetry: continuous measurements
+- events: discrete state changes
+- alarms: lifecycle-aware abnormal conditions
+- logs: operational/runtime messages
 
-# Start Kafka and dependencies
-docker-compose -f deploy/docker-compose.dev.yml up -d
+That model keeps downstream systems from receiving one undifferentiated stream
+of industrial noise.
 
-# Start control plane
-cd control-plane
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+### 4. Operator Trust Matters
 
-# Start UI
-cd ../ui
-npm install
-npm run dev
+Configuration should be testable before deployment. Runtime state should be
+visible without shell access. Failures should degrade clearly instead of failing
+silently.
 
-# Start gateway runtime (on edge device or locally)
-cd ../gateway_runtime
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python -m gateway_runtime.main
+## Repository Layout
+
+```text
+streamforge/
+├── control-plane/   # FastAPI control plane
+├── gateway_runtime/ # Edge runtime and local orchestration
+├── adapters/        # Protocol adapter implementations
+├── sinks/           # Sink service implementations
+├── ui/              # React/TypeScript operator UI
+├── schemas/         # Avro and JSON schemas
+├── deploy/          # Development deployment assets
+├── docs/            # Architecture, security, readiness, and design docs
+└── copilot/         # Reserved for future AI/copilot work
 ```
 
-### Standards Gates
+## Running Locally
 
-Run the repo standards gates before packaging changes:
+The current development stack uses Redpanda as the local Kafka-compatible
+broker. The config keys remain Kafka-named because they describe the protocol
+contract, not a dependency on Apache Kafka or Confluent images.
 
 ```bash
-bash scripts/check_standards_gates.sh
+docker compose -f deploy/docker-compose.dev.yml up -d --build
 ```
 
+Seed the demo environment:
 
-## Use Cases
+```bash
+docker compose -f deploy/docker-compose.dev.yml --profile seed run --rm dev_bootstrap
+```
 
-### Smart Manufacturing
-- PLCs → modbus → Edge Gateway → mqtt → Analytics
-- Real-time production monitoring with zero data loss
-- Predictive maintenance via ML pipelines
+The UI is exposed at:
 
-### Offshore Oil & Gas
-- Sensors → LoRa/XBee → Edge Gateway(buffered during outages) → Local DB 
-- Automatic sync to cloud when satellite link is restored
-- Critical alarm routing to PagerDuty
+```text
+http://localhost:5000
+```
 
-### Utilities & Power Plants
-- SCADA systems → OPC UA → Gateway → TimescaleDB + Cloud Analytics
-- Digital twin synchronization
-- Regulatory compliance audit trails
+Useful local checks:
 
-## Documentation
-
-- [Architecture & Design](docs/ARCHITECTURE.md) - Complete system architecture (30 decisions)
-- [Architecture Decision Records](docs/adr/) - Key design decisions with rationale
-- [Data Flow](docs/DATA_FLOW.md) - End-to-end data flow with examples
-- [Deployment Guide](docs/DEPLOYMENT.md) - Edge, on-prem, and cloud deployment patterns
-- [Security Model](docs/SECURITY.md) - Authentication, authorization, and encryption
-- [Protocol Adapter Development](adapters/README.md) - How to build custom adapters
-- [API Reference](control-plane/README.md) - Control API documentation
+```bash
+cd control-plane && ./.venv/bin/python -m pytest
+python3 -m unittest discover -s gateway_runtime/tests
+python3 -m unittest discover -s adapters/tests
+python3 -m unittest discover -s sinks/tests
+cd ui && npm run build
+```
 
 ## Comparison
 
-| Feature | This Platform | SCADA/Ignition | IoT Cloud Platforms | Custom Scripts |
-|---------|---------------|----------------|---------------------|----------------|
-| Industrial Protocols | ✅ Native | ✅ Via plugins | ❌ Limited | ⚠️ Manual |
-| Kafka-First | ✅ Core design | ❌ Optional | ❌ Optional | ❌ No |
-| Zero Data Loss | ✅ Guaranteed | ⚠️ Database-dependent | ⚠️ Cloud-dependent | ❌ No |
-| Edge Autonomy | ✅ Full offline | ⚠️ Limited | ❌ Cloud-required | ⚠️ Manual |
-| Runtime Reconfiguration | ✅ Yes | ❌ Requires restart | ⚠️ Limited | ❌ Redeploy |
-| Vendor Neutral | ✅ Yes | ❌ Proprietary | ❌ Cloud lock-in | ✅ Yes |
-| AI/ML Ready | ✅ Stream-native | ⚠️ Via exports | ⚠️ Via integrations | ❌ Manual |
+| Area | StreamForge | SCADA/Ignition | Cloud IoT Platforms | Custom Scripts |
+|------|-------------|----------------|---------------------|----------------|
+| OT protocol focus | Native adapter model | Strong, often plugin-based | Limited or gateway-dependent | Manual |
+| Edge autonomy | Core design goal | Varies by deployment | Often cloud-centered | Fragile |
+| Local replay buffer | Built around a Kafka-compatible edge stream | Usually database/historian-centered | Cloud queue dependent | Usually absent |
+| Data engineering fit | Stream-native, replayable, sink-oriented | Possible but indirect | Strong in-cloud, weaker offline | Ad hoc |
+| Operator visibility | Control-plane UI and runtime health surfaces | Strong HMI/SCADA visibility | Cloud dashboards | Minimal |
+| Vendor neutrality | Designed for on-prem and hybrid use | Often proprietary | Cloud lock-in risk | Depends on author |
 
 ## Roadmap
 
-**Milestone 1: Core Platform** (Completed)
-- ✅ Architecture design complete
-- ✅ Control plane API baseline
-- ✅ Gateway runtime engine baseline
-- ✅ Basic protocol adapter baseline (`modbus_tcp`)
-- ✅ UI baseline for gateway operations
+### Completed Core Scope
 
-**Milestone 2: Control & Operator Workflows** (Completed for current core scope)
-- Reusable adapters, reusable sinks, and composed deployments
-- Adapter/sink validation, connection testing, and deployment preflight
-- Events, aggregates, fleet, and logs operator views
+- architecture baseline
+- control-plane API baseline
+- gateway runtime baseline
+- Redpanda-backed local dev/runtime broker path
+- reusable adapters, sinks, and deployments
+- validation, test connection, and deployment preflight flows
+- events, aggregates, fleet, logs, alarms, and DLQ operator views
+- RBAC, audit trail, safer browser sessions, and secret-field handling
 
-**Milestone 3: Reliability & Observability** (In progress)
-- Schema registry integration and offline cache
-- Overflow controls, health surfaces, and fleet/runtime visibility
-- Recent runtime logs in the control plane/UI
-- Longer-lived remote log storage and deeper production validation remain open
+### Active Production-Readiness Work
 
-**Milestone 4: Expansion & Enterprise Roadmap** (In progress)
-- Additional adapters and sinks beyond the current industrial/web portfolio
-- General configuration UX polish and stronger design-system consistency
-- Optional OAuth/OIDC and richer enterprise auth
-- MCP/Copilot tooling only if retained in committed scope
+- finish production packaging and image-pull templates for the Redpanda-backed
+  gateway/runtime stack
+- implement production-grade gateway enrollment and approval
+- add gateway-side physical-device verification
+- improve topology into a true dataflow/architecture view
+- finish responsive/readability hardening
+- complete fresh-stack and failure-path verification before AI work continues
+
+### Later
+
+- additional industrial adapters and sink destinations
+- deeper production observability and long-term log retention
+- optional enterprise auth UX
+- AI/copilot features after the core platform is trustworthy enough to support
+  them
+
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Data Flow](docs/DATA_FLOW.md)
+- [Deployment](docs/DEPLOYMENT.md)
+- [Security](docs/SECURITY.md)
+- [Production Readiness Reconciliation](docs/PRODUCTION_READINESS_RECONCILIATION.md)
+- [UI Product Action List](docs/UI_PRODUCT_ACTION_LIST.md)
+- [Adapter Development](adapters/README.md)
+- [Control Plane API](control-plane/README.md)
 
 ## License
 
-[To be determined]
+Licensed under the Apache License 2.0. See [LICENSE](LICENSE).
 
 ## Contributing
 
-[To be determined]
+This project is currently owner-led while the core architecture and production
+readiness work settle. Technical feedback, issue reports, and review comments
+are welcome, especially around industrial protocols, edge reliability, and
+operator workflow quality.
 
 ## Support
 
-[To be determined]
+There is no commercial support channel yet. For now, use GitHub issues or the
+repository owner's public contact channels for questions and feedback.
