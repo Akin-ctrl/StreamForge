@@ -8,7 +8,9 @@
 
 ## Context
 
-StreamForge must support multiple industrial protocols (Modbus, OPC UA, MQTT, XBee, LoRa, etc.). Each protocol has different:
+StreamForge must support multiple industrial protocols over time. The current
+implemented set covers Modbus TCP, Modbus RTU, MQTT, and OPC UA; XBee, LoRa,
+and other field/wireless protocols remain expansion targets. Each protocol has different:
 - Library dependencies
 - Runtime requirements
 - Update cycles

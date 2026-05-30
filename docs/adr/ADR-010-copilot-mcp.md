@@ -1,7 +1,8 @@
 # ADR-010: Copilot Tools-First Approach
 
-**Status**: Accepted  
+**Status**: Accepted, deferred until core production-readiness gates are closed
 **Date**: 2026-01-29  
+**Last Updated**: 2026-05-30
 **Decision**: Expose MCP-compatible tools, make built-in Copilot optional
 
 ---
@@ -15,6 +16,11 @@ AI assistants can help operators:
 - Generate adapter templates
 
 However, customers may already have their own AI agents, RAG systems, or ML platforms. Multiple standalone agents create confusion.
+
+Current implementation note: this ADR records the intended AI/tooling direction,
+not a shipped subsystem. StreamForge should not resume copilot/MCP
+implementation until gateway onboarding, physical-device verification,
+topology, and failure-path verification are stronger.
 
 ## Options Considered
 
@@ -44,7 +50,8 @@ However, customers may already have their own AI agents, RAG systems, or ML plat
 
 **Option C: Tools-first with MCP**
 
-StreamForge exposes MCP-compatible tools. Built-in Copilot is optional convenience that uses the same tools internally.
+StreamForge should expose MCP-compatible tools. Built-in Copilot remains an
+optional convenience layer that would use the same tools internally.
 
 ## Rationale
 

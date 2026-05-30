@@ -1,6 +1,11 @@
 # Security Model & Best Practices
 
-**Comprehensive security architecture for industrial data gateway deployments.**
+**Security architecture and hardening notes for StreamForge.**
+
+> Current status: built-in user authentication, gateway JWTs, RBAC, audit
+> logging, safer browser sessions, and secret-field handling exist today. OAuth,
+> Vault-backed secret resolution, production TLS profiles, and deployment-time
+> network hardening are still future production-packaging work.
 
 ---
 
@@ -30,16 +35,16 @@ Physical Security → Network Security → Application Security → Data Securit
 
 ### Least Privilege
 
-Every component has minimum required permissions:
-- Adapters can only write to assigned Kafka topics
-- Sinks can only read from specific topics
+Every component should have minimum required permissions:
+- Adapters should only write to assigned Kafka-compatible topics
+- Sinks should only read from specific topics
 - Gateway Runtime cannot access Control Plane database directly
 - UI users have role-based access
 
 ### Zero Trust
 
 Never trust, always verify:
-- All network traffic encrypted (even internal)
+- Hardened deployments should encrypt network traffic, including internal links where practical
 - All API calls authenticated
 - All configuration changes audited
 - No implicit trust between components
@@ -50,7 +55,10 @@ Never trust, always verify:
 
 ### User Authentication (Control Plane UI/API)
 
-**Method**: JWT (JSON Web Tokens) with OAuth2/OIDC
+**Implemented method**: built-in user auth with JWT-backed sessions.
+
+**Future enterprise path**: OAuth2/OIDC can be added later, but it is not part
+of the current completed security baseline.
 
 **Flow**:
 ```
@@ -93,9 +101,45 @@ Response:
 
 ### Gateway Authentication (Machine-to-Machine)
 
-**Method**: mTLS (mutual TLS) + long-lived JWT
+**Current shipped method**: long-lived JWT issued by the control plane after
+admin-side gateway creation and approval
 
-**Initial registration**:
+**Planned hardening direction**: enrollment or claim flow with stronger
+bootstrap identity proof (for example mTLS and/or bootstrap credentials)
+
+#### Current shipped flow
+
+1. Admin creates the gateway record in the control plane UI or admin API.
+2. Admin approves the gateway.
+3. Gateway runtime starts with its `CONTROL_PLANE_URL` and
+   `CONTROL_PLANE_GATEWAY_ID`.
+4. Gateway runtime requests a gateway token from the control plane.
+5. Gateway runtime polls config and posts heartbeat/health back to the control
+   plane.
+
+Self-registration is **not** enabled in the currently shipped implementation.
+`POST /api/v1/gateways/register` is intentionally disabled today, so any doc or
+example that assumes zero-touch self-registration should be treated as a
+planned enrollment direction rather than current behavior.
+
+#### Current token bootstrap example
+
+```bash
+# 1. Admin creates the gateway record in the control plane
+POST /api/v1/gateways
+
+# 2. Admin approves the gateway
+POST /api/v1/gateways/{gateway_id}/approve
+
+# 3. Gateway runtime requests its machine token
+POST /api/v1/gateways/token
+{
+  "gateway_id": "gateway-rig-alpha-001"
+}
+```
+
+#### Planned enrollment direction (not the current default)
+
 ```bash
 # Gateway generates certificate on first boot
 openssl req -new -x509 -days 3650 \
@@ -103,7 +147,7 @@ openssl req -new -x509 -days 3650 \
   -out /etc/streamforge/gateway.crt \
   -subj "/CN=gateway-rig-alpha-001"
 
-# Register with Control API (one-time, admin approval)
+# Planned enrollment / registration with Control API (future direction)
 curl -X POST https://api.streamforge.example.com/api/v1/gateways/register \
   -H "Content-Type: application/json" \
   -d '{
@@ -124,17 +168,17 @@ curl -X POST https://api.streamforge.example.com/api/v1/gateways/register \
 }
 ```
 
-**Ongoing authentication**:
+#### Ongoing authentication
 ```bash
 # Gateway includes token in every API call
 GET /api/v1/gateways/gateway-rig-alpha-001/config/current
 Authorization: Bearer <gateway-token>
 ```
 
-**Token rotation**:
+#### Token rotation
 ```bash
-# Automatic renewal 30 days before expiration
-POST /api/v1/gateways/{gateway_id}/renew-token
+# Renewal path exposed by the control plane
+POST /api/v1/gateways/token/renew
 Authorization: Bearer <current-token>
 ```
 
@@ -367,14 +411,14 @@ PersistentKeepalive = 25
 
 ### In Transit
 
-**All network traffic encrypted**:
+**Production target: encrypted network traffic**:
 
 | Connection | Method | Key Strength |
 |------------|--------|--------------|
 | UI ↔ Control API | HTTPS/TLS 1.3 | RSA 2048 / ECDSA P-256 |
 | Gateway ↔ Control API | HTTPS/TLS 1.3 | RSA 2048 |
-| Edge Kafka ↔ External Kafka sink destination | Kafka over TLS (SASL_SSL) | AES-256 |
-| Adapter ↔ Local Kafka | TLS | AES-256 |
+| Local broker ↔ External Kafka-compatible sink destination | Kafka over TLS (SASL_SSL) | AES-256 |
+| Adapter ↔ Local Kafka-compatible broker | TLS in hardened deployments; plaintext in local dev | AES-256 when TLS is enabled |
 
 **TLS configuration** (Control API):
 ```nginx
@@ -388,7 +432,7 @@ ssl_stapling on;
 ssl_stapling_verify on;
 ```
 
-**Kafka TLS** (broker config):
+**Kafka-compatible broker TLS** (production packaging target):
 ```properties
 listeners=SSL://0.0.0.0:9093
 ssl.keystore.location=/var/private/ssl/kafka.server.keystore.jks
@@ -429,7 +473,11 @@ cryptsetup luksFormat /dev/mmcblk0p2
 
 ## Secrets Management
 
-### HashiCorp Vault Integration
+### Future HashiCorp Vault Integration
+
+Vault references are a production target, not a completed runtime guarantee.
+Until secret resolution is implemented and tested end to end, configs should not
+depend on `${vault:...}` interpolation working inside gateway runtime.
 
 **Architecture**:
 ```
@@ -483,7 +531,12 @@ path "secret/data/streamforge/kafka/adapter-credentials" {
 }
 ```
 
-**Gateway Runtime** (resolves secrets):
+**Gateway Runtime secret resolution target**:
+
+The example below describes the intended production pattern. The current
+runtime must not be documented as having complete Vault resolution until that
+implementation is wired and tested.
+
 ```python
 # gateway_runtime/secrets.py
 import hvac
@@ -501,41 +554,13 @@ def resolve_secrets(config):
     return config
 ```
 
-### Alternative: Kubernetes Secrets
+### Future: Orchestrator Secrets
 
-```yaml
-# For Kubernetes deployments
-apiVersion: v1
-kind: Secret
-metadata:
-  name: kafka-credentials
-  namespace: streamforge
-type: Opaque
-data:
-  username: YWRhcHRlci11c2Vy  # base64-encoded
-  password: PHNlY3VyZS1wYXNzd29yZD4=
-
----
-apiVersion: v1
-kind: Pod
-metadata:
-  name: adapter-modbus-001
-spec:
-  containers:
-  - name: adapter
-    image: streamforge/adapter-modbus:1.0.0
-    env:
-    - name: KAFKA_USERNAME
-      valueFrom:
-        secretKeyRef:
-          name: kafka-credentials
-          key: username
-    - name: KAFKA_PASSWORD
-      valueFrom:
-        secretKeyRef:
-          name: kafka-credentials
-          key: password
-```
+Production packaging is still pending, so StreamForge does not yet document a
+supported orchestrator-secret manifest. The intended direction is simple:
+packaged deployments should inject sensitive values through the deployment
+environment, while StreamForge configs should reference secrets rather than
+carry plaintext credentials.
 
 ---
 
@@ -653,7 +678,7 @@ HAVING COUNT(*) > 5;
 | **Unauthorized access to Control API** | Configuration tampering, data exposure | JWT auth, RBAC, rate limiting, IP whitelist |
 | **MITM attack on edge → cloud** | Data interception, credential theft | TLS 1.3, certificate pinning |
 | **Compromised adapter container** | Malicious data injection | Sandboxing, read-only filesystem, limited Kafka ACLs |
-| **Kafka credential theft** | Unauthorized data access | SASL/SCRAM, credential rotation, Vault integration |
+| **Kafka-compatible broker credential theft** | Unauthorized data access | SASL/SCRAM, credential rotation, Vault or orchestrator secret integration when production packaging supports it |
 | **DDoS on Control API** | Service unavailability | Rate limiting, CDN, auto-scaling |
 | **Insider threat (malicious admin)** | Data deletion, config destruction | Audit logs, approval workflows, immutable backups |
 | **Physical access to edge gateway** | Device tampering | Disk encryption, tamper-evident seals, secure boot |
@@ -672,7 +697,7 @@ Attempts to read Kafka data or credentials
 **Mitigations**:
 - Full disk encryption (LUKS)
 - Secure boot (TPM-based)
-- Credentials stored in Vault (not on disk)
+- Credentials stored outside plaintext config once production secret resolution is implemented
 - Tamper-evident physical seals
 - Remote wipe capability
 
@@ -698,10 +723,10 @@ Uses token to access Control API
 ### Pre-Deployment
 
 - [ ] TLS certificates generated and installed
-- [ ] Secrets stored in Vault (not hardcoded)
+- [ ] Secrets kept out of plaintext config using the production-supported secret mechanism
 - [ ] Firewall rules configured
 - [ ] VPN tunnel established (for edge deployments)
-- [ ] Kafka ACLs configured
+- [ ] Kafka-compatible broker ACLs configured where authentication is enabled
 - [ ] Database credentials rotated from defaults
 - [ ] Admin accounts use strong passwords (or SSO)
 - [ ] Audit logging enabled

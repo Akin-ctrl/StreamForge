@@ -7,7 +7,7 @@
 ## Table of Contents
 
 1. [Core Data Flow Pattern](#core-data-flow-pattern)
-2. [Example 1: Offshore Oil Well (XBee → Kafka → Optional Cloud Sink)](#example-1-offshore-oil-well-xbee--kafka--optional-cloud-sink)
+2. [Example 1: Offshore Pump Skid (Modbus → Local Stream → Optional Cloud Sink)](#example-1-offshore-pump-skid-modbus--local-stream--optional-cloud-sink)
 3. [Example 2: Smart Factory (Modbus PLC → TimescaleDB)](#example-2-smart-factory-modbus-plc--timescaledb)
 4. [Example 3: OPC UA → Real-time Dashboard](#example-3-opc-ua--real-time-dashboard)
 5. [Example 4: Network Outage Recovery](#example-4-network-outage-recovery)
@@ -22,26 +22,26 @@
 
 ```
 Physical Device
-    ↓ (Protocol: Modbus/OPC UA/MQTT/XBee/etc.)
+    ↓ (Protocol: Modbus/OPC UA/MQTT/etc.)
 Protocol Adapter (Container)
     ↓ (Normalized message)
-Edge Kafka (Local buffering)
+Local Kafka-compatible stream (edge buffering)
     ↓ (Gateway-local consumption)
     ├─→ Quality Validator → telemetry.clean
     ├─→ Aggregator → telemetry.1s, telemetry.1min
-    ├─→ Sink Services → Databases, customer-owned Kafka, Cloud APIs
+    ├─→ Sink Services → Databases, customer-owned Kafka-compatible systems, Cloud APIs
     └─→ Alert Router → PagerDuty, Slack, Email
 ```
 
 ---
 
-## Example 1: Offshore Oil Well (XBee → Kafka → Optional Cloud Sink)
+## Example 1: Offshore Pump Skid (Modbus → Local Stream → Optional Cloud Sink)
 
 ### Scenario
 - **Location**: Offshore oil rig, 50km from shore
 - **Connectivity**: Intermittent 4G/satellite (down 30% of the time)
-- **Device**: Pressure sensor transmitting via XBee radio
-- **Requirements**: Zero data loss, critical alarm routing
+- **Device**: PLC exposing pressure and temperature over Modbus TCP or RTU
+- **Requirements**: durable local buffering, replay after outage, critical alarm routing
 
 ### Configuration
 
@@ -50,9 +50,9 @@ Edge Kafka (Local buffering)
 Operator configures adapters and sinks, then composes a deployment for the target gateway:
 ```
 Gateway: gateway-offshore-01
-Adapter: xbee_modbus_offshore_12
-  Protocol: XBee → Modbus Virtual
-  Device: XBee Node ID 0013A200
+Adapter: modbus_offshore_12
+  Protocol: Modbus TCP
+  Device: PLC at 192.168.10.42:502
   Parameters:
     - Register 40001: Pressure (PSI)
     - Register 40003: Temperature (Celsius)
@@ -66,14 +66,14 @@ Validation: enabled
 {
   "pipeline_id": "offshore_well_12",
   "adapter": {
-    "type": "xbee_modbus",
+    "type": "modbus_tcp",
     "version": "1.2.0",
-    "image": "registry.example.com/adapter_xbee_modbus:1.2.0",
+    "image": "streamforge/gateway_runtime:dev",
     "config": {
       "source": {
-        "xbee_port": "/dev/ttyUSB0",
-        "baud_rate": 9600,
-        "node_id": "0013A200"
+        "host": "192.168.10.42",
+        "port": 502,
+        "unit_id": 1
       },
       "mapping": {
         "registers": {
@@ -108,15 +108,14 @@ Validation: enabled
 **Time: 12:01:03.123 - Physical measurement**
 ```
 Sensor: Pressure = 185.4 PSI, Temperature = 34.2°C
-XBee transmits: [Binary frame with 8 bytes payload]
+PLC exposes values in configured holding registers
 ```
 
-**Time: 12:01:03.987 - XBee reception**
+**Time: 12:01:03.987 - Modbus read**
 ```
-Gateway XBee receiver: Receives frame
-Adapter container: Decodes payload
-  Bytes 0-3 → 185.4 (float32)
-  Bytes 4-7 → 342 (int16, scale 0.1) = 34.2°C
+Adapter container: Reads configured register batch
+  Register 40001 → 185.4 (float32)
+  Register 40003 → 342 (int16, scale 0.1) = 34.2°C
 ```
 
 **Time: 12:01:04.001 - Normalization**
@@ -130,19 +129,19 @@ reading = {
     "quality": "GOOD",
     "classification": "TELEMETRY",
     "timestamps": {
-        "device_time": "2025-01-10T12:01:03.123Z",  # From XBee frame
+        "device_time": "2025-01-10T12:01:03.123Z",  # From PLC/device clock if available
         "gateway_time": "2025-01-10T12:01:04.001Z",  # Gateway clock
         "kafka_time": None  # Set by Kafka
     },
     "metadata": {
-        "adapter_id": "adapter_xbee_modbus_001",
+        "adapter_id": "adapter_modbus_offshore_001",
         "adapter_version": "1.2.0",
         "pipeline_id": "offshore_well_12"
     }
 }
 ```
 
-**Time: 12:01:04.015 - Edge Kafka write**
+**Time: 12:01:04.015 - Local stream write**
 ```
 Topic: telemetry.raw
 Partition: 0 (keyed by asset_id)
@@ -192,7 +191,7 @@ SQL: INSERT INTO telemetry_timeseries (time, asset_id, parameter, value, unit, q
 Sink: S3 Parquet (batched every 5 min)
 Buffer: In-memory, will flush at 12:05:00
 
-Sink: Kafka (optional, customer-owned cluster)
+Sink: Kafka-compatible system (optional, customer-owned cluster)
 Target: customer.example.com:9092
 Behavior: Drain from local telemetry.clean when WAN is available
 
@@ -207,13 +206,13 @@ Body: {"timestamp": "...", "pressure": 185.4, "temperature": 34.2}
 ```
 4G link down
 External sinks unavailable
-Edge Kafka: Continues accepting writes (local disk)
+Local stream broker: Continues accepting writes (local disk)
 ```
 
 **Time: 14:30:01 → 17:00:00 - 2.5 hours offline**
 ```
 Adapter: Still reading sensor every 1s
-Edge Kafka: Buffering locally
+Local stream broker: Buffering locally
   Topics: telemetry.raw, events.raw
   Disk usage: 42% → 58% (16GB accumulated)
   Status: ✓ No data loss
@@ -222,21 +221,21 @@ Edge Kafka: Buffering locally
 **Time: 17:00:00 - Network restored**
 ```
 Sink connectivity restored
-Backlog drain begins from local Kafka
+Backlog drain begins from the local stream
 Catch-up speed: ~1000 msg/sec
 ```
 
 **Time: 17:02:30 - Fully synced**
 ```
-All buffered data drained from local Kafka to configured sinks
+All buffered data drained from the local stream to configured sinks
 External sinks catch up:
   - TimescaleDB: Writes 9,000 rows (backfill)
   - S3: Creates Parquet files for offline period
-  - Customer Kafka: Receives delayed replay
+  - Customer Kafka-compatible system: Receives delayed replay
   - ML API: Skips (real-time only)
 ```
 
-**Result**: Zero data loss, historical analysis intact
+**Result**: no expected data loss under the designed outage path; historical analysis remains intact if local storage is preserved
 
 ---
 
@@ -337,7 +336,7 @@ Response:
 }
 ```
 
-**Kafka → TimescaleDB**:
+**Local stream → TimescaleDB**:
 ```sql
 -- Sink writes to hypertable
 INSERT INTO telemetry_timeseries (time, asset_id, parameter, value, unit)
@@ -465,8 +464,8 @@ Disk usage: 20GB / 100GB
 **Day 1, 14:30 - Network failure**
 ```
 Satellite link down (storm)
-Kafka/HTTP sinks retrying external connections...
-Edge Kafka: Buffering locally
+Kafka-compatible/HTTP sinks retrying external connections...
+Local stream broker: Buffering locally
 Adapters: Continue operating normally
 ```
 
@@ -492,16 +491,16 @@ Replay begins:
 
 **Day 3, 08:01:15 - Fully synced**
 ```
-All data drained from local Kafka to external destinations
+All data drained from the local stream to external destinations
 Sinks processing backlog:
   - TimescaleDB: Bulk insert 120,000 rows (30 seconds)
-  - Customer Kafka: Receives 120,000 delayed records
+  - Customer Kafka-compatible system: Receives 120,000 delayed records
   - S3 Parquet: Creates files for 41.5-hour gap (10 seconds)
   - Alerting: Processes 1,200 alarms (checks if still active)
 ```
 
 **Result**:
-- ✓ Zero data loss
+- ✓ Buffered replay without expected data loss when local storage remains healthy
 - ✓ Historical continuity maintained
 - ✓ Alarms processed in order
 - ✓ Automatic recovery, no operator intervention
@@ -716,11 +715,12 @@ INSERT INTO alarms_history (
 {
   "classification": "LOG",
   "log_level": "WARNING",
-  "component": "adapter_xbee_modbus_001",
-  "message": "XBee communication timeout, retrying...",
+  "component": "adapter_modbus_offshore_001",
+  "message": "Modbus read timeout, retrying...",
   "timestamp": "2025-01-10T12:05:00.456Z",
   "details": {
-    "port": "/dev/ttyUSB0",
+    "host": "192.168.10.42",
+    "port": 502,
     "timeout_ms": 5000,
     "retry_attempt": 1,
     "max_retries": 3

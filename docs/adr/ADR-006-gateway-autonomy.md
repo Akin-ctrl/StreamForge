@@ -49,7 +49,7 @@ We needed to decide how dependent gateways are on the Control Plane.
 1. **Reliability**: Gateway should never stop collecting data due to Control Plane issues
 2. **Reality**: Industrial networks are unreliable
 3. **Simplicity**: "First boot needs network, then runs forever" is easy to understand
-4. **No data loss**: Local Kafka buffers during outages
+4. **Buffered continuity**: The gateway-local Kafka-compatible stream buffers during outages
 
 ## Behavior Matrix
 
@@ -68,7 +68,7 @@ What's cached locally:
 | Gateway config | `/data/config/gateway.json` | Full pipeline, adapter, sink config |
 | Schema cache | `/data/schemas/` | Avro schemas for serialization |
 | Container images | Docker cache | Adapter and sink images |
-| Kafka data | `/data/kafka/` | Buffered messages |
+| Local broker data | Broker data volume | Buffered messages |
 
 ## First Boot Sequence
 

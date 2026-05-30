@@ -26,26 +26,34 @@
 18. [Update & Rollback Strategy](#update--rollback-strategy)
 19. [Disaster Recovery](#disaster-recovery)
 20. [Deployment Patterns](#deployment-patterns)
-21. [AI Copilot & MCP Tools](#ai-copilot--mcp-tools)
+21. [Planned Copilot Tool Surface](#planned-copilot-tool-surface)
+
+> Current status: this document describes the implemented baseline and the
+> remaining production direction. StreamForge is still in production-readiness
+> work. Redpanda is the chosen embedded broker direction and the local
+> dev/runtime path is now Redpanda-backed, while production packaging and
+> image-pull templates are still pending.
 
 ---
 
 ## Core Design Principles
 
-### 1. Local Kafka is the System of Record
+### 1. Local Kafka-Compatible Stream Is the System of Record
 
-**Non-negotiable principle**: All industrial data flows through the gateway's local Kafka as the authoritative source.
+**Non-negotiable principle**: All industrial data flows through the gateway's local Kafka-compatible stream as the authoritative local source.
 
 **Key clarification**: 
-- StreamForge manages **only local Kafka** on each gateway (embedded, single-node, KRaft mode)
-- There is **no central Kafka** in the StreamForge architecture
-- Customer's Kafka (if any) is treated as a **sink destination**, not managed by us
+- StreamForge manages **only the local stream broker** on each gateway
+- Redpanda is the chosen embedded edge broker direction
+- the local dev/runtime stack currently uses Redpanda, but production packaging is still pending
+- the Kafka protocol, client libraries, topics, partitions, and consumer-group semantics remain part of the architecture
+- a customer's Kafka-compatible system, if any, is treated as a **sink destination**, not as StreamForge-managed infrastructure
 
 **Rationale**:
-- **Zero data loss**: Local Kafka provides durable persistence during network outages
+- **Local durability**: the gateway stream retains records during network or downstream sink outages
 - **Temporal decoupling**: Adapters and sinks evolve independently
-- **Replayability**: Any sink can replay from local Kafka
-- **Simplicity**: We're a gateway platform, not a Kafka vendor
+- **Replayability**: Any sink can replay from the local stream
+- **Simplicity**: StreamForge is a gateway platform, not a broker operations platform
 
 ### 2. Control Plane ≠ Data Plane
 
@@ -54,10 +62,10 @@
 | Control Plane | Data Plane |
 |---------------|------------|
 | Configuration management | Protocol adapters |
-| Topology visualization | Local Kafka |
+| Topology visualization | Local stream broker |
 | Health monitoring | Sink services |
 | User interface | Data transformation |
-| MCP Tools | Validation & aggregation |
+| Planned tool/Copilot surface | Validation & aggregation |
 
 **Benefits**:
 - Control Plane failures don't stop data flow
@@ -68,7 +76,7 @@
 
 All data is classified at the adapter level:
 
-| Type | Definition | Examples | Kafka Topics |
+| Type | Definition | Examples | Stream Topics |
 |------|------------|----------|--------------|
 | **Telemetry** | Continuous numeric measurements | Temperature, pressure | `telemetry.*` |
 | **Events** | Discrete state changes | Valve opened, motor started | `events.*` |
@@ -79,7 +87,7 @@ All data is classified at the adapter level:
 ### 4. Edge-First Autonomy
 
 Gateways are fully self-contained:
-- Local Kafka buffers all data
+- The gateway-local Kafka-compatible stream buffers all data
 - Configuration cached locally
 - First boot requires Control Plane
 - Subsequent boots work **completely offline**
@@ -96,7 +104,7 @@ Gateways are fully self-contained:
 │  Control Plane                                          │
 │                                                         │
 │  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐  │
-│  │ Config API   │  │     UI       │  │  MCP Server   │  │
+│  │ Config API   │  │     UI       │  │ Planned Tools │  │
 │  │ (FastAPI)    │  │ (React/TS)   │  │  (Tools)      │  │
 │  └──────┬───────┘  └──────────────┘  └───────────────┘  │
 │         │                                               │
@@ -111,7 +119,7 @@ Gateways are fully self-contained:
 - **Technology**: FastAPI (Python)
 - **Database**: PostgreSQL (remote mode) or SQLite (local mode)
 - **Endpoints**:
-  - `/api/v1/gateways` - Gateway registration and status
+  - `/api/v1/gateways` - Gateway inventory, approval, status, token issue/renew, config delivery, and heartbeat surfaces (self-registration is not enabled in the currently shipped implementation)
   - `/api/v1/pipelines` - Current deployment/pipeline management path
   - `/api/v1/sinks` - Sink configuration
   - `/api/v1/schemas` - Schema management
@@ -141,10 +149,10 @@ The intended operator model is:
 
 This distinction matters because the gateway runtime already supports one active gateway configuration containing multiple adapters and multiple sinks. The UI and control-plane configuration model should reflect that directly instead of implying a one-adapter-to-one-sink workflow.
 
-#### 3. MCP Server
-- **Technology**: Python + MCP protocol
-- **Purpose**: Expose StreamForge capabilities as tools for external agents
-- See [AI Copilot & MCP Tools](#ai-copilot--mcp-tools) section
+#### 3. Planned Copilot Tool Surface
+- **Status**: planned/deferred, not a production-complete component today
+- **Intended purpose**: expose StreamForge capabilities as tools for external agents after the core runtime and operator workflows are production-trustworthy
+- See [Planned Copilot Tool Surface](#planned-copilot-tool-surface) section
 
 ### Data Plane Components (Gateway)
 
@@ -163,8 +171,8 @@ This distinction matters because the gateway runtime already supports one active
 │  └─────────────────────────────────────────────────────┘│
 │                                                         │
 │  ┌───────────────┐  ┌───────────────┐  ┌─────────────┐  │
-│  │ Local Kafka   │  │ Adapters      │  │ Sinks       │  │
-│  │ (KRaft mode)  │  │ (Docker)      │  │ (Docker)    │  │
+│  │ Local Stream  │  │ Adapters      │  │ Sinks       │  │
+│  │ (Kafka API)   │  │ (Docker)      │  │ (Docker)    │  │
 │  └───────────────┘  └───────────────┘  └─────────────┘  │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -181,13 +189,16 @@ This distinction matters because the gateway runtime already supports one active
 #### 2. Protocol Adapters
 - **Deployment**: Docker containers
 - **Isolation**: Each adapter runs in its own container with resource limits
-- **Available Adapters**:
+- **Implemented Adapters**:
   - `adapter_modbus_tcp` - Modbus TCP client
   - `adapter_modbus_rtu` - Modbus RTU over serial
   - `adapter_opcua` - OPC UA client
   - `adapter_mqtt` - MQTT subscriber
-  - `adapter_xbee` - XBee wireless
-  - `adapter_lora` - LoRa wireless
+
+Planned or deferred adapter families include:
+
+- `adapter_xbee` - XBee wireless
+- `adapter_lora` - LoRa wireless
 
 Adapter configuration must be protocol-aware. Flat scalar field lists are not enough for the real configuration contracts:
 
@@ -199,18 +210,21 @@ An adapter instance represents one source connection or session context and may 
 
 See [Adapters And Deployments Spec](ADAPTERS_AND_DEPLOYMENTS_SPEC.md) for the locked operator-facing configuration contract.
 
-#### 3. Local Kafka
-- **Deployment**: Embedded single-node KRaft mode
+#### 3. Local Stream Broker
+- **Deployment**: Embedded Kafka-compatible broker
+- **Chosen direction**: Redpanda
+- **Current local dev/runtime image**: `redpandadata/redpanda:v26.1.9`
+- **Production packaging**: Pending
 - **Storage**: Configurable (e.g., 100GB)
 - **Purpose**: Buffer all data locally, survive network outages
 
 #### 4. Sink Services
 - **Deployment**: Docker containers on gateway
-- **Pattern**: Kafka consumer → external writer
+- **Pattern**: Kafka-compatible consumer → external writer
 - **Examples**:
   - `sink_timescaledb` - Writes to TimescaleDB
   - `sink_postgres` - Writes to PostgreSQL
-  - `sink_kafka` - Replicates to customer's Kafka cluster
+  - `sink_kafka` - Replicates to customer's Kafka-compatible cluster
   - `sink_s3` - Batch writes to S3 in Parquet format
   - `sink_http` - HTTP POST to cloud endpoints
 
@@ -229,46 +243,52 @@ See [Adapters And Deployments Spec](ADAPTERS_AND_DEPLOYMENTS_SPEC.md) for the lo
 ### End-to-End Flow
 
 ```
-┌─────────────────┐
-│  OT Device      │ (PLC, sensor, SCADA)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────────────────────────────────────────────┐
-│  StreamForge Gateway                                    │
-│                                                         │
-│  ┌─────────────────┐                                    │
-│  │ Protocol Adapter│ (Docker container)                 │
-│  │  - Polls device │                                    │
-│  │  - Normalizes   │                                    │
-│  │  - Classifies   │                                    │
-│  └────────┬────────┘                                    │
-│           │                                             │
-│           ▼                                             │
-│  ┌─────────────────┐                                    │
-│  │  Local Kafka    │ (embedded KRaft)                   │
-│  │  telemetry.raw  │                                    │
-│  │  events.raw     │                                    │
-│  │  alarms.raw     │                                    │
-│  └────────┬────────┘                                    │
-│           │                                             │
-│           ├──────────────┬──────────────┐               │
-│           ▼              ▼              ▼               │
-│  ┌──────────────┐ ┌──────────┐ ┌─────────────────────┐  │
-│  │  Validator   │ │Aggregator│ │   Sink Containers   │  │
-│  │  (module)    │ │(module)  │ │ (S3, DB, Kafka...)  │  │
-│  └──────┬───────┘ └────┬─────┘ └─────────────────────┘  │
-│         │              │                                │
-│         ▼              ▼                                │
-│  telemetry.clean  telemetry.1s                          │
-│  dlq.telemetry    telemetry.1min                        │
-└─────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-              ┌───────────────────────────────┐
-              │  Customer's Infrastructure    │
-              │  (DB, Kafka, Cloud, etc.)     │
-              └───────────────────────────────┘
+          ┌─────────────────┐
+          │  OT Device      │ (PLC, sensor, SCADA)
+          └────────┬────────┘
+                   │
+                   ▼
+┌───────────────────────────────────────────────┐
+│  StreamForge Gateway                          │
+│                                               │
+│  ┌─────────────────┐                          │
+│  │ Protocol Adapter│ (Docker container)       │
+│  │  - Polls device │                          │
+│  │  - Normalizes   │                          │
+│  │  - Classifies   │                          │
+│  └────────┬────────┘                          │
+│           │                                   │
+│           ▼                                   │
+│  ┌─────────────────┐                          │
+│  │  Local Stream   │ (Kafka-compatible broker)│
+│  │  telemetry.raw  │                          │
+│  │  events.raw     │                          │
+│  │  alarms.raw     │                          │
+│  └────────┬────────┘                          │
+│           │                                   │
+│           ├──────────────┐                    │
+│           ▼              ▼                    │
+│  ┌──────────────┐ ┌──────────┐                │
+│  │  Validator   │ │Aggregator│                │
+│  │  (module)    │ │(module)  │                │
+│  └──────┬───────┘ └────┬─────┘                │
+│         │              │                      │
+│         ▼              ▼                      │
+│  telemetry.clean  telemetry.1s                │
+│  dlq.telemetry    telemetry.1min              │
+└───────────────────────────────────────────────┘
+                    │
+                    ▼
+         ┌─────────────────────┐
+         │   Sink Containers   │
+         │ (S3, DB, Kafka...)  │
+         └─────────────────────┘
+                    │
+                    ▼
+   ┌───────────────────────────────┐
+   │  Customer's Infrastructure    │
+   │  (DB, Kafka, Cloud, etc.)     │
+   └───────────────────────────────┘
 ```
 
 ### Topic Organization
@@ -324,9 +344,9 @@ Passed via environment variable `ADAPTER_CONFIG` (JSON):
 }
 ```
 
-#### Output: Kafka Messages
+#### Output: Stream Messages
 
-Adapter containers publish through the shared adapter Kafka publisher, which targets gateway-local Kafka, keys records by `asset_id` when present, and waits for broker acknowledgement with `acks=all`.
+Adapter containers publish through the shared adapter publisher, which targets the gateway-local Kafka-compatible broker, keys records by `asset_id` when present, and waits for broker acknowledgement with `acks=all`.
 
 ```json
 {
@@ -362,7 +382,7 @@ GET /metrics → Prometheus format
 ### Schema Registry Integration
 
 - **Serialization**: Avro (mandatory)
-- **Registry**: Confluent Schema Registry or Karapace
+- **Registry**: Kafka-compatible Schema Registry API. The local dev stack uses Redpanda's built-in Schema Registry endpoint.
 - **Compatibility**: BACKWARD (default)
 
 ### Offline Caching
@@ -377,19 +397,22 @@ Gateways cache schemas locally for offline operation:
 
 ## Edge Buffering Strategy
 
-### Embedded Kafka (KRaft Mode)
+### Embedded Kafka-Compatible Broker
 
-Each gateway runs a single-node Kafka cluster:
-- **Mode**: KRaft (no ZooKeeper)
+Each gateway runs a single-node Kafka-compatible broker:
+- **Chosen direction**: Redpanda
+- **Current local dev/runtime image**: `redpandadata/redpanda:v26.1.9`
+- **Production packaging**: Pending
 - **Storage**: Configurable per gateway (e.g., 50-500GB)
 - **Retention**: Time-based + size-based
 
-### Why Embedded Kafka?
+### Why Kafka-Compatible Instead of a Custom Queue?
 
 - Proven durability and replay
-- Standard tooling (consumers, CLI)
+- Standard tooling and client semantics
 - No custom buffering code
 - Handles backpressure natively
+- Redpanda keeps those semantics while reducing the operational burden for edge deployments
 
 ---
 
@@ -601,9 +624,9 @@ Roles can be scoped to specific gateways:
 |-----------|---------|----------|
 | Adapter | Crash | Auto-restart (max 5 in 5 min) |
 | Adapter | Protocol timeout | Retry with backoff, mark DEGRADED |
-| Sink | Downstream unreachable | Circuit breaker opens, Kafka retains uncommitted records, retry after cooldown |
+| Sink | Downstream unreachable | Circuit breaker opens, local stream retains uncommitted records, retry after cooldown |
 | Validator | Crash | Auto-restart, messages queue |
-| Local Kafka | Crash | Auto-restart, data preserved |
+| Local broker | Crash | Auto-restart, data preserved |
 | Gateway Runtime | Crash | Systemd restarts, children restart |
 
 #### Bulkhead Isolation
@@ -619,7 +642,7 @@ For sinks and Control Plane communication:
 - **Closed**: Normal operation
 - **Open**: After 5 consecutive failures, pause 30s
 - **Half-open**: Try one request, success → Closed, fail → Open
-- Sink consumers commit Kafka offsets only after successful downstream writes so buffered records remain retryable while the breaker is open
+- Sink consumers commit local stream offsets only after successful downstream writes so buffered records remain retryable while the breaker is open
 
 ### Recovery States
 
@@ -640,15 +663,15 @@ For sinks and Control Plane communication:
 |-------|----------|-------------|
 | Gateway config | Cached locally (file) | Synced from Control Plane |
 | Adapter state | In-memory | Stateless (restart clean) |
-| Kafka data | Kafka disk | Persistent |
-| Sink progress | Kafka consumer offsets | Persistent |
-| Alarm state | Kafka + Control Plane DB | Persistent |
-| DLQ messages | Kafka topic | Persistent |
+| Local stream data | Broker disk | Persistent |
+| Sink progress | Kafka-compatible consumer offsets | Persistent |
+| Alarm state | Local stream + Control Plane DB | Persistent |
+| DLQ messages | Local stream topic | Persistent |
 | Schema cache | Local file | Synced from registry |
 
 ### Key Principles
 
-1. **Kafka is source of truth for data**
+1. **The gateway-local stream is source of truth for data**
 2. **Control Plane DB is source of truth for config**
 3. **Stateless adapters** — restart cleanly
 4. **Consumer offsets track progress** — sinks resume exactly where they left off
@@ -659,7 +682,7 @@ For sinks and Control Plane communication:
 
 ### Tiered Overflow Strategy
 
-When local Kafka storage fills up:
+When local broker storage fills up:
 
 | Disk Usage | Action |
 |------------|--------|
@@ -787,10 +810,12 @@ sinks:
 | Scenario | Recovery |
 |----------|----------|
 | Hardware dies | Deploy new, register same ID, config pulled |
-| Kafka corrupted | Restart, data lost, adapters resume polling |
+| Local broker data corrupted | Restart, affected buffered data may be lost, adapters resume polling |
 | Config corrupted | Re-pull from Control Plane |
 
-No critical state lives only on gateway.
+Configuration state should be recoverable from the control plane. Buffered data
+that has not yet drained to a sink still depends on the gateway's local broker
+disk, so disk protection and backup choices matter in production packaging.
 
 ---
 
@@ -811,7 +836,7 @@ Cloud/Datacenter:
   └── Control Plane (API + UI + DB)
 
 Edge (each location):
-  └── Gateway (Runtime + Kafka + Adapters + Sinks)
+  └── Gateway (Runtime + local stream + Adapters + Sinks)
 ```
 
 ### Pattern B: Local (Single Gateway)
@@ -820,7 +845,7 @@ Edge (each location):
 Gateway Device:
   ├── Control Plane (SQLite)
   ├── Gateway Runtime
-  ├── Local Kafka
+  ├── Local stream broker
   ├── Adapters
   └── Sinks
 ```
@@ -838,11 +863,16 @@ Edge:
 
 ---
 
-## AI Copilot & MCP Tools
+## Planned Copilot Tool Surface
+
+Status: planned/deferred. This section captures the intended direction, not a
+production-complete subsystem in the current codebase. AI/copilot work should
+remain behind the production-readiness items tracked in
+[Production Readiness Reconciliation](PRODUCTION_READINESS_RECONCILIATION.md).
 
 ### Tools-First Architecture
 
-StreamForge exposes **MCP-compatible tools**, not a monolithic agent.
+StreamForge should expose **MCP-compatible tools**, not a monolithic agent.
 
 **Why**: Customers may have their own orchestrating agent. Multiple agents = chaos. One agent calling multiple tools = clean.
 
@@ -859,7 +889,7 @@ StreamForge exposes **MCP-compatible tools**, not a monolithic agent.
  Tools]       Platform]  System]   Model]
 ```
 
-### Available Tools
+### Intended Tools
 
 #### Read/Query Tools
 | Tool | Purpose |
@@ -894,7 +924,7 @@ StreamForge exposes **MCP-compatible tools**, not a monolithic agent.
 | `generate_adapter_template` | Scaffold new adapter |
 | `generate_sink_template` | Scaffold new sink |
 
-### Built-in Copilot (Optional)
+### Built-in Copilot (Optional Future Layer)
 
 For users who only use StreamForge:
 - Chat UI in dashboard
@@ -938,7 +968,7 @@ Every Copilot action logged:
 
 | # | Decision | Choice |
 |---|----------|--------|
-| 1 | Edge Buffering | Embedded Kafka (KRaft mode) |
+| 1 | Edge Buffering | Embedded Kafka-compatible broker; Redpanda chosen for edge, production packaging pending |
 | 2 | Protocol Adapters | Docker containers |
 | 3 | Schema Management | Avro + Schema Registry + offline caching |
 | 4 | Config Distribution | Poll every 30s + optional push |
@@ -953,11 +983,11 @@ Every Copilot action logged:
 | 13 | Coupling | Loosely coupled. Gateway runs offline indefinitely |
 | 14 | Sinks | Docker containers on gateway |
 | 15 | Autonomy | Full. First boot needs Control Plane, then offline OK |
-| 16 | Registration | Auto-register + approval. Local/remote/hybrid modes |
-| 17 | Auth | Gateways: JWT. Users: built-in + optional OAuth |
+| 16 | Registration | Operator-driven gateway records today; production enrollment/approval UX pending |
+| 17 | Auth | Gateways: JWT. Users: built-in auth today; OAuth/OIDC later |
 | 18 | RBAC | 4 roles + resource scoping |
 | 19 | Failure | Hybrid: restart + bulkhead + circuit breaker |
-| 20 | State | Kafka = data truth. Control Plane = config truth |
+| 20 | State | Local Kafka-compatible stream = data truth. Control Plane = config truth |
 | 21 | Overflow | Tiered: compress → downsample → evict by priority |
 | 22 | Metrics | Local Prometheus + remote push |
 | 23 | Logging | Structured JSON, push to Control Plane |
