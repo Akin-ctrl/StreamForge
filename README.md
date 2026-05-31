@@ -231,5 +231,4 @@ operator workflow quality.
 
 ## Support
 
-There is no commercial support channel yet. For now, use GitHub issues or the
-repository owner's public contact channels for questions and feedback.
+There is no commercial support channel yet. For now, use GitHub issues or my public contact channels for questions and feedback.
