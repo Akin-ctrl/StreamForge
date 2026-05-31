@@ -58,50 +58,41 @@ services:
       - "8001:8000"
 
   kafka:
-    image: confluentinc/cp-kafka:7.5.0
-    environment:
-      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
-      KAFKA_PROCESS_ROLES: "broker,controller"
-      KAFKA_NODE_ID: 1
-      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
-      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
-      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"
-      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
-      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+    image: redpandadata/redpanda:v26.1.9
+    hostname: kafka
+    command:
+      - redpanda
+      - start
+      - --kafka-addr
+      - internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr
+      - internal://kafka:9092,external://localhost:9092
+      - --schema-registry-addr
+      - internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr
+      - kafka:33145
+      - --advertise-rpc-addr
+      - kafka:33145
+      - --mode
+      - dev-container
+      - --smp
+      - "1"
+      - --default-log-level=info
     healthcheck:
-      test: ["CMD", "cub", "kafka-ready", "-b", "localhost:9092", "1", "40"]
+      test: ["CMD-SHELL", "rpk cluster info --brokers localhost:9092 >/dev/null 2>&1"]
       interval: 10s
-      timeout: 45s
+      timeout: 10s
       start_period: 20s
       retries: 12
     ports:
-      - "9092:9092"
+      - "9092:19092"
+      - "8082:18081"
     volumes:
-      - kafka-data:/var/lib/kafka/data
-
-  schema_registry:
-    image: confluentinc/cp-schema-registry:7.5.0
-    depends_on:
-      kafka:
-        condition: service_healthy
-    environment:
-      SCHEMA_REGISTRY_HOST_NAME: schema_registry
-      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
-    healthcheck:
-      test: ["CMD", "cub", "sr-ready", "localhost", "8081", "40"]
-      interval: 10s
-      timeout: 45s
-      start_period: 20s
-      retries: 12
-    restart: unless-stopped
-    ports:
-      - "8082:8081"
+      - redpanda-data:/var/lib/redpanda/data
+    networks:
+      default:
+        aliases:
+          - schema_registry
 
   dev_bootstrap:
     profiles: ["seed"]
@@ -131,8 +122,6 @@ services:
       dockerfile: gateway_runtime/Dockerfile
     depends_on:
       kafka:
-        condition: service_healthy
-      schema_registry:
         condition: service_healthy
       modbus-simulator:
         condition: service_started
@@ -179,7 +168,7 @@ services:
       SCHEMA_REGISTRY_URL: http://schema_registry:8081
       ADAPTER_MODBUS_TCP_IMAGE: streamforge/gateway_runtime:dev
       # When the local broker is not already reachable, gateway_runtime can provision and supervise
-      # its own single-node Kafka container through the Docker socket.
+      # its own single-node Redpanda container through the Docker socket.
       KAFKA_AUTO_MANAGE: "true"
       HEALTH_HOST: 0.0.0.0
       HEALTH_PORT: "8088"
@@ -228,6 +217,7 @@ services:
     environment:
       KAFKA_CLUSTERS_0_NAME: "local"
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:9092"
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: "http://schema_registry:8081"
 
   ui:
     build:
@@ -241,6 +231,6 @@ services:
 
 volumes:
   gateway-data:
-  kafka-data:
   postgres-data:
+  redpanda-data:
   timescaledb-data:

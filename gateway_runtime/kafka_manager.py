@@ -1,4 +1,4 @@
-"""Kafka manager for local embedded Kafka (KRaft)."""
+"""Manager for the local Kafka-compatible edge broker."""
 
 from __future__ import annotations
 
@@ -14,9 +14,15 @@ from gateway_runtime.errors import KafkaError
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_CONFLUENT_IMAGE = "confluentinc/cp-kafka:7.5.0"
+DEFAULT_REDPANDA_IMAGE = "redpandadata/redpanda:v26.1.9"
+CONFLUENT_DATA_DIR = "/var/lib/kafka/data"
+REDPANDA_DATA_DIR = "/var/lib/redpanda/data"
+SUPPORTED_BROKER_FLAVORS = {"confluent", "redpanda"}
+
 
 def _docker_error_types() -> tuple[type[BaseException], ...]:
-    """Return the docker-side exceptions expected during Kafka management."""
+    """Return the docker-side exceptions expected during broker management."""
     error_types: list[type[BaseException]] = [RuntimeError, OSError]
     try:
         from docker.errors import APIError, DockerException, NotFound  # type: ignore
@@ -31,39 +37,50 @@ def _container_lookup_error_types() -> tuple[type[BaseException], ...]:
 
 class KafkaManager:
     """
-    Manages local Kafka lifecycle (embedded single-node KRaft).
+    Manages the local Kafka-compatible broker lifecycle.
+
+    Redpanda is the default embedded broker because it keeps Kafka protocol
+    compatibility while reducing the edge footprint. The Confluent KRaft path
+    remains available through ``KAFKA_BROKER_FLAVOR=confluent`` for compatibility.
     """
 
     def __init__(self, bootstrap: str) -> None:
-        """Initialize with local Kafka bootstrap address."""
+        """Initialize with local broker bootstrap address."""
         self._bootstrap = bootstrap
         self._host, self._port = self._parse_bootstrap(bootstrap)
         self._auto_manage = os.getenv("KAFKA_AUTO_MANAGE", "true").lower() in {"1", "true", "yes", "on"}
         self._start_timeout_s = int(os.getenv("KAFKA_START_TIMEOUT", "60"))
-        self._image = os.getenv("KAFKA_IMAGE", "confluentinc/cp-kafka:7.5.0")
+        self._broker_flavor = os.getenv("KAFKA_BROKER_FLAVOR", "redpanda").strip().lower()
+        if self._broker_flavor not in SUPPORTED_BROKER_FLAVORS:
+            supported = ", ".join(sorted(SUPPORTED_BROKER_FLAVORS))
+            raise KafkaError(f"Unsupported broker flavor {self._broker_flavor!r}; expected one of: {supported}")
+        self._image = self._configured_image()
         self._cluster_id = os.getenv("KAFKA_CLUSTER_ID", "MkU3OEVBNTcwNTJENDM2Qk")
         self._container_name = os.getenv("KAFKA_CONTAINER_NAME", self._default_container_name())
         self._container_network_mode = os.getenv("KAFKA_CONTAINER_NETWORK_MODE", self._default_network_mode())
-        self._host_data_dir = os.getenv("KAFKA_DATA_DIR")
-        self._data_volume = os.getenv("KAFKA_DATA_VOLUME", f"{self._container_name}-data")
+        self._host_data_dir = os.getenv("REDPANDA_DATA_DIR") or os.getenv("KAFKA_DATA_DIR")
+        self._data_volume = os.getenv("REDPANDA_DATA_VOLUME") or os.getenv("KAFKA_DATA_VOLUME") or self._default_data_volume()
+        self._redpanda_rpc_port = int(os.getenv("REDPANDA_RPC_PORT", "33145"))
+        self._redpanda_schema_registry_port = int(os.getenv("REDPANDA_SCHEMA_REGISTRY_PORT", "8081"))
+        self._redpanda_smp = os.getenv("REDPANDA_SMP", "1")
         self._client: DockerClientLike | None = None
         self._network: str | None = None
         self._managed_container_id: str | None = None
         self._managed_by_runtime = False
 
     def start(self) -> None:
-        """Start local Kafka (container or process)."""
+        """Start the local broker container when the endpoint is not reachable."""
         if self._can_connect():
             self._adopt_existing_container()
             return
 
         if not self._auto_manage:
-            raise KafkaError(f"Kafka not reachable at {self._bootstrap}")
+            raise KafkaError(f"Broker not reachable at {self._bootstrap}")
 
         self._ensure_running()
 
     def stop(self) -> None:
-        """Stop local Kafka."""
+        """Stop the runtime-managed local broker."""
         if not self._managed_by_runtime or not self._managed_container_id:
             return None
 
@@ -74,12 +91,13 @@ class KafkaManager:
         return None
 
     def health(self) -> Dict[str, object]:
-        """Return Kafka health status."""
+        """Return local broker health status."""
         reachable = self._can_connect()
         container_status = self._container_status()
         return {
             "status": "healthy" if reachable else "failed",
             "bootstrap": self._bootstrap,
+            "broker_flavor": self._broker_flavor,
             "reachable": reachable,
             "managed": self._managed_by_runtime,
             "management_mode": "runtime" if self._managed_by_runtime else ("auto-external" if self._auto_manage else "external"),
@@ -94,16 +112,16 @@ class KafkaManager:
 
     @property
     def container_name(self) -> str:
-        """Return the managed/external Kafka container name."""
+        """Return the managed/external broker container name."""
         return self._container_name
 
     def ensure_running(self) -> None:
-        """Ensure Kafka remains available during runtime supervision."""
+        """Ensure the broker remains available during runtime supervision."""
         if self._can_connect():
             return
 
         if not self._auto_manage:
-            raise KafkaError(f"Kafka became unavailable at {self._bootstrap}")
+            raise KafkaError(f"Broker became unavailable at {self._bootstrap}")
 
         self._ensure_running()
 
@@ -129,10 +147,10 @@ class KafkaManager:
         if self._wait_for_port(timeout_s=self._start_timeout_s):
             return
 
-        raise KafkaError(f"Managed Kafka did not become reachable at {self._bootstrap}")
+        raise KafkaError(f"Managed broker did not become reachable at {self._bootstrap}")
 
     def _wait_for_port(self, timeout_s: int) -> bool:
-        """Check if Kafka port is reachable within timeout."""
+        """Check if the broker port is reachable within timeout."""
         end_time = time.time() + timeout_s
         while time.time() < end_time:
             if self._can_connect():
@@ -141,7 +159,7 @@ class KafkaManager:
         return False
 
     def _can_connect(self) -> bool:
-        """Attempt a TCP connection to the Kafka host:port."""
+        """Attempt a TCP connection to the broker host:port."""
         try:
             with socket.create_connection((self._host, self._port), timeout=1):
                 return True
@@ -149,12 +167,12 @@ class KafkaManager:
             return False
 
     def _docker_client(self) -> DockerClientLike:
-        """Create the optional Docker client lazily for runtime-managed Kafka."""
+        """Create the optional Docker client lazily for runtime-managed brokers."""
         if self._client is None:
             try:
                 import docker  # type: ignore
             except ModuleNotFoundError as exc:
-                raise KafkaError("docker SDK is required to manage embedded Kafka") from exc
+                raise KafkaError("docker SDK is required to manage the embedded broker") from exc
 
             self._client = docker.from_env()
         return self._client
@@ -173,7 +191,7 @@ class KafkaManager:
         self._managed_by_runtime = self._is_runtime_managed(container)
 
     def _resolve_network(self, client: DockerClientLike) -> str:
-        """Infer the Docker network that runtime-managed Kafka should join."""
+        """Infer the Docker network that the runtime-managed broker should join."""
         if self._network:
             return self._network
 
@@ -189,13 +207,13 @@ class KafkaManager:
                 self._network = next(iter(networks.keys()))
                 return self._network
         except _docker_error_types():
-            logger.debug("falling back to bridge network for embedded Kafka discovery")
+            logger.debug("falling back to bridge network for embedded broker discovery")
 
         self._network = "bridge"
         return self._network
 
     def _ensure_container(self, client: DockerClientLike, network: str | None) -> DockerContainerLike:
-        """Reuse or create the Kafka container that backs the embedded broker."""
+        """Reuse or create the container that backs the embedded broker."""
         try:
             container = self._find_container(client, self._container_name)
             self._container_name = container.name
@@ -214,12 +232,15 @@ class KafkaManager:
                 "image": self._image,
                 "name": self._container_name,
                 "detach": True,
-                "environment": self._kafka_environment(),
+                "environment": self._container_environment(),
                 "labels": labels,
                 "restart_policy": {"Name": "unless-stopped"},
                 "hostname": self._broker_host(),
                 "volumes": self._volume_spec(),
             }
+            command = self._container_command()
+            if command is not None:
+                run_kwargs["command"] = command
 
             if self._uses_host_network():
                 run_kwargs["network_mode"] = self._container_network_mode
@@ -256,7 +277,7 @@ class KafkaManager:
             return "missing"
 
     def _find_container(self, client: DockerClientLike, target: str) -> DockerContainerLike:
-        """Resolve a Kafka container by ID, name, or compose-derived alias."""
+        """Resolve a broker container by ID, name, or compose-derived alias."""
         try:
             return client.containers.get(target)
         except _docker_error_types():
@@ -266,7 +287,7 @@ class KafkaManager:
             if self._matches_container(container, target):
                 return container
 
-        raise KafkaError(f"Kafka container {target} not found")
+        raise KafkaError(f"Broker container {target} not found")
 
     @staticmethod
     def _matches_container(container: DockerContainerLike, target: str) -> bool:
@@ -289,7 +310,10 @@ class KafkaManager:
 
         return False
 
-    def _kafka_environment(self) -> Dict[str, str]:
+    def _container_environment(self) -> Dict[str, str]:
+        if self._is_redpanda():
+            return {}
+
         broker_host = self._broker_host()
         return {
             "CLUSTER_ID": self._cluster_id,
@@ -300,27 +324,55 @@ class KafkaManager:
             "KAFKA_ADVERTISED_LISTENERS": f"PLAINTEXT://{broker_host}:{self._port}",
             "KAFKA_LISTENER_SECURITY_PROTOCOL_MAP": "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT",
             "KAFKA_CONTROLLER_LISTENER_NAMES": "CONTROLLER",
-            "KAFKA_LOG_DIRS": "/var/lib/kafka/data",
+            "KAFKA_LOG_DIRS": CONFLUENT_DATA_DIR,
             "KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR": "1",
             "KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR": "1",
             "KAFKA_TRANSACTION_STATE_LOG_MIN_ISR": "1",
             "KAFKA_AUTO_CREATE_TOPICS_ENABLE": os.getenv("KAFKA_AUTO_CREATE_TOPICS_ENABLE", "true"),
         }
 
+    def _container_command(self) -> list[str] | None:
+        if not self._is_redpanda():
+            return None
+
+        broker_host = self._broker_host()
+        return [
+            "redpanda",
+            "start",
+            "--kafka-addr",
+            f"internal://0.0.0.0:{self._port}",
+            "--advertise-kafka-addr",
+            f"internal://{broker_host}:{self._port}",
+            "--schema-registry-addr",
+            f"internal://0.0.0.0:{self._redpanda_schema_registry_port}",
+            "--rpc-addr",
+            f"{broker_host}:{self._redpanda_rpc_port}",
+            "--advertise-rpc-addr",
+            f"{broker_host}:{self._redpanda_rpc_port}",
+            "--mode",
+            "dev-container",
+            "--smp",
+            self._redpanda_smp,
+            "--default-log-level=info",
+        ]
+
     def _volume_spec(self) -> Dict[str, Dict[str, str]]:
+        container_data_dir = self._container_data_dir()
         if self._host_data_dir:
             os.makedirs(self._host_data_dir, exist_ok=True)
             return {
-                self._host_data_dir: {"bind": "/var/lib/kafka/data", "mode": "rw"},
+                self._host_data_dir: {"bind": container_data_dir, "mode": "rw"},
             }
 
         return {
-            self._data_volume: {"bind": "/var/lib/kafka/data", "mode": "rw"},
+            self._data_volume: {"bind": container_data_dir, "mode": "rw"},
         }
 
     def _default_container_name(self) -> str:
         if self._host and self._host not in {"127.0.0.1", "localhost"}:
             return self._host
+        if self._is_redpanda():
+            return "sf-redpanda"
         return "sf-kafka"
 
     def _default_network_mode(self) -> str:
@@ -335,3 +387,21 @@ class KafkaManager:
         if self._uses_host_network() and self._host in {"localhost", "127.0.0.1"}:
             return "127.0.0.1"
         return self._host
+
+    def _configured_image(self) -> str:
+        if self._is_redpanda():
+            return os.getenv("REDPANDA_IMAGE") or os.getenv("KAFKA_IMAGE", DEFAULT_REDPANDA_IMAGE)
+        return os.getenv("KAFKA_IMAGE", DEFAULT_CONFLUENT_IMAGE)
+
+    def _default_data_volume(self) -> str:
+        if self._is_redpanda():
+            return f"{self._container_name}-redpanda-data"
+        return f"{self._container_name}-data"
+
+    def _container_data_dir(self) -> str:
+        if self._is_redpanda():
+            return REDPANDA_DATA_DIR
+        return CONFLUENT_DATA_DIR
+
+    def _is_redpanda(self) -> bool:
+        return self._broker_flavor == "redpanda"

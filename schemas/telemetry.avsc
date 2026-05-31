@@ -14,7 +14,7 @@
           "name": "TelemetryReading",
           "fields": [
             {"name": "parameter", "type": "string"},
-            {"name": "value", "type": ["double", "long", "null"], "default": null},
+            {"name": "value", "type": ["null", "double", "long"], "default": null},
             {"name": "unit", "type": "string"},
             {"name": "quality", "type": "string"},
             {"name": "device_time", "type": ["null", "string"], "default": null}

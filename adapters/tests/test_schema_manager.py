@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import tempfile
 import unittest
 from urllib import error
@@ -75,6 +76,23 @@ class SchemaManagerTests(unittest.TestCase):
 
         self.assertEqual(schema_id, 7)
         self.assertEqual(urlopen_mock.call_count, 2)
+
+    def test_bundled_telemetry_schemas_keep_null_first_for_defaulted_value(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        schema_paths = [
+            repo_root / "schemas" / "telemetry.avsc",
+            repo_root / "adapters" / "adapter_base" / "telemetry.avsc",
+        ]
+
+        for schema_path in schema_paths:
+            with self.subTest(schema_path=schema_path):
+                schema = json.loads(schema_path.read_text(encoding="utf-8"))
+                readings = next(field for field in schema["fields"] if field["name"] == "readings")
+                reading_fields = readings["type"]["items"]["fields"]
+                value_field = next(field for field in reading_fields if field["name"] == "value")
+
+                self.assertIsNone(value_field["default"])
+                self.assertEqual(value_field["type"][0], "null")
 
 
 if __name__ == "__main__":
