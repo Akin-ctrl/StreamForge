@@ -64,11 +64,11 @@ We needed a consistent failure handling model.
 |-----------|---------|-----------|----------|
 | Adapter | Crash | Docker event | Auto-restart (max 5 in 5 min) |
 | Adapter | Protocol timeout | Health check | Retry with exponential backoff |
-| Sink | Downstream unreachable | Write failure | Circuit breaker + Kafka buffers |
+| Sink | Downstream unreachable | Write failure | Circuit breaker + local stream buffering |
 | Sink | Repeated failures | 5 consecutive | Mark FAILED, alert, stop retrying |
-| Validator | Crash | Process exit | Auto-restart, messages queue in Kafka |
-| Local Kafka | Crash | Process exit | Auto-restart, data preserved on disk |
-| Local Kafka | Disk full | Disk monitor | Tiered eviction (see ADR-009) |
+| Validator | Crash | Process exit | Auto-restart, messages queue in the local stream |
+| Local broker | Crash | Process exit | Auto-restart, data preserved on disk |
+| Local broker | Disk full | Disk monitor | Tiered eviction (see ADR-009) |
 | Gateway Runtime | Crash | Systemd/Docker | Restart, children restart |
 | Control Plane | Unreachable | API timeout | Continue with cached config |
 

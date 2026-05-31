@@ -9,7 +9,7 @@
 ## Context
 
 Edge gateways have limited disk space (typically 100-500GB). When sinks are offline for extended periods:
-- Local Kafka fills up
+- The gateway-local Kafka-compatible broker fills up
 - New data cannot be written
 - Risk of data loss
 
@@ -61,7 +61,7 @@ We needed a strategy for handling disk exhaustion.
 | Disk Usage | Action |
 |------------|--------|
 | 0-70% | Normal operation |
-| 70-80% | **Alert**. Compress old Kafka segments. |
+| 70-80% | **Alert**. Compress old broker segments where supported. |
 | 80-90% | **Aggressive downsample**. Delete raw telemetry older than 1 hour, keep aggregates. |
 | 90-95% | **Priority eviction**. Delete oldest data, lowest priority first. |
 | 95%+ | **Block producers**. Critical alert. Stop accepting new data. |

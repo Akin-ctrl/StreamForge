@@ -1,8 +1,9 @@
 # ADR-001: Edge Buffering Strategy
 
-**Status**: Accepted  
+**Status**: Accepted, amended for Redpanda direction
 **Date**: 2026-01-29  
-**Decision**: Use embedded Kafka (KRaft mode) for edge buffering
+**Last Updated**: 2026-05-30
+**Decision**: Use an embedded Kafka-compatible broker for edge buffering, with Redpanda as the chosen edge direction
 
 ---
 
@@ -32,9 +33,11 @@ We needed to decide how to implement reliable local buffering.
 **Pros**: Simple, embedded  
 **Cons**: Not designed for streaming, no consumer offset tracking, limited throughput
 
-### Option C: Embedded Kafka (KRaft mode)
-- Single-node Kafka cluster per gateway
-- KRaft mode (no ZooKeeper required)
+### Option C: Embedded Kafka-Compatible Broker
+- Single-node Kafka-compatible broker per gateway
+- Local dev/runtime path uses Redpanda
+- Production packaging and image-pull templates are still pending
+- Redpanda keeps Kafka protocol semantics with a lighter edge operational profile
 - Standard Kafka protocol
 
 **Pros**: Proven durability, standard tooling, replay capability, consumer offset tracking  
@@ -49,35 +52,44 @@ We needed to decide how to implement reliable local buffering.
 
 ## Decision
 
-**Option C: Embedded Kafka (KRaft mode)**
+**Option C: Embedded Kafka-compatible broker**
+
+The original implementation used embedded Kafka in KRaft mode. The project is
+now Redpanda-first for the local dev/runtime broker path while retaining Kafka
+protocol, client, topic, partition, and consumer-group semantics. Production
+packaging is still pending and should be documented separately when the
+image/template workflow is implemented.
 
 ## Rationale
 
-1. **Proven durability**: Kafka is battle-tested for exactly this use case
-2. **Standard protocol**: Sinks use standard Kafka consumers, no custom code
+1. **Proven durability model**: Kafka-compatible logs are well suited to local buffering and replay
+2. **Standard protocol**: Sinks use standard Kafka-compatible consumers, no custom code
 3. **Replay capability**: Any sink can replay from any offset
 4. **Consumer offsets**: Track exactly what each sink has processed
-5. **No central Kafka required**: Each gateway is fully independent
+5. **No central broker required**: Each gateway is fully independent
 6. **Backpressure handling**: Native flow control
+7. **Edge operational fit**: Redpanda is better aligned with constrained gateway deployments than operating a heavier Kafka distribution
 
-The ~512MB RAM overhead is acceptable for industrial gateway hardware (typically 4-16GB RAM).
+The broker must still be sized explicitly for the gateway hardware. Redpanda
+should reduce operational complexity, but it does not remove the need to plan
+disk, memory, and retention behavior.
 
 ## Consequences
 
 ### Positive
 - Reliable buffering with minimal custom code
-- Sinks can use any Kafka client library
+- Sinks can use Kafka-compatible client libraries
 - Standard CLI tools for debugging
 - Natural fit for multi-sink architecture
 
 ### Negative
-- Higher memory footprint than lightweight alternatives
-- Kafka operational knowledge required
+- Higher resource footprint than a custom file queue or SQLite
+- Kafka-compatible broker operational knowledge still required
 - Disk I/O requirements for durability
 
 ### Mitigations
 - Configure appropriate memory limits
-- Document Kafka tuning for edge deployment
+- Document Redpanda/Kafka-compatible tuning for edge deployment
 - Provide default configurations for common hardware
 
 ## Related Decisions

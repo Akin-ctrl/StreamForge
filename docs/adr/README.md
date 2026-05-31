@@ -14,7 +14,7 @@ An ADR documents a significant architectural decision, including:
 
 | ADR | Title | Status |
 |-----|-------|--------|
-| [ADR-001](ADR-001-edge-buffering.md) | Edge Buffering Strategy | Accepted |
+| [ADR-001](ADR-001-edge-buffering.md) | Edge Buffering Strategy | Accepted, amended |
 | [ADR-002](ADR-002-protocol-adapters.md) | Protocol Adapter Architecture | Accepted |
 | [ADR-003](ADR-003-schema-management.md) | Schema Management Strategy | Accepted |
 | [ADR-004](ADR-004-validation-dlq.md) | Validation and DLQ Workflow | Accepted |
@@ -23,13 +23,13 @@ An ADR documents a significant architectural decision, including:
 | [ADR-007](ADR-007-authentication.md) | Authentication Model | Accepted |
 | [ADR-008](ADR-008-failure-modes.md) | Failure Modes and Recovery | Accepted |
 | [ADR-009](ADR-009-overflow-handling.md) | Overflow Handling | Accepted |
-| [ADR-010](ADR-010-copilot-mcp.md) | Copilot Tools-First Approach | Accepted |
+| [ADR-010](ADR-010-copilot-mcp.md) | Copilot Tools-First Approach | Accepted, deferred |
 | [ADR-011](ADR-011-phase-1-4-conformance-baseline.md) | Phase 1-4 Architecture Conformance Baseline | Accepted |
 
 ## Key Decisions Summary
 
 ### Data Path
-- **Edge Buffering**: Embedded Kafka (KRaft mode) per gateway
+- **Edge Buffering**: Embedded Kafka-compatible broker per gateway, with Redpanda as the chosen edge direction and production packaging still pending
 - **Serialization**: Avro with Schema Registry
 - **Adapters & Sinks**: Docker containers with standard contract
 - **Overflow**: Tiered strategy (compress → downsample → evict by priority)
@@ -40,8 +40,8 @@ An ADR documents a significant architectural decision, including:
 - **Failure Handling**: Restart + bulkhead isolation + circuit breaker
 
 ### Operations
-- **Authentication**: JWT for gateways, built-in + OAuth for users
-- **AI Copilot**: MCP tools-first, built-in Copilot optional
+- **Authentication**: JWT for gateways and built-in users; OAuth/OIDC remains later enterprise work
+- **AI Copilot**: MCP tools-first direction is deferred until core production-readiness work is closed
 - **Conformance Baseline**: Phase 1-4 audit baseline for remediation tracking
 
 Current implementation progress and issue movement are tracked in:

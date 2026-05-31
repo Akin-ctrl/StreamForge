@@ -45,5 +45,7 @@ npm run build
 ## Status Notes
 
 - The current operator UI covers the core reusable-object workflow: adapters, sinks, deployments, validation/test/preflight, events, aggregates, fleet, and logs.
-- The next active UI roadmap item is general configuration UX polish.
+- The next active UI/product work is gateway onboarding, physical-device verification, topology redesign, and the remaining responsive/readability hardening before AI.
+- The current topology and gateway approval experience are functional baselines, not the final production UX.
+- The detailed trust-gap and readiness reconciliation lives in `docs/PRODUCTION_READINESS_RECONCILIATION.md`.
 - Broader roadmap tracking now lives in `docs/UI_PRODUCT_ACTION_LIST.md` and `PROJECT_PHASES.md`.

@@ -2,11 +2,14 @@
 
 This list captures the remaining product-facing UI work in strict priority order so implementation stays aligned with the accepted architecture and does not drift into demo-only shortcuts.
 
-Last updated: 2026-05-19
+Last updated: 2026-05-30
 
 Status note:
 - Items `1` through `10` below are now implemented in the current UI/control-plane/runtime stack.
-- The next active UI roadmap item is `11. P1 General configuration UX polish`.
+- Items `11` and `12` are partially implemented and now continue as focused cleanup rather than blank-slate phases.
+- The next active product work is gateway onboarding, physical-device verification, topology redesign, responsive polish, and the full pre-AI verification gate.
+- Redpanda is now the chosen local broker direction; production image/template packaging remains outside the UI roadmap until the packaging workflow is implemented.
+- For the detailed reconciliation of current trust blockers, outdated review claims, and before-AI exit criteria, see [Production Readiness Reconciliation](./PRODUCTION_READINESS_RECONCILIATION.md).
 
 ## Priority Order
 
@@ -77,6 +80,50 @@ Status note:
    - Add OAuth/OIDC entry points and role-aware UX only after the backend auth path is implemented.
    - Keep built-in auth and first-user bootstrap as the default out-of-box experience.
 
+## Pending Work Before AI
+
+1. `P1` Gateway onboarding and approval UX
+   - Fix the current operational gap where gateway self-registration is disabled but the UI does not provide a production-grade enrollment flow.
+   - Support a real multi-site onboarding path so remote gateways can appear in the UI in a manageable, reviewable way.
+   - Make approval meaningful in the operator workflow rather than only usable after manual record creation.
+
+2. `P1` Physical-device verification and gateway-executed connection tests
+   - Extend connection testing beyond control-plane-side reachability checks.
+   - Add honest gateway-side verification for real Modbus, MQTT, OPC UA, and RTU device access where required.
+   - Surface unsupported or not-testable-from-control-plane cases clearly.
+
+3. `P1` Operator-style end-to-end verification workflow
+   - Add a documented real-operator walkthrough for gateway onboarding, adapter/sink authoring, validation, connection test, deployment preflight, activation, and post-deploy observation.
+   - Keep this flow usable on a fresh stack and on production-like environments.
+
+4. `P1` Topology redesign
+   - Replace the current box-column topology with a clearer flow-oriented architecture view.
+   - Show the actual path from gateway to adapters, validation/events/aggregates, and sinks.
+   - Make the topology readable as an operational DAG-style dataflow instead of a loose set of boxes.
+
+5. `P1` Responsive and readability hardening
+   - Continue the remaining work to make forms, tables, topology, filters, and detail panes hold up under different screen sizes, zoom levels, and larger text settings.
+   - Treat this as a usability requirement, not a cosmetic follow-up.
+
+6. `P1/P2` Verification hardening before AI
+   - Complete the fresh-stack smoke phase from teardown through reseed and core operator workflows.
+   - Add the failure-path matrix for invalid config, unreachable endpoints, degraded runtime, empty states, and unsupported test cases.
+   - Run the full pre-AI verification gate across backend, runtime, adapters, sinks, UI interaction tests, and live smoke checks.
+
+## Open Architecture Decisions
+
+- Gateway onboarding model:
+  - strict admin pre-creation
+  - self-registration
+  - or an enrollment / claim flow
+- Physical-device verification model:
+  - control-plane initiated only
+  - or gateway-executed tests reported back to the UI
+- Topology presentation model:
+  - operational DAG
+  - architecture-style flow diagram
+  - or a hybrid
+
 ## Current Delivery Status
 
 - `P0` End-to-end operator configuration: Implemented for reusable adapters, reusable sinks, and composed deployments with deployment-level validation, events, and aggregate controls.
@@ -95,6 +142,10 @@ Status note:
 - `P1` Event and aggregate UX: Implemented.
 - `P1` Fleet operations and topology views: Implemented.
 - `P1` Logs viewer: Implemented using real gateway-runtime log transport through the heartbeat/control-plane path.
-- `P1` General configuration UX polish: Next active phase.
-- `P2` Design-system consistency: Partial.
+- `P1` General configuration UX polish: Partially implemented; remaining work now focuses on responsiveness, topology clarity, and operator readability on real screens.
+- `P2` Design-system consistency: Partial, with shared layout/data-display primitives now in place and further convergence still pending.
+- `P1` Gateway onboarding and production enrollment UX: Open.
+- `P1` Gateway-side physical-device verification: Open.
+- `P1` Operator end-to-end verification workflow: Open.
+- `P1/P2` Pre-AI verification gate: Open.
 - `P2` Optional enterprise auth UX: Blocked on backend auth roadmap.

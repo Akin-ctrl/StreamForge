@@ -8,9 +8,9 @@
 
 ## Context
 
-Data must flow from local Kafka to customer destinations:
+Data must flow from the gateway-local Kafka-compatible stream to customer destinations:
 - TimescaleDB/PostgreSQL
-- Customer's Kafka cluster
+- Customer-owned Kafka-compatible cluster
 - Cloud storage (S3, GCS)
 - HTTP APIs
 - Alerting systems (PagerDuty, Slack)
@@ -21,13 +21,13 @@ We needed to decide where sinks run and how they're deployed.
 
 ### Option A: Sinks on Customer Infrastructure
 - Customer deploys their own consumers
-- We only provide Kafka access
+- We only provide local stream access
 
 **Pros**: Less for us to manage  
 **Cons**: Poor UX, customer needs Kafka expertise, connectivity issues
 
 ### Option B: Sinks in Control Plane
-- Centralized sinks connect to gateway Kafka
+- Centralized sinks connect to the gateway-local stream
 - All data flows through Control Plane
 
 **Pros**: Centralized management  
@@ -35,7 +35,7 @@ We needed to decide where sinks run and how they're deployed.
 
 ### Option C: Sinks as Docker Containers on Gateway
 - Same deployment model as adapters
-- Consume from local Kafka, write to external destination
+- Consume from the gateway-local stream, write to external destination
 
 **Pros**: Consistent model, gateway is self-contained, works offline (buffers)  
 **Cons**: More containers on gateway, external sinks need network
@@ -72,7 +72,7 @@ Endpoints:
   GET /metrics → Prometheus format
 
 Behavior:
-  - Consume from specified Kafka topics
+  - Consume from specified Kafka-compatible topics
   - Write to configured destination
   - Commit offsets after successful write
   - Handle retries internally
@@ -85,21 +85,21 @@ Behavior:
 |------|-------------|
 | `sink-timescaledb` | Write to TimescaleDB |
 | `sink-postgres` | Write to PostgreSQL |
-| `sink-kafka` | Replicate to customer's Kafka |
+| `sink-kafka` | Replicate to customer's Kafka-compatible system |
 | `sink-s3` | Batch write to S3 (Parquet) |
 | `sink-http` | HTTP POST to webhook |
 | `sink-alert-router` | Route alarms to PagerDuty, Slack, etc. |
 
-## Key Clarification: Customer's Kafka
+## Key Clarification: Customer-Owned Kafka-Compatible Systems
 
-**StreamForge does not manage any "central Kafka".**
+**StreamForge does not manage any central Kafka-compatible backbone.**
 
 When customers need multi-gateway aggregation:
 1. Each gateway has `sink-kafka` configured
-2. `sink-kafka` replicates to **customer's own Kafka cluster**
-3. Customer manages that cluster
+2. `sink-kafka` replicates to the customer's own Kafka-compatible system
+3. The customer manages that destination system
 
-This keeps StreamForge focused on the gateway, not Kafka operations.
+This keeps StreamForge focused on the gateway, not external broker operations.
 
 ## Consequences
 
