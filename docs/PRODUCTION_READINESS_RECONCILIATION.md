@@ -73,31 +73,47 @@ Open work:
 
 Current shipped behavior:
 
-- gateway self-registration is disabled
-- operators can approve a gateway only after a gateway record already exists
-- the current UI does not yet provide a production-grade remote enrollment flow
+- gateway self-registration remains disabled
+- admin-managed enrollment tokens are now available
+- gateways can enroll as pending by presenting an enrollment token
+- operators can approve pending gateways from the UI
+- the gateway runtime enrollment path has been verified against the live dev
+  stack using the real control-plane repository code path
+- local compose can pass enrollment identity/token environment variables without
+  changing the default demo-gateway behavior
+- a clean local stack has been verified from first-admin bootstrap through
+  enrollment-token creation, runtime enrollment, approval, deployment preflight,
+  active deployment creation, Redpanda topics/schemas, and TimescaleDB telemetry
+  landing without `dev_bootstrap`
+- manual gateway creation remains available for controlled environments and
+  local development
 
 Why this matters:
 
 - multi-site deployments need a realistic way for gateways in remote locations
   to appear in the control plane in a manageable, reviewable state
-- the current pre-create-then-approve model is operationally workable for dev
-  and controlled environments, but it is not yet the final production
-  experience
+- enrollment makes central and site-local deployments follow the same operator
+  model
 
 Open work:
 
-- choose the long-term onboarding model
-- implement the corresponding UI and runtime flow
-- ensure approval is meaningful in the actual field workflow
+- document connected and site-local installation runbooks after packaging exists
+- decide whether one-time gateway-specific claim tokens are needed in addition
+  to site/install tokens
 
 ### 2. Physical-device verification from the gateway side
 
 Current shipped behavior:
 
-- connection tests are real, but mostly control-plane-side reachability probes
-- they do not prove that a remote gateway can reach a real field device on its
-  local network or serial bus
+- control-plane-side validation and reachability probes still exist
+- saved adapters and sinks can now request gateway-executed connection tests
+- the gateway runtime polls for pending tests, executes them from the gateway
+  network, and posts structured pass/fail/unsupported results back to the
+  control plane
+- the UI exposes gateway-side tests for saved adapters and sinks attached to a
+  gateway deployment
+- the live clean-stack verification proved gateway-side Modbus TCP reachability
+  to the local simulator and gateway-side TimescaleDB sink reachability
 
 Why this matters:
 
@@ -108,8 +124,12 @@ Why this matters:
 
 Open work:
 
-- add gateway-executed physical-device verification
-- surface the result in the UI with honest success/failure/unsupported states
+- verify the same gateway-side test path against real physical devices, not only
+  local simulator/container endpoints
+- deepen protocol-aware probes where needed, such as reading a configured Modbus
+  register range instead of only proving a Modbus TCP session
+- keep unsupported states honest for Modbus RTU when the gateway has no serial
+  device access
 
 ### 3. Modbus TCP failure isolation
 
@@ -180,7 +200,7 @@ Why this matters:
 
 Open work:
 
-- complete the fresh-stack smoke phase as a repeatable gate
+- formalize the clean-stack smoke phase as a repeatable gate
 - complete the failure-path matrix
 - define and run the pre-AI verification gate consistently
 
@@ -464,6 +484,7 @@ The following should be true before AI/copilot becomes an active product
 investment layer on top of the operator platform:
 
 - gateway onboarding story is production-honest
+- production-like verification no longer depends on local demo seeding
 - gateway-side physical-device verification exists
 - fresh-stack smoke verification is repeatable
 - failure-path matrix is covered
@@ -483,8 +504,7 @@ investment layer on top of the operator platform:
 ### Must do before AI
 
 - Redpanda production packaging and hardening
-- gateway onboarding / approval UX
-- gateway-side physical-device verification
+- physical-device verification on real hardware
 - provisioning retry hardening
 - Modbus failure isolation
 - fresh-stack smoke verification

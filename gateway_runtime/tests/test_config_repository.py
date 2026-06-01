@@ -60,6 +60,22 @@ class StubControlPlaneConfigRepository(ControlPlaneConfigRepository):
         return response
 
 
+class FakeHttpResponse:
+    """Minimal urllib response double for repository HTTP tests."""
+
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = json.dumps(payload).encode("utf-8")
+
+    def __enter__(self) -> "FakeHttpResponse":
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._payload
+
+
 class ControlPlaneConfigRepositoryTests(unittest.TestCase):
     def test_first_boot_fetches_remote_config_and_persists_cache(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -161,6 +177,85 @@ class ControlPlaneConfigRepositoryTests(unittest.TestCase):
                     breaker = repo._breaker.snapshot()
                     self.assertEqual(breaker.state, "closed")
                     self.assertEqual(breaker.consecutive_failures, 0)
+
+    def test_missing_gateway_enrolls_when_enrollment_token_is_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "gateway.json"
+            repo = ControlPlaneConfigRepository(
+                base_url="http://control-plane.test",
+                gateway_id="gw-edge-01",
+                token=None,
+                enrollment_token="sfe_enrollment_token_value",
+                enrollment_hostname="pi-line-1.local",
+                enrollment_hardware_info={"model": "raspberry-pi"},
+                cache_path=str(cache_path),
+            )
+            calls = []
+
+            def fake_urlopen(req, timeout):
+                calls.append(req)
+                if len(calls) == 1:
+                    raise error.HTTPError(
+                        url="http://control-plane.test/api/v1/gateways/token",
+                        code=404,
+                        msg="error",
+                        hdrs=None,
+                        fp=io.BytesIO(b"{}"),
+                    )
+                return FakeHttpResponse({"gateway_id": "gw-edge-01", "status": "pending", "approved": False})
+
+            with patch("gateway_runtime.config.request.urlopen", side_effect=fake_urlopen):
+                with self.assertRaisesRegex(ConfigError, "gateway is pending approval"):
+                    repo._request_gateway_token()
+
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(calls[1].full_url, "http://control-plane.test/api/v1/gateways/enroll")
+            enroll_payload = json.loads(calls[1].data.decode("utf-8"))
+            self.assertEqual(enroll_payload["gateway_id"], "gw-edge-01")
+            self.assertEqual(enroll_payload["hostname"], "pi-line-1.local")
+            self.assertEqual(enroll_payload["hardware_info"], {"model": "raspberry-pi"})
+
+            breaker = repo._breaker.snapshot()
+            self.assertEqual(breaker.state, "closed")
+            self.assertEqual(breaker.consecutive_failures, 0)
+
+    def test_enrolled_approved_gateway_retries_token_request_immediately(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "gateway.json"
+            repo = ControlPlaneConfigRepository(
+                base_url="http://control-plane.test",
+                gateway_id="gw-edge-01",
+                token=None,
+                enrollment_token="sfe_enrollment_token_value",
+                enrollment_hostname="pi-line-1.local",
+                cache_path=str(cache_path),
+            )
+            responses = [
+                error.HTTPError(
+                    url="http://control-plane.test/api/v1/gateways/token",
+                    code=404,
+                    msg="error",
+                    hdrs=None,
+                    fp=io.BytesIO(b"{}"),
+                ),
+                FakeHttpResponse({"gateway_id": "gw-edge-01", "status": "approved", "approved": True}),
+                FakeHttpResponse({"gateway_id": "gw-edge-01", "token": "gateway-token"}),
+            ]
+            calls = []
+
+            def fake_urlopen(req, timeout):
+                calls.append(req)
+                response = responses.pop(0)
+                if isinstance(response, Exception):
+                    raise response
+                return response
+
+            with patch("gateway_runtime.config.request.urlopen", side_effect=fake_urlopen):
+                repo._request_gateway_token()
+
+            self.assertEqual(repo._token, "gateway-token")
+            self.assertEqual(len(calls), 3)
+            self.assertEqual(calls[2].full_url, "http://control-plane.test/api/v1/gateways/token")
 
 
 if __name__ == "__main__":

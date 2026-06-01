@@ -36,7 +36,13 @@ class ConnectionTestResult(BaseModel):
     """Structured connection-test response returned to the UI."""
 
     ok: bool
-    status: Literal["passed", "failed", "unsupported_here", "cannot_test_from_control_plane"]
+    status: Literal[
+        "passed",
+        "failed",
+        "unsupported_here",
+        "cannot_test_from_control_plane",
+        "cannot_test_from_gateway",
+    ]
     message: str
     warnings: list[str] = Field(default_factory=list)
     probes: list[ConnectionProbeResult] = Field(default_factory=list)

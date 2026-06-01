@@ -53,6 +53,29 @@ class Gateway(Base):
     deployments: Mapped[list[Deployment]] = relationship("Deployment", back_populates="gateway")
 
 
+class GatewayEnrollmentToken(Base):
+    """One-time or limited-use token for field gateway enrollment."""
+
+    __tablename__ = "gateway_enrollment_tokens"
+    __table_args__ = (UniqueConstraint("enrollment_id"), UniqueConstraint("token_hash"))
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    enrollment_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    token_preview: Mapped[str] = mapped_column(String(32))
+    site_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    site_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    max_uses: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    used_count: Mapped[int] = mapped_column(Integer, default=0)
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Adapter(Base):
     """First-class configured adapter instance."""
 
@@ -101,6 +124,28 @@ class Sink(Base):
         secondary=deployment_sinks,
         back_populates="sinks",
     )
+
+
+class GatewayConnectionTest(Base):
+    """Gateway-executed connection test requested by an operator."""
+
+    __tablename__ = "gateway_connection_tests"
+    __table_args__ = (UniqueConstraint("request_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    request_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    gateway_id: Mapped[str] = mapped_column(String(128), index=True)
+    target_kind: Mapped[str] = mapped_column(String(32), index=True)
+    target_id: Mapped[str] = mapped_column(String(128), index=True)
+    target_type: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="REQUESTED", index=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    requested_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class ConfigSecret(Base):

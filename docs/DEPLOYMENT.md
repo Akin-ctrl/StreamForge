@@ -38,7 +38,8 @@ It starts:
 ## Start Fresh
 
 Use this when you want a clean local verification run and do not need to keep
-old local volumes:
+old local volumes. The seed command is a local-demo shortcut; it is not the
+production-like onboarding path.
 
 ```bash
 docker compose -f deploy/docker-compose.dev.yml down -v
@@ -52,6 +53,49 @@ Use this when you want to rebuild without deleting local volumes:
 docker compose -f deploy/docker-compose.dev.yml up -d --build
 docker compose -f deploy/docker-compose.dev.yml --profile seed run --rm dev_bootstrap
 ```
+
+For production-like local verification, do not rely on `dev_bootstrap` to create
+the gateway. Instead:
+
+1. bootstrap the first admin user
+2. create an enrollment token in the Gateways UI
+3. start the gateway with `CONTROL_PLANE_ENROLLMENT_TOKEN`
+4. approve the pending gateway in the UI
+5. create adapters, sinks, validation, event, and aggregate rules
+6. activate a deployment and verify dataflow
+
+### Production-Style First Run Without Seed
+
+Use this path when you want to verify the operator onboarding workflow without
+the local-demo seed shortcut.
+
+Start only the base services first:
+
+```bash
+docker compose -f deploy/docker-compose.dev.yml up -d --build \
+  postgres timescaledb kafka modbus-simulator control_plane ui kafka_ui kafdrop
+```
+
+Then open the UI and bootstrap the first admin account. After login, create a
+gateway enrollment token from the Gateways page.
+
+Start or recreate the gateway runtime with the enrollment token:
+
+```bash
+CONTROL_PLANE_GATEWAY_ID=gateway-site-01 \
+CONTROL_PLANE_GATEWAY_HOSTNAME=raspberrypi-line-1.local \
+CONTROL_PLANE_ENROLLMENT_TOKEN='<token-from-ui>' \
+CONTROL_PLANE_GATEWAY_HARDWARE_INFO='{"site":"local-verification","hardware":"raspberry-pi"}' \
+docker compose -f deploy/docker-compose.dev.yml up -d --build gateway_runtime prometheus
+```
+
+The gateway should appear as pending in the Gateways page. Approve it, then
+continue with adapter creation, sink creation, validation, connection testing,
+deployment activation, and post-deploy observation.
+
+Do not commit enrollment tokens or place long-lived secrets in `.env` files.
+Enrollment tokens are installation-time credentials and should be copied only
+into the shell/session used for the gateway start.
 
 ## Local URLs
 
@@ -132,11 +176,24 @@ the configured development environment.
 
 ### Gateway runtime waits for provisioning
 
-If `gateway_runtime` logs show `gateway not registered`, seed the dev data:
+If `gateway_runtime` logs show `gateway not registered`, choose one of two paths.
+
+For local demo data, seed the dev topology:
 
 ```bash
 docker compose -f deploy/docker-compose.dev.yml --profile seed run --rm dev_bootstrap
 ```
+
+For production-like testing, create an enrollment token in the UI and restart the
+gateway with:
+
+```text
+CONTROL_PLANE_ENROLLMENT_TOKEN=<token>
+CONTROL_PLANE_GATEWAY_ID=<stable-gateway-id>
+CONTROL_PLANE_GATEWAY_HOSTNAME=<site-hostname>
+```
+
+The gateway will appear as pending until an operator approves it.
 
 ### Adapter restarts during schema registration
 
@@ -161,7 +218,6 @@ The following are intentionally outside this document until the packaging model
 is finalized:
 
 - production edge installation
-- remote gateway enrollment runbooks
 - Docker image publishing and pull-template workflow
 - hardware sizing
 - TLS and certificate rotation procedures

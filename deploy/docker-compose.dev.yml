@@ -139,7 +139,10 @@ services:
      
       # Control-plane polling configuration (used for dynamic config)
       CONTROL_PLANE_URL: http://control_plane:8000
-      CONTROL_PLANE_GATEWAY_ID: gateway-demo-01
+      CONTROL_PLANE_GATEWAY_ID: ${CONTROL_PLANE_GATEWAY_ID:-gateway-demo-01}
+      CONTROL_PLANE_GATEWAY_HOSTNAME: ${CONTROL_PLANE_GATEWAY_HOSTNAME:-gateway-demo-01.local}
+      CONTROL_PLANE_ENROLLMENT_TOKEN: ${CONTROL_PLANE_ENROLLMENT_TOKEN:-}
+      CONTROL_PLANE_GATEWAY_HARDWARE_INFO: ${CONTROL_PLANE_GATEWAY_HARDWARE_INFO:-}
       OVERFLOW_CHECK_INTERVAL: ${OVERFLOW_CHECK_INTERVAL:-60}
       OVERFLOW_COMPRESS_THRESHOLD_PERCENT: ${OVERFLOW_COMPRESS_THRESHOLD_PERCENT:-70}
       OVERFLOW_DOWNSAMPLE_THRESHOLD_PERCENT: ${OVERFLOW_DOWNSAMPLE_THRESHOLD_PERCENT:-80}
@@ -163,7 +166,7 @@ services:
       # SINK_CIRCUIT_BREAKER_FAILURE_THRESHOLD: Failures before sink downstream writes pause (default: 5)
       # SINK_CIRCUIT_BREAKER_OPEN_SECONDS: Cooldown before sink retries resume (default: 30)
       
-      # Kafka and runtime configuration
+      # Kafka-compatible broker and runtime configuration. The local broker image is Redpanda.
       KAFKA_BOOTSTRAP: kafka:9092
       SCHEMA_REGISTRY_URL: http://schema_registry:8081
       ADAPTER_MODBUS_TCP_IMAGE: streamforge/gateway_runtime:dev
@@ -193,7 +196,7 @@ services:
     image: prom/prometheus:v3.2.1
     depends_on:
       gateway_runtime:
-        condition: service_healthy
+        condition: service_started
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:

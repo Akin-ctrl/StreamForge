@@ -149,6 +149,12 @@ Seed the demo environment:
 docker compose -f deploy/docker-compose.dev.yml --profile seed run --rm dev_bootstrap
 ```
 
+The seed path is only a local-demo shortcut. The production-like path is now
+gateway enrollment: create an enrollment token in the Gateways UI, start the
+gateway with `CONTROL_PLANE_ENROLLMENT_TOKEN`, approve the pending gateway, then
+compose and activate a deployment.
+See `docs/DEPLOYMENT.md` for the no-seed first-run command sequence.
+
 The UI is exposed at:
 
 ```text

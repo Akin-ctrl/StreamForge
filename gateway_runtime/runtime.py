@@ -10,6 +10,7 @@ from typing import Dict
 
 from gateway_runtime.adapter_manager import AdapterManager
 from gateway_runtime.aggregator import AggregatorModule
+from gateway_runtime.connection_tests import run_gateway_connection_test
 from gateway_runtime.config import ConfigRepository, ControlPlaneConfigRepository, GatewayConfig
 from gateway_runtime.event_validator import EventValidatorModule
 from gateway_runtime.errors import ConfigError
@@ -29,7 +30,7 @@ class GatewayRuntime:
     Facade for the gateway runtime.
 
     Responsibilities:
-    - Orchestrate Kafka, adapters, and health reporting
+    - Orchestrate the Kafka-compatible local broker, adapters, and health reporting
     - Load runtime configuration
     - Start/stop lifecycle
     - Poll for config updates from Control Plane
@@ -62,6 +63,8 @@ class GatewayRuntime:
         self._adapter_control_stop_event: asyncio.Event | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._heartbeat_stop_event: asyncio.Event | None = None
+        self._connection_test_task: asyncio.Task[None] | None = None
+        self._connection_test_stop_event: asyncio.Event | None = None
         self._validator: ValidatorModule | None = None
         self._event_validator: EventValidatorModule | None = None
         self._aggregator: AggregatorModule | None = None
@@ -77,6 +80,7 @@ class GatewayRuntime:
         self._overflow_check_interval = int(os.getenv("OVERFLOW_CHECK_INTERVAL", "60"))
         self._adapter_control_interval = max(int(os.getenv("GATEWAY_ADAPTER_CONTROL_INTERVAL", "5")), 1)
         self._heartbeat_interval = int(os.getenv("GATEWAY_HEARTBEAT_INTERVAL", "30"))
+        self._connection_test_interval = max(int(os.getenv("GATEWAY_CONNECTION_TEST_INTERVAL", "5")), 1)
         self._metrics_path = os.getenv("GATEWAY_METRICS_PATH", "/data")
         self._provisioning_retry_interval = max(int(os.getenv("GATEWAY_PROVISIONING_RETRY_INTERVAL", "5")), 1)
         self._startup_status = "initializing"
@@ -173,6 +177,9 @@ class GatewayRuntime:
             self._heartbeat_stop_event = asyncio.Event()
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             logger.info("gateway runtime heartbeat loop started for gateway %s", config.gateway_id)
+            self._connection_test_stop_event = asyncio.Event()
+            self._connection_test_task = asyncio.create_task(self._connection_test_loop())
+            logger.info("gateway runtime connection test loop started for gateway %s", config.gateway_id)
         self._startup_status = "running"
         logger.info("gateway runtime started for gateway %s", config.gateway_id)
 
@@ -208,6 +215,11 @@ class GatewayRuntime:
         if self._heartbeat_task:
             if not self._heartbeat_task.done():
                 self._heartbeat_task.cancel()
+        if self._connection_test_stop_event:
+            self._connection_test_stop_event.set()
+        if self._connection_test_task:
+            if not self._connection_test_task.done():
+                self._connection_test_task.cancel()
 
         if self._validator:
             self._validator.stop()
@@ -329,6 +341,78 @@ class GatewayRuntime:
                     self._heartbeat_interval,
                 )
                 await asyncio.sleep(self._heartbeat_interval)
+
+    async def _connection_test_loop(self) -> None:
+        """Poll the control plane for gateway-executed connection tests."""
+        assert self._connection_test_stop_event is not None
+        while not self._connection_test_stop_event.is_set():
+            try:
+                self._process_connection_test_actions()
+                await asyncio.sleep(self._connection_test_interval)
+            except asyncio.CancelledError:
+                break
+            except ConfigError as exc:
+                logger.warning(
+                    "gateway runtime connection test sync failed for gateway %s; retrying in %ss: %s",
+                    self._current_config.gateway_id if self._current_config is not None else "unknown",
+                    self._connection_test_interval,
+                    exc,
+                )
+                await asyncio.sleep(self._connection_test_interval)
+            except Exception:
+                logger.exception(
+                    "gateway runtime connection test loop failed for gateway %s; retrying in %ss",
+                    self._current_config.gateway_id if self._current_config is not None else "unknown",
+                    self._connection_test_interval,
+                )
+                await asyncio.sleep(self._connection_test_interval)
+
+    def _process_connection_test_actions(self) -> int:
+        """Execute pending gateway-side connection tests and post results."""
+        if not isinstance(self._config_repo, ControlPlaneConfigRepository):
+            return 0
+
+        actions = self._config_repo.get_json_list("/api/v1/gateway-connection-tests/pending")
+        completed = 0
+        for action in actions:
+            request_id = str(action.get("request_id") or "")
+            if not request_id:
+                continue
+            target_kind = str(action.get("target_kind") or "")
+            target_type = str(action.get("target_type") or "")
+            config = action.get("config")
+            result = self._connection_test_failure_result("Connection test payload was invalid")
+            try:
+                if not isinstance(config, dict):
+                    raise RuntimeError("config must be an object")
+                result = run_gateway_connection_test(target_kind, target_type, config)
+            except Exception as exc:
+                logger.exception("gateway runtime failed to execute connection test %s", request_id)
+                result = self._connection_test_failure_result(str(exc))
+
+            self._config_repo.post_json(
+                f"/api/v1/gateway-connection-tests/{request_id}/complete",
+                {"result": result},
+            )
+            completed += 1
+        return completed
+
+    @staticmethod
+    def _connection_test_failure_result(message: str) -> dict[str, object]:
+        """Build a gateway-side connection test failure payload."""
+        return {
+            "ok": False,
+            "status": "failed",
+            "message": message[:1024],
+            "warnings": [],
+            "probes": [
+                {
+                    "name": "Gateway-side connection test execution",
+                    "status": "failed",
+                    "message": message[:1024],
+                }
+            ],
+        }
 
     async def _overflow_loop(self) -> None:
         """Periodically evaluate local disk pressure and apply overflow controls."""

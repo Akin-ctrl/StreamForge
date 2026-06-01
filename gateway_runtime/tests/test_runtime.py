@@ -62,6 +62,29 @@ class HeartbeatControlPlaneRepo(PollingControlPlaneRepo):
         return {}
 
 
+class ConnectionTestControlPlaneRepo(PollingControlPlaneRepo):
+    def __init__(self) -> None:
+        super().__init__()
+        self.completions: list[dict] = []
+
+    def get_json_list(self, path: str, authenticated: bool = True) -> list[dict]:
+        if path != "/api/v1/gateway-connection-tests/pending":
+            return []
+        return [
+            {
+                "request_id": "gct-test",
+                "target_kind": "adapter",
+                "target_id": "mqtt-source",
+                "target_type": "mqtt",
+                "config": {"broker_host": "mqtt.local", "broker_port": 1883},
+            }
+        ]
+
+    def post_json(self, path: str, payload: dict, authenticated: bool = True) -> dict:
+        self.completions.append({"path": path, "payload": payload, "authenticated": authenticated})
+        return {}
+
+
 class ProvisioningRetryRepo(PollingControlPlaneRepo):
     def __init__(self, responses: list[GatewayConfig | Exception]) -> None:
         super().__init__()
@@ -268,6 +291,34 @@ class GatewayRuntimePollingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(heartbeat["path"], "/api/v1/gateways/gw-edge-01/heartbeat")
         self.assertIn("health", heartbeat["payload"])
         self.assertIn("metrics", heartbeat["payload"])
+
+    async def test_runtime_processes_gateway_connection_test_actions(self) -> None:
+        repo = ConnectionTestControlPlaneRepo()
+        runtime = GatewayRuntime(
+            config_repo=repo,
+            kafka=FakeKafkaManager(),
+            adapters=FakeAdapterManager(),
+            sinks=FakeSinkManager(),
+            health=FakeHealthReporter(),
+        )
+
+        with patch(
+            "gateway_runtime.runtime.run_gateway_connection_test",
+            return_value={
+                "ok": True,
+                "status": "passed",
+                "message": "Reached mqtt.local:1883",
+                "warnings": [],
+                "probes": [{"name": "MQTT", "status": "passed", "message": "Reached mqtt.local:1883"}],
+            },
+        ):
+            completed = runtime._process_connection_test_actions()
+
+        repo.cleanup()
+
+        self.assertEqual(completed, 1)
+        self.assertEqual(repo.completions[0]["path"], "/api/v1/gateway-connection-tests/gct-test/complete")
+        self.assertTrue(repo.completions[0]["payload"]["result"]["ok"])
 
     async def test_initial_start_waits_for_gateway_registration_and_then_recovers(self) -> None:
         repo = ProvisioningRetryRepo(

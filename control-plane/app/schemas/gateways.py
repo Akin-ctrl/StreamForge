@@ -13,6 +13,13 @@ class GatewayRegisterRequest(BaseModel):
     hardware_info: dict | None = None
 
 
+class GatewayEnrollRequest(BaseModel):
+    enrollment_token: str = Field(min_length=16, max_length=512)
+    gateway_id: str = Field(min_length=2, max_length=128)
+    hostname: str = Field(min_length=1, max_length=255)
+    hardware_info: dict | None = None
+
+
 class GatewayCreateRequest(BaseModel):
     gateway_id: str = Field(min_length=2, max_length=128)
     hostname: str = Field(min_length=1, max_length=255)
@@ -23,6 +30,7 @@ class GatewayCreateRequest(BaseModel):
 class GatewayItem(BaseModel):
     gateway_id: str
     hostname: str
+    hardware_info: dict | None = None
     status: str
     approved: bool
     last_config_sync_at: datetime | None = None
