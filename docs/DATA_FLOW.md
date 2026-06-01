@@ -131,7 +131,7 @@ reading = {
     "timestamps": {
         "device_time": "2025-01-10T12:01:03.123Z",  # From PLC/device clock if available
         "gateway_time": "2025-01-10T12:01:04.001Z",  # Gateway clock
-        "kafka_time": None  # Set by Kafka
+        "kafka_time": None  # Set by the Kafka-compatible broker
     },
     "metadata": {
         "adapter_id": "adapter_modbus_offshore_001",
@@ -426,7 +426,7 @@ OPC UA Server: Value changed (reactor_temperature = 342.7°C)
   ↓ (push notification)
 Adapter: Receives data change notification
   ↓
-Publishes to Kafka immediately (no polling delay)
+Publishes to the local Kafka-compatible stream immediately (no polling delay)
 ```
 
 **High-frequency data (100ms sampling)**:

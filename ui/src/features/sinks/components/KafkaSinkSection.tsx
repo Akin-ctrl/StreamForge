@@ -14,9 +14,9 @@ export function KafkaSinkSection({ form, setForm }: KafkaSinkSectionProps) {
     <article className="card">
       <div className="page-header">
         <div className="card-header-copy">
-          <h3>Kafka Forwarder</h3>
+          <h3>Kafka-Compatible Forwarder</h3>
           <p className="muted">
-            Define the downstream Kafka destination while the platform keeps source routing and ingestion wiring stable.
+            Define the downstream Kafka-compatible destination while the platform keeps source routing and ingestion wiring stable.
           </p>
         </div>
       </div>
@@ -30,7 +30,7 @@ export function KafkaSinkSection({ form, setForm }: KafkaSinkSectionProps) {
           <input value={form.targetTopic} onChange={(event) => setForm((current) => ({ ...current, targetTopic: event.target.value }))} />
         </label>
       </div>
-      <p className="muted">Source-topic routing is managed by the platform for Kafka forwarder sinks.</p>
+      <p className="muted">Source-topic routing is managed by the platform for Kafka-compatible forwarder sinks.</p>
     </article>
   )
 }

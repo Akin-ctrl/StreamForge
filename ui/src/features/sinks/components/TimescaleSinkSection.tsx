@@ -35,7 +35,7 @@ export function TimescaleSinkSection({ form, setForm }: TimescaleSinkSectionProp
           <input value={form.table} onChange={(event) => setForm((current) => ({ ...current, table: event.target.value }))} />
         </label>
       </div>
-      <p className="muted">Ingress routing, Kafka bootstrap, and consumer-group wiring are managed by the platform for TimescaleDB sinks.</p>
+      <p className="muted">Ingress routing, broker bootstrap, and consumer-group wiring are managed by the platform for TimescaleDB sinks.</p>
     </article>
   )
 }

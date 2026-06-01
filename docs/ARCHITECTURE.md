@@ -281,13 +281,13 @@ See [Adapters And Deployments Spec](ADAPTERS_AND_DEPLOYMENTS_SPEC.md) for the lo
                     ▼
          ┌─────────────────────┐
          │   Sink Containers   │
-         │ (S3, DB, Kafka...)  │
+         │ (S3, DB, Kafka-compatible...) │
          └─────────────────────┘
                     │
                     ▼
    ┌───────────────────────────────┐
    │  Customer's Infrastructure    │
-   │  (DB, Kafka, Cloud, etc.)     │
+   │  (DB, Kafka-compatible, Cloud, etc.) │
    └───────────────────────────────┘
 ```
 
@@ -545,7 +545,7 @@ Each pipeline can specify which resolutions to produce.
 |--------|-------|
 | Detect alarm condition | Gateway (adapter or validator) |
 | ACK/SUPPRESS | Control Plane (via UI) |
-| Store state | Kafka + Control Plane DB |
+| Store state | Local stream + Control Plane DB |
 
 ---
 
