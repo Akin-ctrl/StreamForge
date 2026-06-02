@@ -101,20 +101,28 @@ Response:
 
 ### Gateway Authentication (Machine-to-Machine)
 
-**Current shipped method**: long-lived JWT issued by the control plane after
-admin-side gateway creation and approval
+**Current shipped method**: admin-created enrollment tokens let a gateway enroll
+as `pending`; an operator approves it, then the control plane issues a
+long-lived gateway JWT for config polling, heartbeat, and gateway-side actions.
 
-**Planned hardening direction**: enrollment or claim flow with stronger
-bootstrap identity proof (for example mTLS and/or bootstrap credentials)
+**Manual fallback**: operators can still create and approve a gateway record
+directly in controlled local/dev environments before the gateway requests a
+token.
+
+**Planned hardening direction**: stronger bootstrap identity proof for packaged
+field installs, such as one-time gateway claim tokens, mTLS, or signed install
+credentials.
 
 #### Current shipped flow
 
-1. Admin creates the gateway record in the control plane UI or admin API.
-2. Admin approves the gateway.
-3. Gateway runtime starts with its `CONTROL_PLANE_URL` and
-   `CONTROL_PLANE_GATEWAY_ID`.
-4. Gateway runtime requests a gateway token from the control plane.
-5. Gateway runtime polls config and posts heartbeat/health back to the control
+1. Admin creates an enrollment token in the Gateways UI.
+2. Gateway runtime starts with `CONTROL_PLANE_URL`,
+   `CONTROL_PLANE_GATEWAY_ID`, and `CONTROL_PLANE_ENROLLMENT_TOKEN`.
+3. Gateway runtime calls `POST /api/v1/gateways/enroll`.
+4. Control plane creates or updates the gateway as `pending`.
+5. Operator reviews and approves the pending gateway in the UI.
+6. Gateway runtime requests a gateway token from the control plane.
+7. Gateway runtime polls config and posts heartbeat/health back to the control
    plane.
 
 Self-registration is **not** enabled in the currently shipped implementation.
@@ -122,23 +130,34 @@ Self-registration is **not** enabled in the currently shipped implementation.
 example that assumes zero-touch self-registration should be treated as a
 planned enrollment direction rather than current behavior.
 
-#### Current token bootstrap example
+#### Current enrollment bootstrap example
 
 ```bash
-# 1. Admin creates the gateway record in the control plane
-POST /api/v1/gateways
+# 1. Admin creates an enrollment token in the Gateways UI.
 
-# 2. Admin approves the gateway
+# 2. Gateway runtime enrolls with that token.
+POST /api/v1/gateways/enroll
+{
+  "gateway_id": "gateway-rig-alpha-001",
+  "enrollment_token": "sfe_...",
+  "hostname": "rig-alpha.local",
+  "hardware_info": {
+    "site": "Offshore Rig Alpha",
+    "hardware": "Dell Edge Gateway 3200"
+  }
+}
+
+# 3. Operator approves the pending gateway.
 POST /api/v1/gateways/{gateway_id}/approve
 
-# 3. Gateway runtime requests its machine token
+# 4. Gateway runtime requests its machine token.
 POST /api/v1/gateways/token
 {
   "gateway_id": "gateway-rig-alpha-001"
 }
 ```
 
-#### Planned enrollment direction (not the current default)
+#### Future stronger identity proof
 
 ```bash
 # Gateway generates certificate on first boot
@@ -147,7 +166,7 @@ openssl req -new -x509 -days 3650 \
   -out /etc/streamforge/gateway.crt \
   -subj "/CN=gateway-rig-alpha-001"
 
-# Planned enrollment / registration with Control API (future direction)
+# Future signed enrollment / registration with Control API
 curl -X POST https://api.streamforge.example.com/api/v1/gateways/register \
   -H "Content-Type: application/json" \
   -d '{

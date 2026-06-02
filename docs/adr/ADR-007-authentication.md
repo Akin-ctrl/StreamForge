@@ -2,7 +2,8 @@
 
 **Status**: Accepted  
 **Date**: 2026-01-29  
-**Decision**: JWT for gateways (1-year, auto-renew), built-in + OAuth for users
+**Decision**: enrollment-gated JWT for gateways, built-in users today, optional
+OAuth/OIDC later
 
 ---
 
@@ -64,8 +65,10 @@ Each has different requirements for credential lifecycle and management.
 
 ## Decision
 
-- **Gateways**: JWT tokens (1-year validity, auto-renew)
-- **Users**: Built-in authentication + optional OAuth2/OIDC
+- **Gateways**: admin-managed enrollment token creates a pending gateway;
+  operator approval gates long-lived JWT issuance.
+- **Users**: built-in authentication today; optional OAuth2/OIDC remains the
+  enterprise direction.
 
 ## Rationale
 
@@ -85,21 +88,29 @@ Each has different requirements for credential lifecycle and management.
 ## Gateway Registration Flow
 
 ```
-1. Operator creates gateway record in UI / control-plane API
+1. Operator creates a gateway enrollment token in the UI / control-plane API
+   {
+     "enrollment_id": "enroll-factory-north",
+     "token": "sfe_..."
+   }
+2. Gateway boots with CONTROL_PLANE_ENROLLMENT_TOKEN and its stable gateway ID
+3. Gateway calls POST /api/v1/gateways/enroll
    {
      "gateway_id": "gw-factory-north",
+     "enrollment_token": "sfe_...",
      "hostname": "gateway-01.local"
    }
-2. Gateway boots (first time)
-3. Gateway calls POST /api/v1/gateways/token
-4. Control Plane returns JWT:
+4. Control Plane records the gateway as pending
+5. Operator approves the pending gateway
+6. Gateway calls POST /api/v1/gateways/token
+7. Control Plane returns JWT:
    {
      "token": "eyJhbGc...",
      "expires_at": "2027-01-29T00:00:00Z",
      "gateway_id": "gw-factory-north"
    }
-5. Gateway stores token securely
-6. All subsequent API calls include: Authorization: Bearer <token>
+8. Gateway stores token securely
+9. All subsequent API calls include: Authorization: Bearer <token>
 ```
 
 ## Token Renewal

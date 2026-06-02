@@ -79,16 +79,16 @@ Behavior:
   - Expose consumer lag in metrics
 ```
 
-## Available Sinks
+## Current and Planned Sinks
 
 | Sink | Description |
 |------|-------------|
-| `sink-timescaledb` | Write to TimescaleDB |
-| `sink-postgres` | Write to PostgreSQL |
-| `sink-kafka` | Replicate to customer's Kafka-compatible system |
-| `sink-s3` | Batch write to S3 (Parquet) |
-| `sink-http` | HTTP POST to webhook |
-| `sink-alert-router` | Route alarms to PagerDuty, Slack, etc. |
+| `sink-timescaledb` | Implemented. Write telemetry, events, and aggregates to TimescaleDB/PostgreSQL-compatible destinations. |
+| `sink-kafka` | Implemented. Replicate to a customer's Kafka-compatible system. |
+| `sink-http` | Implemented. HTTP POST to webhook or API destination. |
+| `sink-alert-router` | Implemented. Route alarms to webhook-style alert targets such as Slack. |
+| `sink-postgres` | Planned/deferred as a separate dedicated PostgreSQL sink. |
+| `sink-s3` | Planned/deferred for object-store archive workflows such as Parquet. |
 
 ## Key Clarification: Customer-Owned Kafka-Compatible Systems
 

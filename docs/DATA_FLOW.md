@@ -60,22 +60,28 @@ Sink: timescaledb_offshore_primary
 Validation: enabled
 ```
 
-**Step 2: Generated Config (sent to Gateway)**
+**Step 2: Active deployment config (sent to gateway)**
+
+The control plane sends one gateway-level config containing the selected
+adapters, sinks, validation rules, event rules, and aggregate rules. Secret
+values shown below are redacted; the control plane stores write-only secret
+fields and resolves them for the gateway runtime.
 
 ```json
 {
-  "pipeline_id": "offshore_well_12",
-  "adapter": {
-    "type": "modbus_tcp",
-    "version": "1.2.0",
-    "image": "streamforge/gateway_runtime:dev",
-    "config": {
-      "source": {
+  "gateway_id": "gateway-offshore-01",
+  "deployment_id": "deployment-offshore-pump-skid",
+  "adapters": [
+    {
+      "adapter_id": "modbus_offshore_12",
+      "adapter_type": "modbus_tcp",
+      "config": {
         "host": "192.168.10.42",
         "port": 502,
-        "unit_id": 1
-      },
-      "mapping": {
+        "unit_id": 1,
+        "asset_id": "offshore_well_12",
+        "kafka_bootstrap": "kafka:9092",
+        "topic": "telemetry.raw",
         "registers": {
           "40001": {
             "param": "pressure",
@@ -89,17 +95,29 @@ Validation: enabled
             "type": "float32",
             "scale": 0.1
           }
-        }
-      },
-      "output": {
-        "kafka_bootstrap": "localhost:9092",
-        "topic": "telemetry.raw",
-        "classification": "TELEMETRY",
-        "asset_id": "offshore_well_12"
-      },
-      "poll_interval_ms": 1000
+        },
+        "poll_interval_ms": 1000
+      }
     }
-  }
+  ],
+  "sinks": [
+    {
+      "sink_id": "timescaledb_offshore_primary",
+      "sink_type": "timescaledb",
+      "config": {
+        "topic": "telemetry.clean",
+        "group_id": "sf-sink-timescaledb-offshore",
+        "table": "telemetry_clean",
+        "db_dsn": "<resolved write-only DSN>"
+      }
+    }
+  ],
+  "validation": {
+    "enabled": true
+  },
+  "events": {},
+  "aggregates": {},
+  "version": "2026-06-02T12:00:00Z"
 }
 ```
 
@@ -129,14 +147,14 @@ reading = {
     "quality": "GOOD",
     "classification": "TELEMETRY",
     "timestamps": {
-        "device_time": "2025-01-10T12:01:03.123Z",  # From PLC/device clock if available
-        "gateway_time": "2025-01-10T12:01:04.001Z",  # Gateway clock
-        "kafka_time": None  # Set by the Kafka-compatible broker
+        "device_time": "2025-01-10T12:01:03.123Z",
+        "gateway_time": "2025-01-10T12:01:04.001Z",
+        "kafka_time": null
     },
     "metadata": {
         "adapter_id": "adapter_modbus_offshore_001",
         "adapter_version": "1.2.0",
-        "pipeline_id": "offshore_well_12"
+        "deployment_id": "deployment-offshore-pump-skid"
     }
 }
 ```
@@ -184,12 +202,9 @@ output to telemetry.1s:
 **Time: 12:01:04.300 - Sink writes**
 ```
 Sink: TimescaleDB
-Table: telemetry_timeseries
-SQL: INSERT INTO telemetry_timeseries (time, asset_id, parameter, value, unit, quality)
-     VALUES ('2025-01-10T12:01:03.123Z', 'offshore_well_12', 'pressure', 185.4, 'psi', 'GOOD')
-
-Sink: S3 Parquet (batched every 5 min)
-Buffer: In-memory, will flush at 12:05:00
+Table: telemetry_clean
+SQL: INSERT INTO telemetry_clean (gateway_time, device_time, asset_id, parameter, value, unit, quality, payload)
+     VALUES ('2025-01-10T12:01:04.001Z', '2025-01-10T12:01:03.123Z', 'offshore_well_12', 'pressure', 185.4, 'psi', 'GOOD', '{...}')
 
 Sink: Kafka-compatible system (optional, customer-owned cluster)
 Target: customer.example.com:9092
@@ -230,7 +245,7 @@ Catch-up speed: ~1000 msg/sec
 All buffered data drained from the local stream to configured sinks
 External sinks catch up:
   - TimescaleDB: Writes 9,000 rows (backfill)
-  - S3: Creates Parquet files for offline period
+  - HTTP/webhook destinations: Catch up according to retry settings
   - Customer Kafka-compatible system: Receives delayed replay
   - ML API: Skips (real-time only)
 ```
@@ -250,17 +265,20 @@ External sinks catch up:
 
 ```json
 {
-  "pipeline_id": "assembly_line_plc_01",
-  "adapter": {
-    "type": "modbus_tcp",
-    "version": "1.0.5",
-    "config": {
-      "source": {
+  "gateway_id": "gateway-factory-01",
+  "deployment_id": "deployment-assembly-line",
+  "adapters": [
+    {
+      "adapter_id": "modbus_assembly_line_01",
+      "adapter_type": "modbus_tcp",
+      "config": {
         "host": "192.168.10.50",
         "port": 502,
-        "unit_id": 1
-      },
-      "mapping": {
+        "unit_id": 1,
+        "asset_id": "assembly_line_plc_01",
+        "kafka_bootstrap": "kafka:9092",
+        "topic": "telemetry.raw",
+        "events_topic": "events.raw",
         "holding_registers": {
           "40001": {"param": "conveyor_speed", "unit": "m/min", "type": "uint16"},
           "40002": {"param": "motor_current", "unit": "amps", "type": "uint16", "scale": 0.1},
@@ -268,17 +286,36 @@ External sinks catch up:
         },
         "coils": {
           "00001": {"param": "motor_running", "type": "bool"}
-        }
-      },
-      "output": {
-        "kafka_bootstrap": "kafka.factory.local:9092",
-        "telemetry_topic": "telemetry.raw",
-        "events_topic": "events.raw",
-        "asset_id": "assembly_line_plc_01"
-      },
-      "poll_interval_ms": 500
+        },
+        "poll_interval_ms": 500
+      }
     }
-  }
+  ],
+  "sinks": [
+    {
+      "sink_id": "timescaledb_factory_primary",
+      "sink_type": "timescaledb",
+      "config": {
+        "topic": "telemetry.clean",
+        "group_id": "sf-sink-timescaledb-factory",
+        "table": "telemetry_clean",
+        "db_dsn": "<resolved write-only DSN>"
+      }
+    },
+    {
+      "sink_id": "events_factory_primary",
+      "sink_type": "timescaledb",
+      "config": {
+        "topic": "events.clean",
+        "group_id": "sf-sink-timescaledb-events",
+        "table": "events_clean",
+        "db_dsn": "<resolved write-only DSN>"
+      }
+    }
+  ],
+  "validation": {"enabled": true},
+  "events": {"enabled": true},
+  "aggregates": {"enabled": true}
 }
 ```
 
@@ -338,33 +375,34 @@ Response:
 
 **Local stream → TimescaleDB**:
 ```sql
--- Sink writes to hypertable
-INSERT INTO telemetry_timeseries (time, asset_id, parameter, value, unit)
+-- Sink writes telemetry. TimescaleDB promotion is best-effort; regular
+-- PostgreSQL tables still work if create_hypertable is unavailable.
+INSERT INTO telemetry_clean (gateway_time, asset_id, parameter, value, unit, quality, payload)
 VALUES 
-  ('2025-01-10T08:30:00.123Z', 'assembly_line_plc_01', 'conveyor_speed', 120, 'm/min'),
-  ('2025-01-10T08:30:00.123Z', 'assembly_line_plc_01', 'motor_current', 15.3, 'amps');
+  ('2025-01-10T08:30:00.123Z', 'assembly_line_plc_01', 'conveyor_speed', 120, 'm/min', 'GOOD', '{...}'),
+  ('2025-01-10T08:30:00.123Z', 'assembly_line_plc_01', 'motor_current', 15.3, 'amps', 'GOOD', '{...}');
 
-INSERT INTO events (time, asset_id, event_type, previous_state, new_state)
-VALUES ('2025-01-10T08:30:00.123Z', 'assembly_line_plc_01', 'motor_state_change', false, true);
+INSERT INTO events_clean (gateway_time, asset_id, event_type, classification, previous_state, new_state, metadata, payload)
+VALUES ('2025-01-10T08:30:00.123Z', 'assembly_line_plc_01', 'motor_state_change', 'EVENT', '{"motor_running": false}', '{"motor_running": true}', '{}', '{...}');
 ```
 
 **Dashboard queries**:
 ```sql
 -- Real-time (last 60 seconds)
-SELECT time, value 
-FROM telemetry_timeseries 
+SELECT gateway_time, value
+FROM telemetry_clean
 WHERE asset_id = 'assembly_line_plc_01' 
   AND parameter = 'conveyor_speed'
-  AND time > NOW() - INTERVAL '60 seconds'
-ORDER BY time DESC;
+  AND gateway_time > NOW() - INTERVAL '60 seconds'
+ORDER BY gateway_time DESC;
 
 -- Historical (last 24 hours, 1-minute averages)
-SELECT time_bucket('1 minute', time) AS bucket,
+SELECT time_bucket('1 minute', gateway_time) AS bucket,
        AVG(value) as avg_speed
-FROM telemetry_timeseries
+FROM telemetry_clean
 WHERE asset_id = 'assembly_line_plc_01'
   AND parameter = 'conveyor_speed'
-  AND time > NOW() - INTERVAL '24 hours'
+  AND gateway_time > NOW() - INTERVAL '24 hours'
 GROUP BY bucket
 ORDER BY bucket;
 ```
@@ -381,38 +419,31 @@ ORDER BY bucket;
 
 ```json
 {
-  "pipeline_id": "scada_opcua_reactor",
-  "adapter": {
-    "type": "opcua",
-    "version": "2.1.3",
-    "config": {
-      "source": {
-        "endpoint": "opc.tcp://scada.example.com:4840",
-        "security_mode": "SignAndEncrypt",
-        "security_policy": "Basic256Sha256",
-        "username": "${secret:opcua_username}",
-        "password": "${secret:opcua_password}"
+  "adapter_id": "opcua_reactor_01",
+  "adapter_type": "opcua",
+  "config": {
+    "endpoint": "opc.tcp://scada.example.com:4840",
+    "security_mode": "SignAndEncrypt",
+    "security_policy": "Basic256Sha256",
+    "username": "<stored write-only username>",
+    "password": "<stored write-only password>",
+    "asset_id": "reactor_01",
+    "kafka_bootstrap": "kafka:9092",
+    "topic": "telemetry.raw",
+    "monitored_items": [
+      {
+        "node_id": "ns=2;s=Reactor.Temperature",
+        "param": "reactor_temperature",
+        "unit": "celsius",
+        "sampling_interval_ms": 100
       },
-      "subscriptions": [
-        {
-          "node_id": "ns=2;s=Reactor.Temperature",
-          "param": "reactor_temperature",
-          "unit": "celsius",
-          "sampling_interval_ms": 100
-        },
-        {
-          "node_id": "ns=2;s=Reactor.Pressure",
-          "param": "reactor_pressure",
-          "unit": "bar",
-          "sampling_interval_ms": 100
-        }
-      ],
-      "output": {
-        "kafka_bootstrap": "localhost:9092",
-        "topic": "telemetry.raw",
-        "asset_id": "reactor_01"
+      {
+        "node_id": "ns=2;s=Reactor.Pressure",
+        "param": "reactor_pressure",
+        "unit": "bar",
+        "sampling_interval_ms": 100
       }
-    }
+    ]
   }
 }
 ```
@@ -495,7 +526,7 @@ All data drained from the local stream to external destinations
 Sinks processing backlog:
   - TimescaleDB: Bulk insert 120,000 rows (30 seconds)
   - Customer Kafka-compatible system: Receives 120,000 delayed records
-  - S3 Parquet: Creates files for 41.5-hour gap (10 seconds)
+  - HTTP/webhook destinations: Catch up according to their retry and backpressure settings
   - Alerting: Processes 1,200 alarms (checks if still active)
 ```
 
@@ -629,9 +660,9 @@ INSERT INTO alarms_history (
   },
   "clock_skew_ms": 878,
   "metadata": {
-    "adapter_id": "adapter_xbee_modbus_001",
+    "adapter_id": "adapter_modbus_tcp_001",
     "adapter_version": "1.2.0",
-    "pipeline_id": "offshore_well_12",
+    "deployment_id": "deployment-offshore-pump-skid",
     "gateway_id": "gateway-rig-alpha",
     "hostname": "rig-alpha.local"
   },
@@ -660,7 +691,7 @@ INSERT INTO alarms_history (
   },
   "metadata": {
     "adapter_id": "adapter_modbus_tcp_002",
-    "pipeline_id": "assembly_line_plc_01"
+    "deployment_id": "deployment-assembly-line"
   }
 }
 ```
@@ -727,7 +758,7 @@ INSERT INTO alarms_history (
   },
   "metadata": {
     "gateway_id": "gateway-rig-alpha",
-    "pipeline_id": "offshore_well_12"
+    "deployment_id": "deployment-offshore-pump-skid"
   }
 }
 ```
