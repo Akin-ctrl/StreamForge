@@ -1,0 +1,797 @@
+{
+  "gateway_id": "gateway-demo-01",
+  "adapters": [
+    {
+      "adapter_id": "modbus-packaging-plc",
+      "name": "Packaging Cell PLC",
+      "adapter_type": "modbus_tcp",
+      "config": {
+        "host": "plant-simulator",
+        "port": 15020,
+        "unit_id": 1,
+        "poll_interval_ms": 1000,
+        "points": [
+          {
+            "point_name": "packaging_conveyor_speed",
+            "memory_area": "holding_register",
+            "address": 40001,
+            "data_type": "uint16",
+            "scale": 0.1,
+            "unit": "m/min",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "packaging_motor_current",
+            "memory_area": "holding_register",
+            "address": 40002,
+            "data_type": "uint16",
+            "scale": 0.1,
+            "unit": "A",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "packaging_bearing_temperature",
+            "memory_area": "holding_register",
+            "address": 40003,
+            "data_type": "uint16",
+            "scale": 0.1,
+            "unit": "celsius",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "packaging_reject_count",
+            "memory_area": "holding_register",
+            "address": 40004,
+            "data_type": "uint16",
+            "unit": "count",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "packaging_motor_running",
+            "memory_area": "coil",
+            "address": 1,
+            "data_type": "bool",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "packaging_jam_active",
+            "memory_area": "coil",
+            "address": 2,
+            "data_type": "bool",
+            "classification": "event",
+            "event_type": "packaging_jam_state_change"
+          }
+        ],
+        "output": {
+          "kafka_bootstrap": "kafka:9092",
+          "topic": "telemetry.raw",
+          "events_topic": "events.raw",
+          "asset_id": "packaging_cell_01"
+        }
+      }
+    },
+    {
+      "adapter_id": "modbus-pump-skid-plc",
+      "name": "Pump Skid PLC",
+      "adapter_type": "modbus_tcp",
+      "config": {
+        "host": "plant-simulator",
+        "port": 15021,
+        "unit_id": 1,
+        "poll_interval_ms": 1000,
+        "points": [
+          {
+            "point_name": "pump_suction_pressure",
+            "memory_area": "holding_register",
+            "address": 40001,
+            "data_type": "uint16",
+            "scale": 0.01,
+            "unit": "bar",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "pump_discharge_pressure",
+            "memory_area": "holding_register",
+            "address": 40002,
+            "data_type": "uint16",
+            "scale": 0.01,
+            "unit": "bar",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "pump_flow_rate",
+            "memory_area": "holding_register",
+            "address": 40003,
+            "data_type": "uint16",
+            "scale": 0.1,
+            "unit": "L/min",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "pump_vibration",
+            "memory_area": "holding_register",
+            "address": 40004,
+            "data_type": "uint16",
+            "scale": 0.01,
+            "unit": "mm/s",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "pump_running",
+            "memory_area": "coil",
+            "address": 1,
+            "data_type": "bool",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "pump_low_suction_active",
+            "memory_area": "coil",
+            "address": 2,
+            "data_type": "bool",
+            "classification": "event",
+            "event_type": "pump_low_suction_state_change"
+          }
+        ],
+        "output": {
+          "kafka_bootstrap": "kafka:9092",
+          "topic": "telemetry.raw",
+          "events_topic": "events.raw",
+          "asset_id": "pump_skid_01"
+        }
+      }
+    },
+    {
+      "adapter_id": "modbus-mixing-tank-plc",
+      "name": "Mixing Tank PLC",
+      "adapter_type": "modbus_tcp",
+      "config": {
+        "host": "plant-simulator",
+        "port": 15022,
+        "unit_id": 1,
+        "poll_interval_ms": 1000,
+        "points": [
+          {
+            "point_name": "tank_level_pct",
+            "memory_area": "holding_register",
+            "address": 40001,
+            "data_type": "uint16",
+            "scale": 0.1,
+            "unit": "%",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "tank_temperature",
+            "memory_area": "holding_register",
+            "address": 40002,
+            "data_type": "uint16",
+            "scale": 0.1,
+            "unit": "celsius",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "agitator_speed",
+            "memory_area": "holding_register",
+            "address": 40003,
+            "data_type": "uint16",
+            "unit": "rpm",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "tank_ph",
+            "memory_area": "holding_register",
+            "address": 40004,
+            "data_type": "uint16",
+            "scale": 0.01,
+            "unit": "pH",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "tank_heater_on",
+            "memory_area": "coil",
+            "address": 1,
+            "data_type": "bool",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "tank_overtemp_active",
+            "memory_area": "coil",
+            "address": 2,
+            "data_type": "bool",
+            "classification": "event",
+            "event_type": "tank_overtemperature_state_change"
+          }
+        ],
+        "output": {
+          "kafka_bootstrap": "kafka:9092",
+          "topic": "telemetry.raw",
+          "events_topic": "events.raw",
+          "asset_id": "mixing_tank_01"
+        }
+      }
+    },
+    {
+      "adapter_id": "modbus-compressor-plc",
+      "name": "Compressor Skid PLC",
+      "adapter_type": "modbus_tcp",
+      "config": {
+        "host": "plant-simulator",
+        "port": 15023,
+        "unit_id": 1,
+        "poll_interval_ms": 1000,
+        "points": [
+          {
+            "point_name": "compressor_discharge_pressure",
+            "memory_area": "holding_register",
+            "address": 40001,
+            "data_type": "uint16",
+            "scale": 0.01,
+            "unit": "bar",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "compressor_vibration",
+            "memory_area": "holding_register",
+            "address": 40002,
+            "data_type": "uint16",
+            "scale": 0.01,
+            "unit": "mm/s",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "compressor_oil_temperature",
+            "memory_area": "holding_register",
+            "address": 40003,
+            "data_type": "uint16",
+            "scale": 0.1,
+            "unit": "celsius",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "compressed_air_flow",
+            "memory_area": "holding_register",
+            "address": 40004,
+            "data_type": "uint16",
+            "scale": 0.1,
+            "unit": "m3/min",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "compressor_running",
+            "memory_area": "coil",
+            "address": 1,
+            "data_type": "bool",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "compressor_overload_active",
+            "memory_area": "coil",
+            "address": 2,
+            "data_type": "bool",
+            "classification": "event",
+            "event_type": "compressor_overload_state_change"
+          }
+        ],
+        "output": {
+          "kafka_bootstrap": "kafka:9092",
+          "topic": "telemetry.raw",
+          "events_topic": "events.raw",
+          "asset_id": "compressor_skid_01"
+        }
+      }
+    },
+    {
+      "adapter_id": "rtu-remote-tank",
+      "name": "Remote Tank RTU",
+      "adapter_type": "modbus_rtu",
+      "config": {
+        "serial_port": "rtu://plant-simulator:16020",
+        "baudrate": 19200,
+        "bytesize": 8,
+        "parity": "N",
+        "stopbits": 1,
+        "timeout": 1,
+        "unit_id": 11,
+        "poll_interval_ms": 1000,
+        "points": [
+          {
+            "point_name": "remote_tank_level_pct",
+            "memory_area": "holding_register",
+            "address": 40001,
+            "data_type": "uint16",
+            "scale": 0.1,
+            "unit": "%",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "remote_valve_position_pct",
+            "memory_area": "holding_register",
+            "address": 40002,
+            "data_type": "uint16",
+            "scale": 0.1,
+            "unit": "%",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "remote_signal_quality",
+            "memory_area": "holding_register",
+            "address": 40003,
+            "data_type": "uint16",
+            "scale": 0.1,
+            "unit": "%",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "remote_valve_open",
+            "memory_area": "coil",
+            "address": 1,
+            "data_type": "bool",
+            "classification": "event",
+            "event_type": "remote_valve_state_change"
+          }
+        ],
+        "output": {
+          "kafka_bootstrap": "kafka:9092",
+          "topic": "telemetry.raw",
+          "events_topic": "events.raw",
+          "asset_id": "remote_tank_rtu_01"
+        }
+      }
+    },
+    {
+      "adapter_id": "rtu-power-meter",
+      "name": "Power Meter RTU",
+      "adapter_type": "modbus_rtu",
+      "config": {
+        "serial_port": "rtu://plant-simulator:16021",
+        "baudrate": 19200,
+        "bytesize": 8,
+        "parity": "N",
+        "stopbits": 1,
+        "timeout": 1,
+        "unit_id": 21,
+        "poll_interval_ms": 1000,
+        "points": [
+          {
+            "point_name": "line_voltage",
+            "memory_area": "holding_register",
+            "address": 40001,
+            "data_type": "uint16",
+            "scale": 0.1,
+            "unit": "V",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "line_current",
+            "memory_area": "holding_register",
+            "address": 40002,
+            "data_type": "uint16",
+            "scale": 0.1,
+            "unit": "A",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "line_frequency",
+            "memory_area": "holding_register",
+            "address": 40003,
+            "data_type": "uint16",
+            "scale": 0.01,
+            "unit": "Hz",
+            "classification": "telemetry"
+          },
+          {
+            "point_name": "power_factor",
+            "memory_area": "holding_register",
+            "address": 40004,
+            "data_type": "uint16",
+            "scale": 0.001,
+            "unit": "",
+            "classification": "telemetry"
+          }
+        ],
+        "output": {
+          "kafka_bootstrap": "kafka:9092",
+          "topic": "telemetry.raw",
+          "events_topic": "events.raw",
+          "asset_id": "power_meter_rtu_01"
+        }
+      }
+    },
+    {
+      "adapter_id": "mqtt-environment-sensor",
+      "name": "MQTT Environment Sensor",
+      "adapter_type": "mqtt",
+      "config": {
+        "broker_host": "mqtt-broker",
+        "broker_port": 1883,
+        "client_id": "streamforge-mqtt-environment",
+        "subscriptions": [
+          {
+            "topic_filter": "factory/environment/telemetry",
+            "payload_format": "json",
+            "message_type": "telemetry",
+            "asset_id_override": "mqtt_environment_01",
+            "qos": 1,
+            "mappings": [
+              {
+                "json_field": "ambient_temperature",
+                "parameter": "ambient_temperature",
+                "unit": "celsius",
+                "data_type": "float32"
+              },
+              {
+                "json_field": "ambient_humidity",
+                "parameter": "ambient_humidity",
+                "unit": "%",
+                "data_type": "float32"
+              },
+              {
+                "json_field": "ambient_vibration",
+                "parameter": "ambient_vibration",
+                "unit": "mm/s",
+                "data_type": "float32"
+              },
+              {
+                "json_field": "panel_battery_voltage",
+                "parameter": "panel_battery_voltage",
+                "unit": "V",
+                "data_type": "float32"
+              }
+            ]
+          }
+        ],
+        "output": {
+          "kafka_bootstrap": "kafka:9092",
+          "topic": "telemetry.raw",
+          "events_topic": "events.raw",
+          "asset_id": "mqtt_environment_01"
+        }
+      }
+    },
+    {
+      "adapter_id": "mqtt-operator-panel",
+      "name": "MQTT Operator Panel Events",
+      "adapter_type": "mqtt",
+      "config": {
+        "broker_host": "mqtt-broker",
+        "broker_port": 1883,
+        "client_id": "streamforge-mqtt-operator-panel",
+        "subscriptions": [
+          {
+            "topic_filter": "factory/operator/events",
+            "payload_format": "json",
+            "message_type": "event",
+            "asset_id_override": "mqtt_operator_panel_01",
+            "qos": 1,
+            "mappings": []
+          }
+        ],
+        "output": {
+          "kafka_bootstrap": "kafka:9092",
+          "topic": "telemetry.raw",
+          "events_topic": "events.raw",
+          "asset_id": "mqtt_operator_panel_01"
+        }
+      }
+    },
+    {
+      "adapter_id": "opcua-robot-cell",
+      "name": "OPC UA Robot Cell",
+      "adapter_type": "opcua",
+      "config": {
+        "endpoint": "opc.tcp://plant-simulator:4840/streamforge/robot/",
+        "auth_mode": "anonymous",
+        "subscription": {
+          "publishing_interval_ms": 1000
+        },
+        "monitored_items": [
+          {
+            "node_id": "ns=2;s=RobotCell.CycleCount",
+            "parameter": "robot_cycle_count",
+            "unit": "count",
+            "asset_id_override": "robot_cell_01"
+          },
+          {
+            "node_id": "ns=2;s=RobotCell.SpindleSpeed",
+            "parameter": "robot_spindle_speed",
+            "unit": "rpm",
+            "asset_id_override": "robot_cell_01"
+          },
+          {
+            "node_id": "ns=2;s=RobotCell.ToolWear",
+            "parameter": "robot_tool_wear",
+            "unit": "%",
+            "asset_id_override": "robot_cell_01"
+          },
+          {
+            "node_id": "ns=2;s=RobotCell.ModeCode",
+            "parameter": "robot_mode_code",
+            "unit": "",
+            "asset_id_override": "robot_cell_01"
+          }
+        ],
+        "advanced": {
+          "security_mode": "None",
+          "security_policy": "None"
+        },
+        "output": {
+          "kafka_bootstrap": "kafka:9092",
+          "topic": "telemetry.raw",
+          "events_topic": "events.raw",
+          "asset_id": "robot_cell_01"
+        }
+      }
+    },
+    {
+      "adapter_id": "opcua-line-controller",
+      "name": "OPC UA Line Controller",
+      "adapter_type": "opcua",
+      "config": {
+        "endpoint": "opc.tcp://plant-simulator:4841/streamforge/line/",
+        "auth_mode": "anonymous",
+        "subscription": {
+          "publishing_interval_ms": 1000
+        },
+        "monitored_items": [
+          {
+            "node_id": "ns=2;s=LineController.ProductionCount",
+            "parameter": "line_production_count",
+            "unit": "count",
+            "asset_id_override": "line_controller_01"
+          },
+          {
+            "node_id": "ns=2;s=LineController.RejectCount",
+            "parameter": "line_reject_count",
+            "unit": "count",
+            "asset_id_override": "line_controller_01"
+          },
+          {
+            "node_id": "ns=2;s=LineController.LineStateCode",
+            "parameter": "line_state_code",
+            "unit": "",
+            "asset_id_override": "line_controller_01"
+          },
+          {
+            "node_id": "ns=2;s=LineController.UptimeSeconds",
+            "parameter": "line_uptime_seconds",
+            "unit": "s",
+            "asset_id_override": "line_controller_01"
+          }
+        ],
+        "advanced": {
+          "security_mode": "None",
+          "security_policy": "None"
+        },
+        "output": {
+          "kafka_bootstrap": "kafka:9092",
+          "topic": "telemetry.raw",
+          "events_topic": "events.raw",
+          "asset_id": "line_controller_01"
+        }
+      }
+    }
+  ],
+  "validation": {
+    "enabled": true,
+    "raw_topic": "telemetry.raw",
+    "clean_topic": "telemetry.clean",
+    "dlq_topic": "dlq.telemetry",
+    "ranges": {
+      "packaging_conveyor_speed": {
+        "min": 0,
+        "max": 180
+      },
+      "packaging_bearing_temperature": {
+        "min": 0,
+        "max": 120
+      },
+      "pump_suction_pressure": {
+        "min": 0.8,
+        "max": 5
+      },
+      "pump_discharge_pressure": {
+        "min": 0,
+        "max": 12
+      },
+      "tank_temperature": {
+        "min": 0,
+        "max": 120
+      },
+      "tank_level_pct": {
+        "min": 0,
+        "max": 100
+      },
+      "compressor_vibration": {
+        "min": 0,
+        "max": 12
+      },
+      "ambient_temperature": {
+        "min": -10,
+        "max": 60
+      },
+      "ambient_vibration": {
+        "min": 0,
+        "max": 8
+      },
+      "panel_battery_voltage": {
+        "min": 2.9,
+        "max": 4.3
+      },
+      "robot_tool_wear": {
+        "min": 0,
+        "max": 100
+      },
+      "remote_tank_level_pct": {
+        "min": 0,
+        "max": 100
+      },
+      "remote_signal_quality": {
+        "min": 80,
+        "max": 100
+      },
+      "line_voltage": {
+        "min": 380,
+        "max": 430
+      },
+      "line_frequency": {
+        "min": 49,
+        "max": 51
+      },
+      "power_factor": {
+        "min": 0.7,
+        "max": 1
+      }
+    },
+    "rate_of_change": {
+      "packaging_conveyor_speed": 45,
+      "pump_flow_rate": 65,
+      "compressor_vibration": 4,
+      "ambient_vibration": 3
+    },
+    "gap_detection": {
+      "ambient_temperature": 5,
+      "robot_cycle_count": 5
+    },
+    "alarm_topic": "alarms.raw",
+    "alarm_rules": [
+      {
+        "parameter": "packaging_bearing_temperature",
+        "operator": ">",
+        "threshold": 75,
+        "severity": "HIGH",
+        "type": "bearing_temperature_high",
+        "message": "Packaging bearing temperature is above the safe operating band",
+        "clear_message": "Packaging bearing temperature returned to normal"
+      },
+      {
+        "parameter": "pump_suction_pressure",
+        "operator": "<",
+        "threshold": 1,
+        "severity": "HIGH",
+        "type": "pump_low_suction",
+        "message": "Pump suction pressure is too low",
+        "clear_message": "Pump suction pressure recovered"
+      },
+      {
+        "parameter": "tank_temperature",
+        "operator": ">",
+        "threshold": 95,
+        "severity": "CRITICAL",
+        "type": "tank_overtemperature",
+        "message": "Mixing tank temperature crossed the critical threshold",
+        "clear_message": "Mixing tank temperature returned below threshold"
+      },
+      {
+        "parameter": "compressor_vibration",
+        "operator": ">",
+        "threshold": 6,
+        "severity": "HIGH",
+        "type": "compressor_high_vibration",
+        "message": "Compressor vibration is above expected limits",
+        "clear_message": "Compressor vibration returned to normal"
+      },
+      {
+        "parameter": "panel_battery_voltage",
+        "operator": "<",
+        "threshold": 3,
+        "severity": "MEDIUM",
+        "type": "operator_panel_low_battery",
+        "message": "Operator panel battery voltage is low",
+        "clear_message": "Operator panel battery voltage recovered"
+      },
+      {
+        "parameter": "robot_tool_wear",
+        "operator": ">",
+        "threshold": 80,
+        "severity": "HIGH",
+        "type": "robot_tool_wear_high",
+        "message": "Robot tool wear is above the planned maintenance threshold",
+        "clear_message": "Robot tool wear returned below threshold"
+      },
+      {
+        "parameter": "remote_signal_quality",
+        "operator": "<",
+        "threshold": 85,
+        "severity": "MEDIUM",
+        "type": "remote_rtu_signal_quality_low",
+        "message": "Remote RTU signal quality is degraded",
+        "clear_message": "Remote RTU signal quality recovered"
+      }
+    ]
+  },
+  "events": {
+    "enabled": true,
+    "raw_topic": "events.raw",
+    "clean_topic": "events.clean",
+    "dlq_topic": "dlq.events"
+  },
+  "aggregates": {
+    "enabled": true,
+    "source_topic": "telemetry.clean",
+    "resolutions": {
+      "1s": {
+        "enabled": true,
+        "topic": "telemetry.1s",
+        "window_seconds": 1
+      },
+      "1min": {
+        "enabled": true,
+        "topic": "telemetry.1min",
+        "window_seconds": 60
+      }
+    }
+  },
+  "sinks": [
+    {
+      "sink_id": "timescaledb-primary",
+      "sink_type": "timescaledb",
+      "status": "active",
+      "config": {
+        "kafka_bootstrap": "kafka:9092",
+        "topic": "telemetry.clean",
+        "group_id": "sf-sink-timescaledb",
+        "db_dsn": "postgresql://streamforge:streamforge@timescaledb:5432/streamforge",
+        "table": "telemetry_clean",
+        "message_format": "telemetry"
+      }
+    },
+    {
+      "sink_id": "timescaledb-aggregate-1s",
+      "sink_type": "timescaledb",
+      "status": "active",
+      "config": {
+        "kafka_bootstrap": "kafka:9092",
+        "topic": "telemetry.1s",
+        "group_id": "sf-sink-timescaledb-1s",
+        "db_dsn": "postgresql://streamforge:streamforge@timescaledb:5432/streamforge",
+        "table": "telemetry_1s",
+        "message_format": "aggregate"
+      }
+    },
+    {
+      "sink_id": "timescaledb-aggregate-1min",
+      "sink_type": "timescaledb",
+      "status": "active",
+      "config": {
+        "kafka_bootstrap": "kafka:9092",
+        "topic": "telemetry.1min",
+        "group_id": "sf-sink-timescaledb-1min",
+        "db_dsn": "postgresql://streamforge:streamforge@timescaledb:5432/streamforge",
+        "table": "telemetry_1min",
+        "message_format": "aggregate"
+      }
+    },
+    {
+      "sink_id": "timescaledb-events",
+      "sink_type": "timescaledb",
+      "status": "active",
+      "config": {
+        "kafka_bootstrap": "kafka:9092",
+        "topic": "events.clean",
+        "group_id": "sf-sink-timescaledb-events",
+        "db_dsn": "postgresql://streamforge:streamforge@timescaledb:5432/streamforge",
+        "table": "events",
+        "message_format": "event"
+      }
+    }
+  ]
+}

@@ -585,6 +585,22 @@ body {
   background: var(--panel-2);
 }
 
+.enrollment-token-card {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.9rem;
+  padding: 0.85rem;
+}
+
+.enrollment-token-card code,
+td code {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.88rem;
+}
+
 .review-grid {
   display: grid;
   gap: 0.9rem;

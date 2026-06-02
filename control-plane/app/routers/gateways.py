@@ -10,13 +10,20 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.audit import record_audit_event
+from app.core.gateway_enrollments import (
+    enrollment_token_is_expired,
+    enrollment_token_uses_exhausted,
+    hash_enrollment_token,
+    utc_now,
+)
 from app.core.secrets import apply_resolved_secrets, list_resolved_secret_values
 from app.core.security import AuthError, create_gateway_token, decode_gateway_token, require_permission
 from app.db.deps import get_db
-from app.db.models import Deployment, Gateway, User
+from app.db.models import Deployment, Gateway, GatewayEnrollmentToken, User
 from app.schemas.gateways import (
     GatewayApproveResponse,
     GatewayCreateRequest,
+    GatewayEnrollRequest,
     GatewayHeartbeatRequest,
     GatewayItem,
     GatewayRegisterRequest,
@@ -59,27 +66,29 @@ def _reconcile_gateway_state(
     return next_status, next_approved
 
 
+def _gateway_item(row: Gateway) -> GatewayItem:
+    return GatewayItem(
+        gateway_id=row.gateway_id,
+        hostname=row.hostname,
+        hardware_info=row.hardware_info,
+        status=row.status,
+        approved=row.approved,
+        last_config_sync_at=row.last_config_sync_at,
+        last_config_version=row.last_config_version,
+        last_seen_at=row.last_seen_at,
+        runtime_health=row.runtime_health,
+        system_metrics=row.system_metrics,
+        created_at=row.created_at,
+    )
+
+
 @router.get("", response_model=list[GatewayItem])
 def list_gateways(
     db: Session = Depends(get_db),
     _: User = Depends(require_permission("configs:read")),
 ) -> list[GatewayItem]:
     rows = db.execute(select(Gateway).order_by(Gateway.created_at.desc())).scalars().all()
-    return [
-        GatewayItem(
-            gateway_id=row.gateway_id,
-            hostname=row.hostname,
-            status=row.status,
-            approved=row.approved,
-            last_config_sync_at=row.last_config_sync_at,
-            last_config_version=row.last_config_version,
-            last_seen_at=row.last_seen_at,
-            runtime_health=row.runtime_health,
-            system_metrics=row.system_metrics,
-            created_at=row.created_at,
-        )
-        for row in rows
-    ]
+    return [_gateway_item(row) for row in rows]
 
 
 @router.post("", response_model=GatewayItem)
@@ -124,18 +133,7 @@ def create_gateway(
     db.commit()
     db.refresh(gateway)
 
-    return GatewayItem(
-        gateway_id=gateway.gateway_id,
-        hostname=gateway.hostname,
-        status=gateway.status,
-        approved=gateway.approved,
-        last_config_sync_at=gateway.last_config_sync_at,
-        last_config_version=gateway.last_config_version,
-        last_seen_at=gateway.last_seen_at,
-        runtime_health=gateway.runtime_health,
-        system_metrics=gateway.system_metrics,
-        created_at=gateway.created_at,
-    )
+    return _gateway_item(gateway)
 
 
 @router.get("/{gateway_id}", response_model=GatewayItem)
@@ -148,18 +146,7 @@ def get_gateway(
     if gateway is None:
         raise HTTPException(status_code=404, detail="Gateway not found")
 
-    return GatewayItem(
-        gateway_id=gateway.gateway_id,
-        hostname=gateway.hostname,
-        status=gateway.status,
-        approved=gateway.approved,
-        last_config_sync_at=gateway.last_config_sync_at,
-        last_config_version=gateway.last_config_version,
-        last_seen_at=gateway.last_seen_at,
-        runtime_health=gateway.runtime_health,
-        system_metrics=gateway.system_metrics,
-        created_at=gateway.created_at,
-    )
+    return _gateway_item(gateway)
 
 
 @router.post("/register", response_model=GatewayRegisterResponse)
@@ -167,6 +154,71 @@ def register_gateway(payload: GatewayRegisterRequest, db: Session = Depends(get_
     raise HTTPException(
         status_code=410,
         detail="Gateway self-registration is not enabled. Create the gateway record from the control-plane UI or admin API first.",
+    )
+
+
+@router.post("/enroll", response_model=GatewayRegisterResponse)
+def enroll_gateway(payload: GatewayEnrollRequest, db: Session = Depends(get_db)) -> GatewayRegisterResponse:
+    enrollment = db.execute(
+        select(GatewayEnrollmentToken).where(
+            GatewayEnrollmentToken.token_hash == hash_enrollment_token(payload.enrollment_token)
+        )
+    ).scalar_one_or_none()
+    if enrollment is None:
+        raise HTTPException(status_code=403, detail="Invalid gateway enrollment token")
+    if enrollment.disabled:
+        raise HTTPException(status_code=403, detail="Gateway enrollment token is disabled")
+    if enrollment_token_is_expired(enrollment):
+        raise HTTPException(status_code=403, detail="Gateway enrollment token has expired")
+
+    gateway = db.execute(select(Gateway).where(Gateway.gateway_id == payload.gateway_id)).scalar_one_or_none()
+    if gateway is None:
+        if enrollment_token_uses_exhausted(enrollment):
+            raise HTTPException(status_code=403, detail="Gateway enrollment token has no remaining uses")
+
+        gateway = Gateway(
+            gateway_id=payload.gateway_id,
+            hostname=payload.hostname,
+            hardware_info=payload.hardware_info,
+            status="pending",
+            approved=False,
+            last_seen_at=utc_now(),
+            created_by=f"enrollment:{enrollment.enrollment_id}",
+            updated_by=f"enrollment:{enrollment.enrollment_id}",
+        )
+        enrollment.used_count += 1
+        enrollment.last_used_at = utc_now()
+        db.add(gateway)
+        db.add(enrollment)
+        record_audit_event(
+            db,
+            actor=None,
+            action="gateway.enrolled",
+            resource_type="gateway",
+            resource_public_id=gateway.gateway_id,
+            details={"enrollment_id": enrollment.enrollment_id, "site_code": enrollment.site_code},
+        )
+        record_audit_event(
+            db,
+            actor=None,
+            action="gateway_enrollment.used",
+            resource_type="gateway_enrollment",
+            resource_public_id=enrollment.enrollment_id,
+            details={"gateway_id": gateway.gateway_id, "used_count": enrollment.used_count},
+        )
+    else:
+        gateway.hostname = payload.hostname
+        gateway.hardware_info = payload.hardware_info
+        gateway.last_seen_at = utc_now()
+        gateway.updated_by = f"enrollment:{enrollment.enrollment_id}"
+        db.add(gateway)
+
+    db.commit()
+    db.refresh(gateway)
+    return GatewayRegisterResponse(
+        gateway_id=gateway.gateway_id,
+        status=gateway.status,
+        approved=gateway.approved,
     )
 
 
@@ -220,7 +272,7 @@ def issue_gateway_token(
 
 
 @router.post("/token/renew", response_model=GatewayTokenResponse)
-def renew_gateway_token(token: str = Depends(oauth2_scheme)) -> GatewayTokenResponse:
+def renew_gateway_token(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> GatewayTokenResponse:
     try:
         claims = decode_gateway_token(token)
     except AuthError as exc:
@@ -229,6 +281,12 @@ def renew_gateway_token(token: str = Depends(oauth2_scheme)) -> GatewayTokenResp
     gateway_id = claims.get("sub")
     if not gateway_id:
         raise HTTPException(status_code=401, detail="Invalid gateway token")
+
+    gateway = db.execute(select(Gateway).where(Gateway.gateway_id == gateway_id)).scalar_one_or_none()
+    if gateway is None:
+        raise HTTPException(status_code=401, detail="Gateway not found")
+    if not gateway.approved:
+        raise HTTPException(status_code=403, detail="Gateway is pending approval")
 
     new_token, expires_at = create_gateway_token(gateway_id)
     return GatewayTokenResponse(token=new_token, expires_at=expires_at, gateway_id=gateway_id)
@@ -368,18 +426,7 @@ def gateway_heartbeat(
     db.commit()
     db.refresh(gateway)
 
-    return GatewayItem(
-        gateway_id=gateway.gateway_id,
-        hostname=gateway.hostname,
-        status=gateway.status,
-        approved=gateway.approved,
-        last_config_sync_at=gateway.last_config_sync_at,
-        last_config_version=gateway.last_config_version,
-        last_seen_at=gateway.last_seen_at,
-        runtime_health=gateway.runtime_health,
-        system_metrics=gateway.system_metrics,
-        created_at=gateway.created_at,
-    )
+    return _gateway_item(gateway)
 
 
 @router.put("/{gateway_id}", response_model=GatewayItem)
@@ -430,18 +477,7 @@ def update_gateway(
     db.commit()
     db.refresh(gateway)
 
-    return GatewayItem(
-        gateway_id=gateway.gateway_id,
-        hostname=gateway.hostname,
-        status=gateway.status,
-        approved=gateway.approved,
-        last_config_sync_at=gateway.last_config_sync_at,
-        last_config_version=gateway.last_config_version,
-        last_seen_at=gateway.last_seen_at,
-        runtime_health=gateway.runtime_health,
-        system_metrics=gateway.system_metrics,
-        created_at=gateway.created_at,
-    )
+    return _gateway_item(gateway)
 
 
 @router.delete("/{gateway_id}")

@@ -166,6 +166,9 @@ class ControlPlaneConfigRepository(ConfigRepository):
         base_url: str,
         gateway_id: str,
         token: str | None = None,
+        enrollment_token: str | None = None,
+        enrollment_hostname: str | None = None,
+        enrollment_hardware_info: dict | None = None,
         cache_path: str | None = None,
         schema_path: str | None = None,
     ) -> None:
@@ -173,12 +176,16 @@ class ControlPlaneConfigRepository(ConfigRepository):
         self._base_url = base_url.rstrip("/")
         self._gateway_id = gateway_id
         self._token = token
+        self._enrollment_token = enrollment_token.strip() if isinstance(enrollment_token, str) and enrollment_token.strip() else None
+        self._enrollment_hostname = enrollment_hostname or gateway_id
+        self._enrollment_hardware_info = dict(enrollment_hardware_info or {})
         self._token_refreshed_at = time.time()
         self._breaker = CircuitBreaker(
             name="control_plane",
             failure_threshold=int(os.getenv("CONTROL_PLANE_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "5")),
             open_duration_seconds=float(os.getenv("CONTROL_PLANE_CIRCUIT_BREAKER_OPEN_SECONDS", "30")),
         )
+        self._pending_cache_raw: dict | None = None
 
     @property
     def gateway_id(self) -> str:
@@ -205,11 +212,34 @@ class ControlPlaneConfigRepository(ConfigRepository):
 
     def refresh(self) -> GatewayConfig:
         """Fetch the latest config from the control plane and update the local cache."""
+        config = self.refresh_without_cache()
+        self.commit_pending_cache(config)
+        return config
+
+    def refresh_without_cache(self) -> GatewayConfig:
+        """Fetch the latest config without replacing the offline cache yet."""
         raw = self.get_json(f"/api/v1/gateways/{self._gateway_id}/config")
         self._assert_gateway_identity(raw)
         config = self._config_from_raw(raw, source="control_plane")
-        self._write_cache(raw)
+        self._pending_cache_raw = raw
         return config
+
+    def commit_pending_cache(self, config: GatewayConfig) -> None:
+        """Persist the most recent fetched config after runtime acceptance."""
+        raw = self._pending_cache_raw
+        if raw is None:
+            return
+        if raw.get("gateway_id") != config.gateway_id:
+            raise ConfigError("Pending config cache identity does not match accepted config")
+        raw_version = str(raw["version"]) if "version" in raw and raw["version"] is not None else None
+        if raw_version != config.version:
+            raise ConfigError("Pending config cache version does not match accepted config")
+        self._write_cache(raw)
+        self._pending_cache_raw = None
+
+    def discard_pending_cache(self) -> None:
+        """Drop the most recent fetched config when runtime acceptance fails."""
+        self._pending_cache_raw = None
 
     def health(self) -> dict[str, object]:
         """Return control-plane connectivity and cache health details."""
@@ -352,6 +382,14 @@ class ControlPlaneConfigRepository(ConfigRepository):
                     "Gateway token request denied: gateway is pending approval"
                 ) from exc
             if exc.code == 404:
+                if self._enrollment_token:
+                    enrollment = self._enroll_gateway()
+                    if enrollment.get("approved") is True:
+                        self._request_gateway_token()
+                        return
+                    raise ConfigError(
+                        "Gateway token request denied: gateway is pending approval"
+                    ) from exc
                 raise ConfigError(
                     "Gateway token request failed: gateway not registered"
                 ) from exc
@@ -373,6 +411,50 @@ class ControlPlaneConfigRepository(ConfigRepository):
             self._breaker.record_failure(exc)
             raise ConfigError(f"Gateway token request returned invalid JSON: {exc}") from exc
         self._breaker.record_success()
+
+    def _enroll_gateway(self) -> dict:
+        """Enroll this gateway with the control plane using a one-time enrollment token."""
+        try:
+            self._breaker.ensure_request_allowed()
+        except CircuitBreakerOpenError as exc:
+            raise ConfigError(str(exc)) from exc
+
+        payload = json.dumps(
+            {
+                "enrollment_token": self._enrollment_token,
+                "gateway_id": self._gateway_id,
+                "hostname": self._enrollment_hostname,
+                "hardware_info": self._enrollment_hardware_info,
+            }
+        ).encode("utf-8")
+        req = request.Request(
+            f"{self._base_url}/api/v1/gateways/enroll",
+            data=payload,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with request.urlopen(req, timeout=10) as response:
+                response_payload = response.read().decode("utf-8")
+        except error.HTTPError as exc:
+            if exc.code in {400, 403}:
+                raise ConfigError(f"Gateway enrollment failed: HTTP {exc.code}") from exc
+            self._breaker.record_failure(exc)
+            raise ConfigError(f"Gateway enrollment failed: HTTP {exc.code}") from exc
+        except error.URLError as exc:
+            self._breaker.record_failure(exc)
+            raise ConfigError(f"Gateway enrollment failed: {exc.reason}") from exc
+
+        try:
+            data = json.loads(response_payload)
+        except json.JSONDecodeError as exc:
+            self._breaker.record_failure(exc)
+            raise ConfigError(f"Gateway enrollment returned invalid JSON: {exc}") from exc
+        self._breaker.record_success()
+        return data if isinstance(data, dict) else {}
 
     def _load_cached_config(self) -> GatewayConfig:
         """Load and validate cached config for offline startup."""

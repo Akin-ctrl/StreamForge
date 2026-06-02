@@ -113,10 +113,17 @@ class ModbusTcpAdapter(BaseAdapter):
                 "modbus_connect_failures": 0,
                 "modbus_read_failures": 0,
                 "modbus_reconnects": 0,
+                "modbus_batch_failures": 0,
+                "modbus_register_batch_failures": 0,
+                "modbus_coil_batch_failures": 0,
                 "last_modbus_error": None,
                 "last_modbus_retry_operation": None,
                 "last_modbus_retry_attempt": 0,
                 "last_modbus_backoff_s": 0.0,
+                "last_modbus_batch_failures": 0,
+                "last_modbus_register_batch_failures": 0,
+                "last_modbus_coil_batch_failures": 0,
+                "last_modbus_failed_batches": [],
                 "events_topic": self._events_topic,
                 "published_events": 0,
                 "event_publish_failures": 0,
@@ -126,6 +133,18 @@ class ModbusTcpAdapter(BaseAdapter):
                 "last_event_publish_offset": None,
             }
         )
+
+    def run_once(self) -> Dict[str, object]:
+        """Run one lifecycle iteration while preserving partial Modbus failure health."""
+        message = super().run_once()
+        if int(self._health.get("last_modbus_batch_failures", 0)) > 0:
+            self._set_status(
+                "degraded",
+                connected=bool(self._health.get("connected")),
+                running=bool(self._health.get("running")),
+                last_error=self._health.get("last_modbus_error"),
+            )
+        return message
 
     def connect(self) -> None:
         """Connect to Modbus TCP server."""
@@ -167,18 +186,30 @@ class ModbusTcpAdapter(BaseAdapter):
         batches = self._build_batches(registers)
         readings: Dict[str, object] = {}
         events: list[dict[str, object]] = []
+        self._reset_poll_batch_health()
 
         self._health["last_modbus_batch_count"] = len(batches)
         self._health["last_modbus_register_span"] = sum(batch.count for batch in batches)
 
         for batch in batches:
-            response = self._read_batch_with_retry(batch=batch, unit_id=unit_id)
-
-            for spec in batch.specs:
-                start_index = spec.address - batch.start
-                end_index = start_index + self._register_width(spec)
-                value = self._decode_value(spec, response.registers[start_index:end_index])
-                readings[spec.param] = {"value": value, "unit": spec.unit}
+            batch_readings: Dict[str, object] = {}
+            try:
+                response = self._read_batch_with_retry(batch=batch, unit_id=unit_id)
+                for spec in batch.specs:
+                    start_index = spec.address - batch.start
+                    end_index = start_index + self._register_width(spec)
+                    value = self._decode_value(spec, response.registers[start_index:end_index])
+                    batch_readings[spec.param] = {"value": value, "unit": spec.unit}
+            except Exception as exc:
+                self._record_modbus_batch_failure(
+                    kind="register",
+                    start=batch.start,
+                    count=batch.count,
+                    parameters=[spec.param for spec in batch.specs],
+                    exc=exc,
+                )
+                continue
+            readings.update(batch_readings)
 
         coils = sorted(self._iter_coils(), key=lambda spec: spec.address)
         coil_batches = self._build_coil_batches(coils)
@@ -190,24 +221,40 @@ class ModbusTcpAdapter(BaseAdapter):
             self._health["last_modbus_coil_span"] = 0
 
         for batch in coil_batches:
-            response = self._read_coil_batch_with_retry(batch=batch, unit_id=unit_id)
-            for spec in batch.specs:
-                state = bool(response.bits[spec.address - batch.start])
-                if spec.classification != "event":
-                    readings[spec.param] = {"value": state, "unit": spec.unit}
-                    continue
-                previous_state = self._last_coil_states.get(spec.param)
-                self._last_coil_states[spec.param] = state
-                if previous_state is None or previous_state == state:
-                    continue
-                events.append(
-                    {
-                        "parameter": spec.param,
-                        "event_type": spec.event_type,
-                        "previous_state": previous_state,
-                        "new_state": state,
-                    }
+            batch_readings = {}
+            batch_events: list[dict[str, object]] = []
+            batch_state_updates: dict[str, bool] = {}
+            try:
+                response = self._read_coil_batch_with_retry(batch=batch, unit_id=unit_id)
+                for spec in batch.specs:
+                    state = bool(response.bits[spec.address - batch.start])
+                    if spec.classification != "event":
+                        batch_readings[spec.param] = {"value": state, "unit": spec.unit}
+                        continue
+                    previous_state = self._last_coil_states.get(spec.param)
+                    batch_state_updates[spec.param] = state
+                    if previous_state is None or previous_state == state:
+                        continue
+                    batch_events.append(
+                        {
+                            "parameter": spec.param,
+                            "event_type": spec.event_type,
+                            "previous_state": previous_state,
+                            "new_state": state,
+                        }
+                    )
+            except Exception as exc:
+                self._record_modbus_batch_failure(
+                    kind="coil",
+                    start=batch.start,
+                    count=batch.count,
+                    parameters=[spec.param for spec in batch.specs],
+                    exc=exc,
                 )
+                continue
+            readings.update(batch_readings)
+            events.extend(batch_events)
+            self._last_coil_states.update(batch_state_updates)
 
         return {"readings": readings, "events": events}
 
@@ -256,6 +303,7 @@ class ModbusTcpAdapter(BaseAdapter):
                     },
                     "metadata": {
                         "adapter_id": self._adapter_id,
+                        "pipeline_id": deployment_id,
                         "deployment_id": deployment_id,
                     },
                 }
@@ -505,6 +553,51 @@ class ModbusTcpAdapter(BaseAdapter):
         self._health["last_modbus_retry_operation"] = operation
         self._health["last_modbus_retry_attempt"] = attempt
         self._health["last_error"] = str(exc)
+
+    def _reset_poll_batch_health(self) -> None:
+        """Reset per-poll Modbus batch diagnostics."""
+        self._health["last_modbus_batch_failures"] = 0
+        self._health["last_modbus_register_batch_failures"] = 0
+        self._health["last_modbus_coil_batch_failures"] = 0
+        self._health["last_modbus_failed_batches"] = []
+
+    def _record_modbus_batch_failure(
+        self,
+        *,
+        kind: str,
+        start: int,
+        count: int,
+        parameters: list[str],
+        exc: Exception,
+    ) -> None:
+        """Track a failed register or coil batch without aborting the poll."""
+        error_message = str(exc)
+        failed_batches = list(self._health.get("last_modbus_failed_batches") or [])
+        failed_batches.append(
+            {
+                "kind": kind,
+                "start": start,
+                "count": count,
+                "parameters": parameters,
+                "error": error_message,
+            }
+        )
+        self._health["last_modbus_failed_batches"] = failed_batches
+        self._health["last_modbus_batch_failures"] = int(self._health["last_modbus_batch_failures"]) + 1
+        self._health["modbus_batch_failures"] = int(self._health["modbus_batch_failures"]) + 1
+        if kind == "register":
+            self._health["last_modbus_register_batch_failures"] = int(self._health["last_modbus_register_batch_failures"]) + 1
+            self._health["modbus_register_batch_failures"] = int(self._health["modbus_register_batch_failures"]) + 1
+        elif kind == "coil":
+            self._health["last_modbus_coil_batch_failures"] = int(self._health["last_modbus_coil_batch_failures"]) + 1
+            self._health["modbus_coil_batch_failures"] = int(self._health["modbus_coil_batch_failures"]) + 1
+        self._health["last_modbus_error"] = error_message
+        self._set_status(
+            "degraded",
+            connected=bool(self._client is not None),
+            running=bool(self._health.get("running")),
+            last_error=error_message,
+        )
 
     @classmethod
     def _build_batches(cls, specs: Sequence[RegisterSpec]) -> list[RegisterBatch]:

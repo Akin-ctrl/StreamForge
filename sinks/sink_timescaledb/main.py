@@ -35,6 +35,10 @@ _DB_BREAKER = CircuitBreaker(
 _STATS = {
     "consumed": 0,
     "written": 0,
+    "batches": 0,
+    "last_batch_messages": 0,
+    "last_batch_rows": 0,
+    "last_flush_ms": 0.0,
     "errors": 0,
     "last_error": None,
     "consumer_lag": 0,
@@ -82,6 +86,18 @@ def _load_config() -> dict:
         "table": config.get("table", "telemetry_clean"),
         "message_format": config.get("message_format", "auto"),
         "schema_path": config.get("schema_path"),
+        "batch_max_messages": max(
+            int(config.get("batch_max_messages", os.getenv("SINK_BATCH_MAX_MESSAGES", "500"))),
+            1,
+        ),
+        "batch_max_rows": max(
+            int(config.get("batch_max_rows", os.getenv("SINK_BATCH_MAX_ROWS", "2000"))),
+            1,
+        ),
+        "batch_flush_interval_ms": max(
+            int(config.get("batch_flush_interval_ms", os.getenv("SINK_BATCH_FLUSH_INTERVAL_MS", "1000"))),
+            1,
+        ),
     }
 
 
@@ -228,10 +244,28 @@ def _table_row_count(cursor, table: str) -> int:
 def _try_create_hypertable(cursor, table: str, time_column: str) -> None:
     """Best-effort hypertable promotion without blocking ingest on schema quirks."""
     try:
-        cursor.execute(
-            f"SELECT create_hypertable(%s, '{time_column}', if_not_exists => TRUE);",
-            (table,),
-        )
+        cursor.execute("SELECT to_regproc('create_hypertable')")
+        row = cursor.fetchone()
+        if not row or row[0] is None:
+            logger.warning(
+                "timescaledb sink could not promote %s to a hypertable on %s; "
+                "create_hypertable is unavailable, continuing with a regular table",
+                table,
+                time_column,
+            )
+            return
+        connection = getattr(cursor, "connection", None)
+        if connection is not None and hasattr(connection, "transaction"):
+            with connection.transaction():
+                cursor.execute(
+                    f"SELECT create_hypertable(%s, '{time_column}', if_not_exists => TRUE);",
+                    (table,),
+                )
+        else:
+            cursor.execute(
+                f"SELECT create_hypertable(%s, '{time_column}', if_not_exists => TRUE);",
+                (table,),
+            )
     except _db_optional_error_types() as exc:
         logger.warning(
             "timescaledb sink could not promote %s to a hypertable on %s; continuing with a regular table: %s",
@@ -263,102 +297,27 @@ def _payload_format(payload: dict, configured_format: str) -> str:
     return "telemetry"
 
 
-def _write_payload(cursor, table: str, payload: dict, payload_format: str) -> int:
-    quoted_table = f'"{table}"'
-    if payload_format == "aggregate":
-        aggregates = payload.get("aggregates", {})
-        quality_summary = payload.get("quality_summary", {})
-        cursor.execute(
-            f"""
-            INSERT INTO {quoted_table} (
-                asset_id, parameter, unit, classification, window_start, window_end,
-                avg, min, max, stddev, count, p50, p95, p99,
-                good_samples, suspect_samples, uncertain_samples, bad_samples, pct_good, payload
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-            ON CONFLICT (asset_id, parameter, window_start, window_end)
-            DO UPDATE SET
-                unit = EXCLUDED.unit,
-                classification = EXCLUDED.classification,
-                avg = EXCLUDED.avg,
-                min = EXCLUDED.min,
-                max = EXCLUDED.max,
-                stddev = EXCLUDED.stddev,
-                count = EXCLUDED.count,
-                p50 = EXCLUDED.p50,
-                p95 = EXCLUDED.p95,
-                p99 = EXCLUDED.p99,
-                good_samples = EXCLUDED.good_samples,
-                suspect_samples = EXCLUDED.suspect_samples,
-                uncertain_samples = EXCLUDED.uncertain_samples,
-                bad_samples = EXCLUDED.bad_samples,
-                pct_good = EXCLUDED.pct_good,
-                payload = EXCLUDED.payload
-            """,
-            (
-                payload.get("asset_id"),
-                payload.get("parameter"),
-                payload.get("unit"),
-                payload.get("classification", "TELEMETRY_AGGREGATE"),
-                payload.get("window_start"),
-                payload.get("window_end"),
-                aggregates.get("avg"),
-                aggregates.get("min"),
-                aggregates.get("max"),
-                aggregates.get("stddev"),
-                aggregates.get("count"),
-                aggregates.get("p50"),
-                aggregates.get("p95"),
-                aggregates.get("p99"),
-                quality_summary.get("good_samples", 0),
-                quality_summary.get("suspect_samples", 0),
-                quality_summary.get("uncertain_samples", 0),
-                quality_summary.get("bad_samples", 0),
-                quality_summary.get("pct_good", 0.0),
-                json.dumps(payload),
-            ),
-        )
-        return 1
+def _payload_row_count(payload: dict, payload_format: str) -> int:
+    if payload_format == "telemetry":
+        readings = payload.get("readings", [])
+        return len(readings) if isinstance(readings, list) else 0
+    return 1
 
-    if payload_format == "event":
-        timestamps = payload.get("timestamps", {})
-        metadata = payload.get("metadata", {})
-        cursor.execute(
-            f"""
-            INSERT INTO {quoted_table} (
-                asset_id, event_type, classification, gateway_time, device_time,
-                previous_state, new_state, metadata, payload
-            ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb)
-            ON CONFLICT (asset_id, event_type, gateway_time)
-            DO UPDATE SET
-                classification = EXCLUDED.classification,
-                device_time = EXCLUDED.device_time,
-                previous_state = EXCLUDED.previous_state,
-                new_state = EXCLUDED.new_state,
-                metadata = EXCLUDED.metadata,
-                payload = EXCLUDED.payload
-            """,
-            (
-                payload.get("asset_id"),
-                payload.get("event_type"),
-                payload.get("classification", "EVENT"),
-                timestamps.get("gateway_time"),
-                timestamps.get("device_time"),
-                json.dumps(payload.get("previous_state", {})),
-                json.dumps(payload.get("new_state", {})),
-                json.dumps(metadata),
-                json.dumps(payload),
-            ),
-        )
-        return 1
 
-    written_rows = 0
+def _execute_values(cursor, insert_sql: str, values_template: str, rows: list[tuple], suffix: str = "") -> int:
+    if not rows:
+        return 0
+    values_sql = ", ".join([values_template] * len(rows))
+    flat_params = tuple(value for row in rows for value in row)
+    cursor.execute(f"{insert_sql} {values_sql} {suffix}", flat_params)
+    return len(rows)
+
+
+def _telemetry_rows(payload: dict) -> list[tuple]:
+    rows: list[tuple] = []
+    payload_json = json.dumps(payload)
     for reading in payload.get("readings", []):
-        cursor.execute(
-            f"""
-            INSERT INTO {quoted_table} (
-                asset_id, parameter, value, unit, quality, gateway_time, device_time, payload
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-            """,
+        rows.append(
             (
                 payload.get("asset_id"),
                 reading.get("parameter"),
@@ -367,11 +326,201 @@ def _write_payload(cursor, table: str, payload: dict, payload_format: str) -> in
                 reading.get("quality", "GOOD"),
                 payload.get("gateway_time"),
                 reading.get("device_time"),
-                json.dumps(payload),
-            ),
+                payload_json,
+            )
         )
-        written_rows += 1
+    return rows
+
+
+def _aggregate_row(payload: dict) -> tuple:
+    aggregates = payload.get("aggregates", {})
+    quality_summary = payload.get("quality_summary", {})
+    return (
+        payload.get("asset_id"),
+        payload.get("parameter"),
+        payload.get("unit"),
+        payload.get("classification", "TELEMETRY_AGGREGATE"),
+        payload.get("window_start"),
+        payload.get("window_end"),
+        aggregates.get("avg"),
+        aggregates.get("min"),
+        aggregates.get("max"),
+        aggregates.get("stddev"),
+        aggregates.get("count"),
+        aggregates.get("p50"),
+        aggregates.get("p95"),
+        aggregates.get("p99"),
+        quality_summary.get("good_samples", 0),
+        quality_summary.get("suspect_samples", 0),
+        quality_summary.get("uncertain_samples", 0),
+        quality_summary.get("bad_samples", 0),
+        quality_summary.get("pct_good", 0.0),
+        json.dumps(payload),
+    )
+
+
+def _event_row(payload: dict) -> tuple:
+    timestamps = payload.get("timestamps", {})
+    metadata = payload.get("metadata", {})
+    return (
+        payload.get("asset_id"),
+        payload.get("event_type"),
+        payload.get("classification", "EVENT"),
+        timestamps.get("gateway_time"),
+        timestamps.get("device_time"),
+        json.dumps(payload.get("previous_state", {})),
+        json.dumps(payload.get("new_state", {})),
+        json.dumps(metadata),
+        json.dumps(payload),
+    )
+
+
+def _ensure_table_for_format(cursor, table: str, payload_format: str) -> None:
+    if payload_format == "aggregate":
+        _ensure_aggregate_table(cursor, table)
+    elif payload_format == "event":
+        _ensure_event_table(cursor, table)
+    else:
+        _ensure_telemetry_table(cursor, table)
+
+
+def _write_payload_batch(cursor, table: str, payloads: list[tuple[dict, str]]) -> int:
+    quoted_table = f'"{table}"'
+
+    telemetry_rows: list[tuple] = []
+    aggregate_rows_by_key: dict[tuple, tuple] = {}
+    event_rows_by_key: dict[tuple, tuple] = {}
+    for payload, payload_format in payloads:
+        if payload_format == "aggregate":
+            row = _aggregate_row(payload)
+            aggregate_rows_by_key[(row[0], row[1], row[4], row[5])] = row
+        elif payload_format == "event":
+            row = _event_row(payload)
+            event_rows_by_key[(row[0], row[1], row[3])] = row
+        else:
+            telemetry_rows.extend(_telemetry_rows(payload))
+
+    aggregate_rows = list(aggregate_rows_by_key.values())
+    event_rows = list(event_rows_by_key.values())
+
+    written_rows = _execute_values(
+        cursor,
+        f"""
+        INSERT INTO {quoted_table} (
+            asset_id, parameter, value, unit, quality, gateway_time, device_time, payload
+        ) VALUES
+        """,
+        "(%s, %s, %s, %s, %s, %s, %s, %s::jsonb)",
+        telemetry_rows,
+    )
+    written_rows += _execute_values(
+        cursor,
+        f"""
+        INSERT INTO {quoted_table} (
+            asset_id, parameter, unit, classification, window_start, window_end,
+            avg, min, max, stddev, count, p50, p95, p99,
+            good_samples, suspect_samples, uncertain_samples, bad_samples, pct_good, payload
+        ) VALUES
+        """,
+        "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)",
+        aggregate_rows,
+        """
+        ON CONFLICT (asset_id, parameter, window_start, window_end)
+        DO UPDATE SET
+            unit = EXCLUDED.unit,
+            classification = EXCLUDED.classification,
+            avg = EXCLUDED.avg,
+            min = EXCLUDED.min,
+            max = EXCLUDED.max,
+            stddev = EXCLUDED.stddev,
+            count = EXCLUDED.count,
+            p50 = EXCLUDED.p50,
+            p95 = EXCLUDED.p95,
+            p99 = EXCLUDED.p99,
+            good_samples = EXCLUDED.good_samples,
+            suspect_samples = EXCLUDED.suspect_samples,
+            uncertain_samples = EXCLUDED.uncertain_samples,
+            bad_samples = EXCLUDED.bad_samples,
+            pct_good = EXCLUDED.pct_good,
+            payload = EXCLUDED.payload
+        """,
+    )
+    written_rows += _execute_values(
+        cursor,
+        f"""
+        INSERT INTO {quoted_table} (
+            asset_id, event_type, classification, gateway_time, device_time,
+            previous_state, new_state, metadata, payload
+        ) VALUES
+        """,
+        "(%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb)",
+        event_rows,
+        """
+        ON CONFLICT (asset_id, event_type, gateway_time)
+        DO UPDATE SET
+            classification = EXCLUDED.classification,
+            device_time = EXCLUDED.device_time,
+            previous_state = EXCLUDED.previous_state,
+            new_state = EXCLUDED.new_state,
+            metadata = EXCLUDED.metadata,
+            payload = EXCLUDED.payload
+        """,
+    )
     return written_rows
+
+
+def _write_payload(cursor, table: str, payload: dict, payload_format: str) -> int:
+    return _write_payload_batch(cursor, table, [(payload, payload_format)])
+
+
+def _should_flush_batch(batch: list[tuple[dict, str]], batch_rows: int, first_record_at: float | None, cfg: dict) -> bool:
+    if not batch:
+        return False
+    if len(batch) >= int(cfg["batch_max_messages"]):
+        return True
+    if batch_rows >= int(cfg["batch_max_rows"]):
+        return True
+    if first_record_at is None:
+        return False
+    flush_interval_s = int(cfg["batch_flush_interval_ms"]) / 1000
+    return time.monotonic() - first_record_at >= flush_interval_s
+
+
+def _flatten_polled_records(records: dict) -> list:
+    flattened = []
+    for partition_records in records.values():
+        flattened.extend(partition_records)
+    return flattened
+
+
+def _flush_payload_batch(consumer, conn, batch: list[tuple[dict, str]], ensured_formats: set[str], cfg: dict) -> None:
+    if not batch:
+        return
+
+    flush_started = time.monotonic()
+    try:
+        with conn.cursor() as cursor:
+            for _payload, payload_format in batch:
+                if payload_format not in ensured_formats:
+                    _ensure_table_for_format(cursor, cfg["table"], payload_format)
+                    ensured_formats.add(payload_format)
+            written_rows = _write_payload_batch(cursor, cfg["table"], batch)
+        conn.commit()
+        consumer.commit()
+    except Exception:
+        with suppress(*_db_optional_error_types()):
+            conn.rollback()
+        raise
+
+    _STATS["consumed"] += len(batch)
+    _STATS["written"] += written_rows
+    _STATS["batches"] += 1
+    _STATS["last_batch_messages"] = len(batch)
+    _STATS["last_batch_rows"] = written_rows
+    _STATS["last_flush_ms"] = round((time.monotonic() - flush_started) * 1000, 3)
+    _STATS["last_error"] = None
+    _STATS["consumer_lag"] = 0
+    _DB_BREAKER.record_success()
 
 
 def _dedupe_aggregate_table(cursor, table: str) -> None:
@@ -444,30 +593,42 @@ def _writer_loop() -> None:
                 value_deserializer=schema.decode,
             )
 
-            ensured_format: str | None = None
-            with psycopg.connect(cfg["db_dsn"], autocommit=True) as conn:
-                for record in consumer:
-                    if _STOP.is_set():
-                        break
+            batch: list[tuple[dict, str]] = []
+            batch_rows = 0
+            first_record_at: float | None = None
+            ensured_formats: set[str] = set()
+            poll_timeout_ms = min(int(cfg["batch_flush_interval_ms"]), 250)
 
-                    payload = record.value
-                    payload_format = _payload_format(payload, cfg["message_format"])
-                    with conn.cursor() as cursor:
-                        if payload_format != ensured_format:
-                            if payload_format == "aggregate":
-                                _ensure_aggregate_table(cursor, cfg["table"])
-                            elif payload_format == "event":
-                                _ensure_event_table(cursor, cfg["table"])
-                            else:
-                                _ensure_telemetry_table(cursor, cfg["table"])
-                            ensured_format = payload_format
-                        written_rows = _write_payload(cursor, cfg["table"], payload, payload_format)
-                    consumer.commit()
-                    _STATS["consumed"] += 1
-                    _STATS["written"] += written_rows
-                    _STATS["last_error"] = None
-                    _STATS["consumer_lag"] = 0
-                    _DB_BREAKER.record_success()
+            with psycopg.connect(cfg["db_dsn"]) as conn:
+                while not _STOP.is_set():
+                    remaining_batch_slots = max(int(cfg["batch_max_messages"]) - len(batch), 1)
+                    polled_records = consumer.poll(
+                        timeout_ms=poll_timeout_ms,
+                        max_records=remaining_batch_slots,
+                    )
+
+                    for record in _flatten_polled_records(polled_records):
+                        payload = record.value
+                        payload_format = _payload_format(payload, cfg["message_format"])
+                        if first_record_at is None:
+                            first_record_at = time.monotonic()
+                        batch.append((payload, payload_format))
+                        batch_rows += _payload_row_count(payload, payload_format)
+
+                        if _should_flush_batch(batch, batch_rows, first_record_at, cfg):
+                            _flush_payload_batch(consumer, conn, batch, ensured_formats, cfg)
+                            batch = []
+                            batch_rows = 0
+                            first_record_at = None
+
+                    if _should_flush_batch(batch, batch_rows, first_record_at, cfg):
+                        _flush_payload_batch(consumer, conn, batch, ensured_formats, cfg)
+                        batch = []
+                        batch_rows = 0
+                        first_record_at = None
+
+                if batch:
+                    _flush_payload_batch(consumer, conn, batch, ensured_formats, cfg)
         except Exception as exc:
             # Deliberate service-boundary catch: DB outages should trip the
             # breaker and retry instead of killing the sink thread.
@@ -514,6 +675,14 @@ def metrics() -> str:
         f"sink_timescaledb_consumed_total {_STATS['consumed']}",
         "# TYPE sink_timescaledb_written_total counter",
         f"sink_timescaledb_written_total {_STATS['written']}",
+        "# TYPE sink_timescaledb_batches_total counter",
+        f"sink_timescaledb_batches_total {_STATS['batches']}",
+        "# TYPE sink_timescaledb_last_batch_messages gauge",
+        f"sink_timescaledb_last_batch_messages {_STATS['last_batch_messages']}",
+        "# TYPE sink_timescaledb_last_batch_rows gauge",
+        f"sink_timescaledb_last_batch_rows {_STATS['last_batch_rows']}",
+        "# TYPE sink_timescaledb_last_flush_ms gauge",
+        f"sink_timescaledb_last_flush_ms {_STATS['last_flush_ms']}",
         "# TYPE sink_timescaledb_errors_total counter",
         f"sink_timescaledb_errors_total {_STATS['errors']}",
         "# TYPE sink_timescaledb_consumer_lag gauge",

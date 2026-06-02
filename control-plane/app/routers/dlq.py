@@ -14,7 +14,9 @@ from app.db.models import DlqMessage, Gateway, User
 from app.schemas.dlq import (
     DlqAction,
     DlqActionRequest,
+    DlqBulkAnnotateRequest,
     DlqBulkApproveRequest,
+    DlqBulkDiscardRequest,
     DlqGatewayAction,
     DlqGatewayActionResultRequest,
     DlqItem,
@@ -40,6 +42,7 @@ def _dlq_item(record: DlqMessage) -> DlqItem:
         requested_action=record.requested_action,
         reviewed_by=record.reviewed_by,
         reviewed_at=record.reviewed_at,
+        operator_note=record.operator_note,
         action_completed_at=record.action_completed_at,
         last_error=record.last_error,
         failed_at=record.failed_at,
@@ -57,6 +60,15 @@ def _get_record_or_404(db: Session, message_id: str) -> DlqMessage:
     return record
 
 
+def _get_bulk_records_or_404(db: Session, message_ids: list[str]) -> list[DlqMessage]:
+    rows = db.execute(select(DlqMessage).where(DlqMessage.message_id.in_(message_ids))).scalars().all()
+    found_ids = {row.message_id for row in rows}
+    missing = [message_id for message_id in message_ids if message_id not in found_ids]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"DLQ messages not found: {', '.join(missing)}")
+    return rows
+
+
 def _extract_asset_id(payload: dict) -> str | None:
     asset_id = payload.get("asset_id")
     if isinstance(asset_id, str) and asset_id.strip():
@@ -68,13 +80,29 @@ def _base_query() -> Select[tuple[DlqMessage]]:
     return select(DlqMessage).order_by(DlqMessage.updated_at.desc(), DlqMessage.failed_at.desc())
 
 
-def _apply_action(record: DlqMessage, action: DlqAction, reviewed_by: str) -> None:
+def _normalized_note(operator_note: str | None) -> str | None:
+    if operator_note is None:
+        return None
+    stripped = operator_note.strip()
+    return stripped or None
+
+
+def _apply_annotation(record: DlqMessage, reviewed_by: str, operator_note: str) -> None:
+    record.reviewed_by = reviewed_by
+    record.reviewed_at = datetime.now(timezone.utc)
+    record.operator_note = operator_note
+
+
+def _apply_action(record: DlqMessage, action: DlqAction, reviewed_by: str, operator_note: str | None = None) -> None:
     if record.status in TERMINAL_STATUSES:
         raise HTTPException(status_code=409, detail=f"DLQ message already resolved with status {record.status}")
 
     record.requested_action = action
     record.reviewed_by = reviewed_by
     record.reviewed_at = datetime.now(timezone.utc)
+    normalized_note = _normalized_note(operator_note)
+    if normalized_note is not None:
+        record.operator_note = normalized_note
     record.last_error = None
     record.action_completed_at = None
     record.status = "REPROCESS_REQUESTED" if action == "REPROCESS" else "DISCARD_REQUESTED"
@@ -149,6 +177,7 @@ def ingest_dlq_message(
             record.requested_action = None
             record.reviewed_by = None
             record.reviewed_at = None
+            record.operator_note = None
             record.action_completed_at = None
             record.last_error = None
 
@@ -169,7 +198,12 @@ def approve_dlq_message(
     if record.status == "REPROCESS_REQUESTED":
         return _dlq_item(record)
 
-    _apply_action(record, "REPROCESS", payload.reviewed_by if payload and payload.reviewed_by else user.username)
+    _apply_action(
+        record,
+        "REPROCESS",
+        payload.reviewed_by if payload and payload.reviewed_by else user.username,
+        payload.operator_note if payload else None,
+    )
     db.add(record)
     db.commit()
     db.refresh(record)
@@ -182,17 +216,52 @@ def bulk_approve_dlq_messages(
     db: Session = Depends(get_db),
     user: User = Depends(require_permission("dlq:approve")),
 ) -> list[DlqItem]:
-    rows = db.execute(select(DlqMessage).where(DlqMessage.message_id.in_(payload.message_ids))).scalars().all()
-    found_ids = {row.message_id for row in rows}
-    missing = [message_id for message_id in payload.message_ids if message_id not in found_ids]
-    if missing:
-        raise HTTPException(status_code=404, detail=f"DLQ messages not found: {', '.join(missing)}")
-
+    rows = _get_bulk_records_or_404(db, payload.message_ids)
     reviewed_by = payload.reviewed_by or user.username
     for row in rows:
         if row.status == "REPROCESS_REQUESTED":
             continue
-        _apply_action(row, "REPROCESS", reviewed_by)
+        _apply_action(row, "REPROCESS", reviewed_by, payload.operator_note)
+        db.add(row)
+
+    db.commit()
+    refreshed = db.execute(select(DlqMessage).where(DlqMessage.message_id.in_(payload.message_ids))).scalars().all()
+    return [_dlq_item(row) for row in refreshed]
+
+
+@router.post("/bulk/discard", response_model=list[DlqItem])
+def bulk_discard_dlq_messages(
+    payload: DlqBulkDiscardRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permission("dlq:approve")),
+) -> list[DlqItem]:
+    rows = _get_bulk_records_or_404(db, payload.message_ids)
+    reviewed_by = payload.reviewed_by or user.username
+    for row in rows:
+        if row.status == "DISCARD_REQUESTED":
+            continue
+        _apply_action(row, "DISCARD", reviewed_by, payload.operator_note)
+        db.add(row)
+
+    db.commit()
+    refreshed = db.execute(select(DlqMessage).where(DlqMessage.message_id.in_(payload.message_ids))).scalars().all()
+    return [_dlq_item(row) for row in refreshed]
+
+
+@router.post("/bulk/annotate", response_model=list[DlqItem])
+def bulk_annotate_dlq_messages(
+    payload: DlqBulkAnnotateRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permission("dlq:approve")),
+) -> list[DlqItem]:
+    rows = _get_bulk_records_or_404(db, payload.message_ids)
+    reviewed_by = payload.reviewed_by or user.username
+    operator_note = payload.operator_note.strip()
+    if not operator_note:
+        raise HTTPException(status_code=422, detail="operator_note cannot be blank")
+
+    for row in rows:
+        _apply_annotation(row, reviewed_by, operator_note)
         db.add(row)
 
     db.commit()
@@ -211,7 +280,12 @@ def discard_dlq_message(
     if record.status == "DISCARD_REQUESTED":
         return _dlq_item(record)
 
-    _apply_action(record, "DISCARD", payload.reviewed_by if payload and payload.reviewed_by else user.username)
+    _apply_action(
+        record,
+        "DISCARD",
+        payload.reviewed_by if payload and payload.reviewed_by else user.username,
+        payload.operator_note if payload else None,
+    )
     db.add(record)
     db.commit()
     db.refresh(record)
@@ -244,6 +318,7 @@ def list_pending_dlq_actions(
                 message_id=row.message_id,
                 gateway_id=row.gateway_id,
                 action=action,
+                source_topic=row.source_topic,
                 clean_topic=row.clean_topic,
                 original_payload=row.original_payload,
                 preview_payload=row.preview_payload,

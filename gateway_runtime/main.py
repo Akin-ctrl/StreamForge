@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import socket
 import threading
 
 from gateway_runtime.adapter_factory import AdapterFactory
@@ -36,6 +38,8 @@ def main() -> None:
     control_plane_url = os.getenv("CONTROL_PLANE_URL")
     control_plane_gateway_id = os.getenv("CONTROL_PLANE_GATEWAY_ID")
     control_plane_token = os.getenv("CONTROL_PLANE_TOKEN")
+    control_plane_enrollment_token = os.getenv("CONTROL_PLANE_ENROLLMENT_TOKEN")
+    control_plane_gateway_hostname = os.getenv("CONTROL_PLANE_GATEWAY_HOSTNAME") or socket.gethostname()
     control_plane_cache_path = os.getenv("GATEWAY_CONFIG_CACHE", "/data/config/gateway.json")
     kafka_bootstrap = os.getenv("KAFKA_BOOTSTRAP")
     health_host = os.getenv("HEALTH_HOST")
@@ -54,12 +58,32 @@ def main() -> None:
 
     if control_plane_url:
         if not control_plane_gateway_id:
-            raise ConfigError("CONTROL_PLANE_GATEWAY_ID is required when CONTROL_PLANE_URL is set")
+            if control_plane_enrollment_token:
+                control_plane_gateway_id = control_plane_gateway_hostname
+            else:
+                raise ConfigError("CONTROL_PLANE_GATEWAY_ID is required when CONTROL_PLANE_URL is set")
+
+        enrollment_hardware_info = {
+            "runtime": "gateway_runtime",
+            "hostname": control_plane_gateway_hostname,
+        }
+        raw_hardware_info = os.getenv("CONTROL_PLANE_GATEWAY_HARDWARE_INFO")
+        if raw_hardware_info:
+            try:
+                parsed_hardware_info = json.loads(raw_hardware_info)
+            except json.JSONDecodeError as exc:
+                raise ConfigError("CONTROL_PLANE_GATEWAY_HARDWARE_INFO must be valid JSON") from exc
+            if not isinstance(parsed_hardware_info, dict):
+                raise ConfigError("CONTROL_PLANE_GATEWAY_HARDWARE_INFO must be a JSON object")
+            enrollment_hardware_info.update(parsed_hardware_info)
 
         config_repo = ControlPlaneConfigRepository(
             base_url=control_plane_url,
             gateway_id=control_plane_gateway_id,
             token=control_plane_token,
+            enrollment_token=control_plane_enrollment_token,
+            enrollment_hostname=control_plane_gateway_hostname,
+            enrollment_hardware_info=enrollment_hardware_info,
             cache_path=control_plane_cache_path,
         )
     else:

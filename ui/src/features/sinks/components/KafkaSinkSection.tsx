@@ -14,13 +14,28 @@ export function KafkaSinkSection({ form, setForm }: KafkaSinkSectionProps) {
     <article className="card">
       <div className="page-header">
         <div className="card-header-copy">
-          <h3>Kafka Forwarder</h3>
+          <h3>Kafka-Compatible Forwarder</h3>
           <p className="muted">
-            Define the downstream Kafka destination while the platform keeps source routing and ingestion wiring stable.
+            Choose the internal stream to mirror, then define the downstream Kafka-compatible destination.
           </p>
         </div>
       </div>
       <div className="inline-grid">
+        <label>
+          Source Topic
+          <input
+            list="sink-source-topic-options"
+            value={form.sourceTopic}
+            onChange={(event) => setForm((current) => ({ ...current, sourceTopic: event.target.value }))}
+          />
+        </label>
+        <label>
+          Consumer Group
+          <input
+            value={form.kafkaGroupId}
+            onChange={(event) => setForm((current) => ({ ...current, kafkaGroupId: event.target.value }))}
+          />
+        </label>
         <label>
           Target Bootstrap
           <input value={form.targetBootstrap} onChange={(event) => setForm((current) => ({ ...current, targetBootstrap: event.target.value }))} />
@@ -30,7 +45,14 @@ export function KafkaSinkSection({ form, setForm }: KafkaSinkSectionProps) {
           <input value={form.targetTopic} onChange={(event) => setForm((current) => ({ ...current, targetTopic: event.target.value }))} />
         </label>
       </div>
-      <p className="muted">Source-topic routing is managed by the platform for Kafka forwarder sinks.</p>
+      <datalist id="sink-source-topic-options">
+        <option value="telemetry.clean" />
+        <option value="telemetry.1s" />
+        <option value="telemetry.1min" />
+        <option value="events.clean" />
+        <option value="alarms.raw" />
+      </datalist>
+      <p className="muted">Use a distinct consumer group when this sink must read independently from other sinks.</p>
     </article>
   )
 }

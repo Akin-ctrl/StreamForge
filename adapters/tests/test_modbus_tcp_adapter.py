@@ -189,7 +189,7 @@ class ModbusTcpAdapterBatchingTests(unittest.TestCase):
         self.assertEqual(health["last_modbus_retry_attempt"], 1)
         self.assertEqual(sleep_calls, [0.001])
 
-    def test_poll_raises_after_read_retries_are_exhausted(self) -> None:
+    def test_poll_isolates_exhausted_read_failure_without_raising(self) -> None:
         adapter = self._adapter(
             [
                 {"address": 40001, "param": "speed", "type": "uint16", "unit": "m/min"},
@@ -208,15 +208,57 @@ class ModbusTcpAdapterBatchingTests(unittest.TestCase):
         adapter._create_client = lambda host, port: next(reconnect_clients)  # type: ignore[method-assign]
         adapter._sleep = lambda seconds: sleep_calls.append(seconds)  # type: ignore[method-assign]
 
-        with self.assertRaisesRegex(RuntimeError, "Modbus read error"):
-            adapter.poll()
+        readings = adapter.poll()
 
+        self.assertEqual(readings["readings"], {})
         health = adapter.health()
         self.assertEqual(health["modbus_read_failures"], 3)
         self.assertEqual(health["modbus_reconnects"], 2)
+        self.assertEqual(health["modbus_batch_failures"], 1)
+        self.assertEqual(health["modbus_register_batch_failures"], 1)
+        self.assertEqual(health["last_modbus_batch_failures"], 1)
+        self.assertEqual(health["last_modbus_register_batch_failures"], 1)
+        self.assertEqual(health["last_modbus_failed_batches"][0]["parameters"], ["speed"])
+        self.assertEqual(health["status"], "degraded")
         self.assertEqual(health["last_modbus_retry_operation"], "read")
         self.assertEqual(health["last_modbus_retry_attempt"], 3)
         self.assertEqual(sleep_calls, [0.001, 0.002])
+
+    def test_poll_continues_after_one_register_batch_fails(self) -> None:
+        adapter = self._adapter(
+            [
+                {"address": 40001, "param": "speed", "type": "uint16", "unit": "m/min"},
+                {"address": 40005, "param": "count", "type": "uint16", "unit": "count"},
+            ]
+        )
+        initial_client = FakeClient({(0, 1, 1): FakeResponse([], error=True)})
+        first_reconnect = FakeClient({(0, 1, 1): FakeResponse([], error=True)})
+        second_reconnect = FakeClient(
+            {
+                (0, 1, 1): FakeResponse([], error=True),
+                (4, 1, 1): FakeResponse([48291]),
+            }
+        )
+        reconnect_clients = iter([first_reconnect, second_reconnect])
+
+        adapter._client = initial_client
+        adapter._create_client = lambda host, port: next(reconnect_clients)  # type: ignore[method-assign]
+        adapter._sleep = lambda seconds: None  # type: ignore[method-assign]
+
+        readings = adapter.poll()
+
+        self.assertNotIn("speed", readings["readings"])
+        self.assertEqual(readings["readings"]["count"]["value"], 48291)
+        self.assertEqual(initial_client.calls, [(0, 1, 1)])
+        self.assertEqual(first_reconnect.calls, [(0, 1, 1)])
+        self.assertEqual(second_reconnect.calls, [(0, 1, 1), (4, 1, 1)])
+        health = adapter.health()
+        self.assertEqual(health["last_modbus_batch_count"], 2)
+        self.assertEqual(health["last_modbus_batch_failures"], 1)
+        self.assertEqual(health["last_modbus_register_batch_failures"], 1)
+        self.assertEqual(health["modbus_register_batch_failures"], 1)
+        self.assertEqual(health["last_modbus_failed_batches"][0]["start"], 0)
+        self.assertEqual(health["status"], "degraded")
 
     def test_poll_reads_coils_and_emits_state_change_events(self) -> None:
         adapter = self._adapter(
@@ -254,6 +296,79 @@ class ModbusTcpAdapterBatchingTests(unittest.TestCase):
         self.assertEqual(transformed["events"][0]["previous_state"]["motor_running"], False)
         self.assertEqual(transformed["events"][0]["new_state"]["motor_running"], True)
         self.assertEqual(transformed["events"][0]["classification"], "EVENT")
+
+    def test_poll_continues_after_one_coil_batch_fails(self) -> None:
+        adapter = ModbusTcpAdapter(
+            {
+                "host": "127.0.0.1",
+                "port": 502,
+                "unit_id": 1,
+                "read_max_attempts": 1,
+                "points": [
+                    {
+                        "point_name": "motor_running",
+                        "memory_area": "coil",
+                        "address": 1,
+                        "data_type": "bool",
+                        "classification": "telemetry",
+                    },
+                    {
+                        "point_name": "ready",
+                        "memory_area": "coil",
+                        "address": 5,
+                        "data_type": "bool",
+                        "classification": "telemetry",
+                    },
+                ],
+                "output": {
+                    "kafka_bootstrap": "localhost:9092",
+                    "topic": "telemetry.raw",
+                    "events_topic": "events.raw",
+                    "asset_id": "asset-1",
+                },
+            }
+        )
+        adapter._client = FakeClient(
+            {
+                (0, 1, 1): FakeResponse(bits=[], error=True),
+                (4, 1, 1): FakeResponse(bits=[True]),
+            }
+        )
+
+        readings = adapter.poll()
+
+        self.assertNotIn("motor_running", readings["readings"])
+        self.assertEqual(readings["readings"]["ready"]["value"], True)
+        self.assertEqual(adapter._client.coil_calls, [(0, 1, 1), (4, 1, 1)])
+        health = adapter.health()
+        self.assertEqual(health["modbus_coil_batch_failures"], 1)
+        self.assertEqual(health["last_modbus_coil_batch_failures"], 1)
+        self.assertEqual(health["last_modbus_failed_batches"][0]["kind"], "coil")
+        self.assertEqual(health["status"], "degraded")
+
+    def test_run_once_preserves_degraded_status_after_partial_batch_failure(self) -> None:
+        adapter = self._adapter(
+            [
+                {"address": 40001, "param": "speed", "type": "uint16", "unit": "m/min"},
+                {"address": 40005, "param": "count", "type": "uint16", "unit": "count"},
+            ]
+        )
+        adapter._read_max_attempts = 1
+        adapter._client = FakeClient(
+            {
+                (0, 1, 1): FakeResponse([], error=True),
+                (4, 1, 1): FakeResponse([48291]),
+            }
+        )
+        adapter.publish = lambda message: None  # type: ignore[method-assign]
+
+        message = adapter.run_once()
+
+        self.assertEqual(message["telemetry"]["readings"][0]["parameter"], "count")
+        health = adapter.health()
+        self.assertEqual(health["status"], "degraded")
+        self.assertEqual(health["last_modbus_batch_failures"], 1)
+        self.assertIn("Modbus read error", str(health["last_error"]))
 
     def test_poll_reads_canonical_points_for_registers_and_events(self) -> None:
         adapter = ModbusTcpAdapter(
@@ -308,6 +423,9 @@ class ModbusTcpAdapterBatchingTests(unittest.TestCase):
 
         self.assertEqual(len(second["events"]), 1)
         self.assertEqual(second["events"][0]["event_type"], "motor_state_change")
+        message = adapter.transform(second)
+        self.assertEqual(message["events"][0]["metadata"]["pipeline_id"], "asset-1")
+        self.assertEqual(message["events"][0]["metadata"]["deployment_id"], "asset-1")
 
     def test_poll_reads_input_registers_and_discrete_inputs_from_canonical_points(self) -> None:
         adapter = ModbusTcpAdapter(

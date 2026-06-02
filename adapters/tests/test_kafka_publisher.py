@@ -105,7 +105,7 @@ class KafkaPublisherTests(unittest.TestCase):
         FakeKafkaProducer.fail_with = TimeoutError("timed out")
         publisher = KafkaPublisher(self.config)
 
-        with self.assertRaisesRegex(RuntimeError, "Kafka publish failed"):
+        with self.assertRaisesRegex(RuntimeError, "Kafka-compatible publish failed"):
             publisher.publish({"asset_id": "asset-1", "value": 42})
 
         health = publisher.health()

@@ -209,7 +209,14 @@ class BaseAdapter(ABC):
             "# TYPE adapter_throttle_transitions_total counter",
             f"adapter_throttle_transitions_total{{{labels}}} {int(health.get('throttle_transitions_total', 0))}",
         ]
-        for metric_name in ("modbus_connect_failures", "modbus_read_failures", "modbus_reconnects"):
+        for metric_name in (
+            "modbus_connect_failures",
+            "modbus_read_failures",
+            "modbus_reconnects",
+            "modbus_batch_failures",
+            "modbus_register_batch_failures",
+            "modbus_coil_batch_failures",
+        ):
             if metric_name in health:
                 lines.append(f"# TYPE {metric_name} counter")
                 lines.append(f"{metric_name}{{{labels}}} {int(health.get(metric_name, 0))}")

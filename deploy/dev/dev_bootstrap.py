@@ -15,7 +15,7 @@ DEV_ADMIN_PASSWORD = os.getenv("DEV_ADMIN_PASSWORD", "LocalAdminBootstrap42")
 GATEWAY_ID = os.getenv("CONTROL_PLANE_GATEWAY_ID", "gateway-demo-01")
 DEPLOYMENT_ID = os.getenv("DEV_DEPLOYMENT_ID", "deployment-demo-01")
 DEPLOYMENT_NAME = os.getenv("DEV_DEPLOYMENT_NAME", "Demo Deployment")
-CONFIG_PATH = os.getenv("DEV_GATEWAY_CONFIG_PATH", "/app/deploy/gateway_config.sample.json")
+CONFIG_PATH = os.getenv("DEV_GATEWAY_CONFIG_PATH", "/app/deploy-dev/gateway_config.sample.json")
 
 _SECRET_FIELDS: dict[tuple[str, str], tuple[str, ...]] = {
     ("adapter", "mqtt"): ("password",),

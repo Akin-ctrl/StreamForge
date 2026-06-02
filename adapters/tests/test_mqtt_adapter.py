@@ -117,6 +117,31 @@ class MqttAdapterTests(unittest.TestCase):
         self.assertEqual(message["telemetry"]["readings"][1]["parameter"], "pressure")
         self.assertEqual(message["events"], [])
 
+    def test_canonical_subscription_fields_map_to_runtime_shape(self) -> None:
+        config = self._telemetry_config()
+        config["subscriptions"] = [
+            {
+                "topic_filter": "factory/line1/telemetry",
+                "payload_format": "json",
+                "message_type": "telemetry",
+                "asset_id_override": "line1_sensor_pack",
+                "mappings": [
+                    {"json_field": "temperature", "parameter": "temperature", "unit": "celsius"},
+                ],
+            }
+        ]
+        adapter = MqttAdapter(config)
+
+        adapter._ingest_message(
+            "factory/line1/telemetry",
+            json.dumps({"temperature": 78.5, "device_time": "2026-05-15T10:00:00Z"}).encode("utf-8"),
+        )
+        message = adapter.transform(adapter.poll())
+
+        self.assertEqual(message["telemetry"]["asset_id"], "line1_sensor_pack")
+        self.assertEqual(message["telemetry"]["readings"][0]["parameter"], "temperature")
+        self.assertEqual(message["telemetry"]["readings"][0]["value"], 78.5)
+
     def test_ingest_event_json_maps_to_normalized_event(self) -> None:
         adapter = MqttAdapter(self._event_config())
 
@@ -139,6 +164,8 @@ class MqttAdapterTests(unittest.TestCase):
         self.assertEqual(len(message["events"]), 1)
         self.assertEqual(message["events"][0]["event_type"], "motor_state_change")
         self.assertEqual(message["events"][0]["new_state"]["motor_running"], True)
+        self.assertEqual(message["events"][0]["metadata"]["pipeline_id"], "line1_sensor_pack")
+        self.assertEqual(message["events"][0]["metadata"]["deployment_id"], "line1_sensor_pack")
 
     def test_invalid_json_increments_parse_failures(self) -> None:
         adapter = MqttAdapter(self._telemetry_config())

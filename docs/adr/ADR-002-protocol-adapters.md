@@ -36,7 +36,7 @@ We needed to decide how to package and deploy protocol adapters.
 
 ### Option C: Docker Containers
 - Each adapter runs in its own container
-- Communicates via Kafka
+- Publishes through the Kafka-compatible protocol to the gateway-local edge broker
 
 **Pros**: Full isolation, independent versioning, security boundaries, standard tooling  
 **Cons**: Higher resource overhead, container orchestration complexity
@@ -59,7 +59,7 @@ We needed to decide how to package and deploy protocol adapters.
 3. **Versioning**: Update adapters independently
 4. **Resource limits**: Docker enforces memory/CPU limits (bulkhead pattern)
 5. **Portability**: Same container works on any gateway
-6. **Standard interface**: Config via environment, health via HTTP, output via Kafka
+6. **Standard interface**: Config via environment, health via HTTP, output via the Kafka-compatible local stream
 
 ## Consequences
 
@@ -84,14 +84,14 @@ We needed to decide how to package and deploy protocol adapters.
 Every adapter must:
 1. Accept config via `ADAPTER_CONFIG` environment variable (JSON)
 2. Implement protocol-specific `connect`, `poll`, `transform`, and `disconnect` hooks via the shared `BaseAdapter` lifecycle template
-3. Use the shared adapter Kafka publisher for local edge-topic writes so delivery semantics, asset-based partition keys, and publish health reporting stay consistent
-4. Publish to Kafka topics specified in config
+3. Use the shared adapter Kafka-compatible publisher for local edge-topic writes so delivery semantics, asset-based partition keys, and publish health reporting stay consistent
+4. Publish to Kafka-compatible topics specified in config
 5. Support graceful shutdown on `SIGTERM` so the container can stop cleanly without data corruption
 6. Expose `GET /health` endpoint
 7. Expose `GET /metrics` endpoint (Prometheus format)
 8. Log structured JSON to stdout
 
-The shared lifecycle and publisher keep adapter behavior consistent while preserving ADR-002's container isolation model: `gateway_runtime` owns adapter containers, and `BaseAdapter` plus the shared adapter Kafka publisher own the in-container execution contract.
+The shared lifecycle and publisher keep adapter behavior consistent while preserving ADR-002's container isolation model: `gateway_runtime` owns adapter containers, and `BaseAdapter` plus the shared adapter Kafka-compatible publisher own the in-container execution contract. In the local dev/runtime stack, that compatible broker is Redpanda.
 
 ## Related Decisions
 - [ADR-005: Sink Architecture](ADR-005-sink-architecture.md)

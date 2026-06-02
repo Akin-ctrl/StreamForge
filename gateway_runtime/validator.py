@@ -711,6 +711,14 @@ class ValidatorModule:
         }
         return payload
 
+    def _dlq_action_matches_runtime(self, action: dict[str, object]) -> bool:
+        source_topic = str(action.get("source_topic") or "").strip()
+        if source_topic:
+            return source_topic == self._raw_topic
+
+        clean_topic = str(action.get("clean_topic") or "").strip()
+        return clean_topic == self._clean_topic
+
     def _maybe_process_dlq_actions(self) -> int:
         if self._control_plane is None:
             return 0
@@ -736,6 +744,9 @@ class ValidatorModule:
                 continue
 
             action_type = str(action.get("action", ""))
+            if not self._dlq_action_matches_runtime(action):
+                continue
+
             try:
                 if action_type == "REPROCESS":
                     clean_topic = str(action.get("clean_topic", self._clean_topic))
@@ -933,6 +944,7 @@ class ValidatorModule:
     ) -> dict[str, object]:
         resolved_alarm_id = alarm_id or self._new_alarm_id()
         normalized_severity = str(severity or "HIGH").upper()
+        pipeline_id = str(self._rules.get("pipeline_id") or self._rules.get("deployment_id") or self._gateway_id)
         return {
             "alarm_id": resolved_alarm_id,
             "asset_id": asset_id,
@@ -952,7 +964,8 @@ class ValidatorModule:
             "message": message_text,
             "metadata": {
                 "adapter_id": str(self._rules.get("adapter_id") or "validator"),
-                "deployment_id": str(self._rules.get("deployment_id") or self._gateway_id),
+                "pipeline_id": pipeline_id,
+                "deployment_id": pipeline_id,
             },
         }
 

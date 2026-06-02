@@ -1,4 +1,4 @@
-"""Shared Kafka publishing behavior for adapter containers."""
+"""Shared Kafka-compatible publishing behavior for adapter containers."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from .schema import SchemaManager
 
 
 class KafkaPublisher:
-    """Centralized adapter-side Kafka publisher for local edge topics."""
+    """Centralized adapter-side Kafka-compatible publisher for local edge topics."""
 
     def __init__(self, config: dict) -> None:
         self._config = config
@@ -31,12 +31,12 @@ class KafkaPublisher:
 
     @property
     def topic(self) -> str:
-        """Kafka topic for adapter output."""
+        """Kafka-compatible topic for adapter output."""
         return str(self._output()["topic"])
 
     @property
     def bootstrap(self) -> str:
-        """Kafka bootstrap address for adapter output."""
+        """Kafka-compatible bootstrap address for adapter output."""
         return str(self._output()["kafka_bootstrap"])
 
     def publish(self, message: dict[str, object]) -> Dict[str, object]:
@@ -49,7 +49,7 @@ class KafkaPublisher:
         except Exception as exc:
             self._health["publish_failures"] = int(self._health["publish_failures"]) + 1
             self._health["last_error"] = str(exc)
-            raise RuntimeError(f"Kafka publish failed for topic {self.topic}: {exc}") from exc
+            raise RuntimeError(f"Kafka-compatible publish failed for topic {self.topic}: {exc}") from exc
 
         self._health["published_messages"] = int(self._health["published_messages"]) + 1
         if isinstance(key, bytes):
@@ -68,7 +68,7 @@ class KafkaPublisher:
         }
 
     def close(self) -> None:
-        """Flush and close the Kafka producer if it was initialized."""
+        """Flush and close the Kafka-compatible producer if it was initialized."""
         if self._producer is None:
             return
         try:
@@ -86,7 +86,7 @@ class KafkaPublisher:
             try:
                 from kafka import KafkaProducer  # type: ignore
             except ModuleNotFoundError as exc:
-                raise RuntimeError("kafka-python is required for adapter Kafka publishing") from exc
+                raise RuntimeError("kafka-python is required for adapter Kafka-compatible publishing") from exc
 
             self._producer = KafkaProducer(
                 bootstrap_servers=self.bootstrap,

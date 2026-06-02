@@ -182,6 +182,7 @@ class MqttAdapter(BaseAdapter):
                         },
                         "metadata": {
                             "adapter_id": self._adapter_id,
+                            "pipeline_id": deployment_id,
                             "deployment_id": deployment_id,
                         },
                     }
@@ -265,19 +266,23 @@ class MqttAdapter(BaseAdapter):
                 continue
             mappings = tuple(
                 FieldMapping(
-                    field=str(mapping["field"]),
-                    parameter=str(mapping.get("parameter") or mapping["field"]),
+                    field=str(mapping.get("field") or mapping.get("json_field")),
+                    parameter=str(mapping.get("parameter") or mapping.get("field") or mapping.get("json_field")),
                     unit=str(mapping.get("unit", "")),
                 )
                 for mapping in item.get("mappings", [])
-                if isinstance(mapping, dict) and "field" in mapping
+                if isinstance(mapping, dict) and (mapping.get("field") or mapping.get("json_field"))
             )
+            topic = str(item.get("topic") or item.get("topic_filter") or "").strip()
+            if not topic:
+                continue
+            asset_id = item.get("asset_id") or item.get("asset_id_override")
             specs.append(
                 SubscriptionSpec(
-                    topic=str(item["topic"]),
+                    topic=topic,
                     payload_format=str(item.get("payload_format", "json")),
                     message_type=str(item.get("message_type", "telemetry")),
-                    asset_id=str(item["asset_id"]) if item.get("asset_id") else None,
+                    asset_id=str(asset_id) if asset_id else None,
                     mappings=mappings,
                 )
             )

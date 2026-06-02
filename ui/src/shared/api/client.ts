@@ -30,6 +30,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export type GatewayItem = {
   gateway_id: string
   hostname: string
+  hardware_info?: JsonObject | null
   status: string
   approved: boolean
   last_config_sync_at?: string | null
@@ -38,6 +39,26 @@ export type GatewayItem = {
   runtime_health?: JsonObject | null
   system_metrics?: JsonObject | null
   created_at: string
+}
+
+export type GatewayEnrollmentItem = {
+  enrollment_id: string
+  name: string
+  token_preview: string
+  site_name?: string | null
+  site_code?: string | null
+  expires_at?: string | null
+  max_uses?: number | null
+  used_count: number
+  disabled: boolean
+  last_used_at?: string | null
+  created_by?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type GatewayEnrollmentCreateResponse = GatewayEnrollmentItem & {
+  token: string
 }
 
 export type SecretFieldStatus = {
@@ -192,6 +213,7 @@ export type DlqItem = {
   requested_action: DlqAction | null
   reviewed_by: string | null
   reviewed_at: string | null
+  operator_note: string | null
   action_completed_at: string | null
   last_error: string | null
   failed_at: string
@@ -294,10 +316,32 @@ export type ConnectionProbeResult = {
 
 export type ConnectionTestResult = {
   ok: boolean
-  status: 'passed' | 'failed' | 'unsupported_here' | 'cannot_test_from_control_plane'
+  status: 'passed' | 'failed' | 'unsupported_here' | 'cannot_test_from_control_plane' | 'cannot_test_from_gateway'
   message: string
   warnings: string[]
   probes: ConnectionProbeResult[]
+}
+
+export type GatewayConnectionTestItem = {
+  request_id: string
+  gateway_id: string
+  target_kind: 'adapter' | 'sink'
+  target_id: string
+  target_type: string
+  status: 'REQUESTED' | 'RUNNING' | 'PASSED' | 'FAILED' | 'UNSUPPORTED'
+  result?: ConnectionTestResult | null
+  last_error?: string | null
+  requested_by?: string | null
+  started_at?: string | null
+  completed_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type GatewayConnectionTestCreatePayload = {
+  gateway_id: string
+  target_kind: 'adapter' | 'sink'
+  target_id: string
 }
 
 export type DeploymentPreflightResult = {
@@ -322,6 +366,14 @@ export type GatewayCreatePayload = {
   hostname: string
   hardware_info?: JsonObject
   approved?: boolean
+}
+
+export type GatewayEnrollmentCreatePayload = {
+  name: string
+  site_name?: string | null
+  site_code?: string | null
+  expires_at?: string | null
+  max_uses?: number | null
 }
 
 export type AdapterSecretsPayload = Record<string, string | null>
@@ -487,6 +539,24 @@ export function createGateway(payload: GatewayCreatePayload) {
   })
 }
 
+export function listGatewayEnrollments() {
+  return request<GatewayEnrollmentItem[]>('/api/v1/gateway-enrollments')
+}
+
+export function createGatewayEnrollment(payload: GatewayEnrollmentCreatePayload) {
+  return request<GatewayEnrollmentCreateResponse>('/api/v1/gateway-enrollments', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function disableGatewayEnrollment(enrollmentId: string) {
+  return request<{ enrollment_id: string; disabled: boolean }>(
+    `/api/v1/gateway-enrollments/${encodeURIComponent(enrollmentId)}/disable`,
+    { method: 'POST' },
+  )
+}
+
 export function approveGateway(gatewayId: string) {
   return request<{ gateway_id: string; status: string; approved: boolean }>(
     `/api/v1/gateways/${gatewayId}/approve`,
@@ -517,6 +587,17 @@ export function testAdapterConnection(payload: AdapterCreatePayload) {
     method: 'POST',
     body: JSON.stringify(payload),
   })
+}
+
+export function requestGatewayConnectionTest(payload: GatewayConnectionTestCreatePayload) {
+  return request<GatewayConnectionTestItem>('/api/v1/gateway-connection-tests', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function getGatewayConnectionTest(requestId: string) {
+  return request<GatewayConnectionTestItem>(`/api/v1/gateway-connection-tests/${encodeURIComponent(requestId)}`)
 }
 
 export function updateAdapter(adapterId: string, payload: AdapterUpdatePayload) {
@@ -685,27 +766,50 @@ export function listDlq(filters?: {
   return request<DlqItem[]>(`/api/v1/dlq${suffix ? `?${suffix}` : ''}`)
 }
 
-export function approveDlqMessage(messageId: string, reviewedBy?: string) {
+export function approveDlqMessage(messageId: string, reviewedBy?: string, operatorNote?: string) {
   return request<DlqItem>(`/api/v1/dlq/messages/${messageId}/approve`, {
     method: 'POST',
-    body: reviewedBy ? JSON.stringify({ reviewed_by: reviewedBy }) : undefined,
+    body: reviewedBy || operatorNote ? JSON.stringify({ reviewed_by: reviewedBy, operator_note: operatorNote }) : undefined,
   })
 }
 
-export function bulkApproveDlqMessages(messageIds: string[], reviewedBy?: string) {
+export function bulkApproveDlqMessages(messageIds: string[], reviewedBy?: string, operatorNote?: string) {
   return request<DlqItem[]>('/api/v1/dlq/bulk/approve', {
     method: 'POST',
     body: JSON.stringify({
       message_ids: messageIds,
       reviewed_by: reviewedBy,
+      operator_note: operatorNote,
     }),
   })
 }
 
-export function discardDlqMessage(messageId: string, reviewedBy?: string) {
+export function bulkDiscardDlqMessages(messageIds: string[], reviewedBy?: string, operatorNote?: string) {
+  return request<DlqItem[]>('/api/v1/dlq/bulk/discard', {
+    method: 'POST',
+    body: JSON.stringify({
+      message_ids: messageIds,
+      reviewed_by: reviewedBy,
+      operator_note: operatorNote,
+    }),
+  })
+}
+
+export function bulkAnnotateDlqMessages(messageIds: string[], operatorNote: string, reviewedBy?: string) {
+  return request<DlqItem[]>('/api/v1/dlq/bulk/annotate', {
+    method: 'POST',
+    body: JSON.stringify({
+      message_ids: messageIds,
+      reviewed_by: reviewedBy,
+      operator_note: operatorNote,
+    }),
+  })
+}
+
+export function discardDlqMessage(messageId: string, reviewedBy?: string, operatorNote?: string) {
   return request<DlqItem>(`/api/v1/dlq/messages/${messageId}/discard`, {
     method: 'POST',
-    body: reviewedBy ? JSON.stringify({ reviewed_by: reviewedBy }) : undefined,
+    body: reviewedBy || operatorNote ? JSON.stringify({ reviewed_by: reviewedBy, operator_note: operatorNote }) : undefined,
   })
 }
 

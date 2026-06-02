@@ -450,7 +450,8 @@ class EventValidatorModule:
             return "missing_metadata"
         if not str(metadata.get("adapter_id", "")).strip():
             return "missing_adapter_id"
-        if not str(metadata.get("deployment_id", "")).strip():
+        deployment_identifier = str(metadata.get("deployment_id") or metadata.get("pipeline_id") or "").strip()
+        if not deployment_identifier:
             return "missing_deployment_id"
         return None
 
@@ -534,6 +535,14 @@ class EventValidatorModule:
         }
         return payload
 
+    def _dlq_action_matches_runtime(self, action: dict[str, object]) -> bool:
+        source_topic = str(action.get("source_topic") or "").strip()
+        if source_topic:
+            return source_topic == self._raw_topic
+
+        clean_topic = str(action.get("clean_topic") or "").strip()
+        return clean_topic == self._clean_topic
+
     def _maybe_process_dlq_actions(self) -> int:
         if self._control_plane is None:
             return 0
@@ -558,8 +567,11 @@ class EventValidatorModule:
             if not message_id or message_id in self._completed_decisions:
                 continue
             action_type = str(action.get("action", ""))
+            if not self._dlq_action_matches_runtime(action):
+                continue
+
             try:
-                if action_type == "REPROCESS" and str(action.get("source_topic", "")) == self._raw_topic:
+                if action_type == "REPROCESS":
                     clean_topic = str(action.get("clean_topic", self._clean_topic))
                     preview_payload = action.get("preview_payload")
                     if not isinstance(preview_payload, dict):
@@ -569,7 +581,7 @@ class EventValidatorModule:
                     self._completed_decisions[message_id] = {"result": "REPROCESSED", "error": None}
                     operations += 1
                     self._increment_control_sync_total("actions_executed")
-                elif action_type == "DISCARD" and str(action.get("source_topic", "")) == self._raw_topic:
+                elif action_type == "DISCARD":
                     self._completed_decisions[message_id] = {"result": "DISCARDED", "error": None}
                     operations += 1
                     self._increment_control_sync_total("actions_executed")

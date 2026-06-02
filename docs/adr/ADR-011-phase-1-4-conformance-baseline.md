@@ -34,7 +34,7 @@ Status interpretation note:
 ### Open Work Anchors
 
 - Remaining open implementation items are now narrower and are tracked in P2/P3 checkboxes below plus `PROJECT_PHASES.md`, `docs/UI_PRODUCT_ACTION_LIST.md`, and `docs/PRODUCTION_READINESS_RECONCILIATION.md`.
-- ADR-001 has been amended: the original embedded Kafka/KRaft implementation has moved to a Redpanda-first local dev/runtime broker path, while production packaging and image-pull templates remain pending.
+- ADR-001 has been amended: the original Apache Kafka/KRaft implementation has moved to a Redpanda-first Kafka-compatible local dev/runtime broker path, while production packaging and image-pull templates remain pending.
 - Completed issue items are moved to [docs/ISSUES_SOLVED.md](../ISSUES_SOLVED.md).
 
 ---
@@ -61,7 +61,7 @@ Status interpretation note:
 - Dev compose stack exists for local demo/development.
 
 #### Omitted / Partial
-- Runtime can now provision/supervise local embedded Kafka when it is not already reachable, but broader lifecycle hardening still applies elsewhere.
+- Runtime can now provision/supervise the local embedded Kafka-compatible broker when it is not already reachable, but broader lifecycle hardening still applies elsewhere.
 - Adapter runtime support is effectively single-protocol (`modbus_tcp`) while architecture describes broader protocol set.
 
 ---
@@ -139,15 +139,15 @@ Status interpretation note:
 
 ## Architecture Documentation Drift
 
-There was a documentation inconsistency around central Kafka language:
+There was a documentation inconsistency around central broker language:
 
-- Some architecture text states StreamForge manages only local gateway Kafka.
-- Some data-flow/deployment sections still describe central Kafka patterns in a way that can be interpreted as platform-managed.
+- Some architecture text states StreamForge manages only the local gateway Kafka-compatible broker.
+- Some data-flow/deployment sections still describe central Kafka-compatible patterns in a way that can be interpreted as platform-managed.
 
 Resolved direction as of the original baseline:
 
 - StreamForge owns only the gateway-local stream on the edge device.
-- Any cloud Kafka mentioned in deployment patterns is an optional customer-owned sink target, not a StreamForge-managed central backbone.
+- Any cloud Kafka-compatible broker mentioned in deployment patterns is an optional customer-owned sink target, not a StreamForge-managed central backbone.
 
 Amended direction as of 2026-05-30:
 
@@ -181,22 +181,22 @@ The checklist below converts the findings in this ADR into a practical fix seque
 - [x] Harden bootstrap/admin credentials so weak defaults are blocked outside explicit dev-only profiles.
 - [x] Add targeted token refresh and immediate retry behavior when runtime config fetch fails due to auth expiry/invalid token.
 - [x] Replace startup-only table creation assumptions with a migration-managed schema evolution path.
-- [x] Reconcile architecture docs describing local-vs-central Kafka ownership to eliminate conflicting platform direction.
+- [x] Reconcile architecture docs describing local-vs-central Kafka-compatible broker ownership to eliminate conflicting platform direction.
 - [x] Complete the Redpanda migration across dev compose, runtime broker management, deployment docs, and tests while retaining Kafka-compatible client semantics.
 - [ ] Complete production packaging and image-pull templates for the Redpanda-backed runtime path.
 
 ### P2: Runtime Reliability and Contract Enforcement
 
 - [x] Enforce `BaseAdapter` lifecycle structurally with a concrete template run loop/shared contract instead of documentation-only hooks.
-- [x] Centralize Kafka publishing behavior so delivery semantics, error handling, and observability are consistent across adapters.
+- [x] Centralize Kafka-compatible publishing behavior so delivery semantics, error handling, and observability are consistent across adapters.
 - [x] Improve Modbus adapter polling efficiency with contiguous register batching where possible.
 - [x] Add explicit Modbus reconnect/retry/backoff handling for connection and read failures.
-- [x] Implement runtime-managed embedded Kafka lifecycle rather than reachability wait-only behavior.
+- [x] Implement runtime-managed embedded Kafka-compatible broker lifecycle rather than reachability wait-only behavior.
 - [x] Amend runtime-managed broker lifecycle to be Redpanda-first or broker-neutral.
 - [x] Defer zero-touch gateway auto-registration/bootstrap. Current architecture keeps gateway creation and pipeline/sink composition operator-driven in the UI until multi-adapter/multi-sink onboarding is explicitly designed.
 - [x] Implement deterministic cached control-plane config semantics for offline startup/fallback autonomy.
 - [x] Expand failure-mode implementation to include explicit circuit-breaker strategy described by ADR-008.
-- [x] Enforce manual offset commit semantics in validator so Kafka offsets are committed only after clean-topic or DLQ publish durability is confirmed.
+- [x] Enforce manual offset commit semantics in validator so Kafka-compatible consumer offsets are committed only after clean-topic or DLQ publish durability is confirmed.
 - [x] Harden sink SQL identifier handling by validating/quoting configured table names before executing DDL/DML.
 - [x] Enforce gateway state invariants by reconciling or rejecting conflicting `status`/`approved` updates server-side.
 

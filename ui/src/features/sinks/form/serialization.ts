@@ -3,8 +3,8 @@
  *
  * Like adapter authoring, the sink form preserves a passthrough JSON fragment
  * so advanced catalog-managed fields survive edits even when they are not
- * rendered directly. The JSON fallback intentionally excludes secret and
- * internal routing fields from normal operator editing.
+ * rendered directly. Ingress fields are edited through first-class controls,
+ * while secret values still stay out of the JSON fallback.
  */
 import type { CatalogSinkType, SinkCreatePayload, SinkItem, SinkUpdatePayload } from '../../../shared/api/client'
 import { getInternalFieldKeys } from '../../../shared/config/catalog'
@@ -54,6 +54,7 @@ function buildConfig(form: SinkFormState): JsonObject {
     return {
       ...config,
       source_topic: form.sourceTopic,
+      group_id: form.kafkaGroupId,
       target_bootstrap: form.targetBootstrap,
       target_topic: form.targetTopic,
     }
@@ -63,6 +64,7 @@ function buildConfig(form: SinkFormState): JsonObject {
     return {
       ...config,
       source_topic: form.sourceTopic,
+      group_id: form.kafkaGroupId,
       url: form.url,
       method: form.method,
     }
@@ -71,6 +73,7 @@ function buildConfig(form: SinkFormState): JsonObject {
   return {
     ...config,
     source_topic: form.sourceTopic,
+    group_id: form.kafkaGroupId,
     route_type: form.routeType,
   }
 }

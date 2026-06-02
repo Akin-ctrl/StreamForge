@@ -136,6 +136,168 @@ class SinkTimescaleHealthTests(unittest.TestCase):
         self.assertEqual(calls[0][1][0], "line-01")
         self.assertEqual(calls[0][1][6], 88.0)
 
+    def test_write_payload_batch_inserts_telemetry_rows_together(self) -> None:
+        calls: list[tuple[str, tuple]] = []
+
+        class FakeCursor:
+            def execute(self, query: str, params: tuple) -> None:
+                calls.append((query, params))
+
+        first_payload = {
+            "asset_id": "motor-01",
+            "gateway_time": "2026-06-02T12:00:00Z",
+            "readings": [
+                {"parameter": "speed_rpm", "value": 1480, "unit": "rpm", "quality": "GOOD"},
+                {"parameter": "bearing_temp", "value": 64.2, "unit": "celsius", "quality": "GOOD"},
+            ],
+        }
+        second_payload = {
+            "asset_id": "pump-01",
+            "gateway_time": "2026-06-02T12:00:01Z",
+            "readings": [
+                {"parameter": "pressure", "value": 4.8, "unit": "bar", "quality": "GOOD"},
+            ],
+        }
+
+        written = sink_main._write_payload_batch(
+            FakeCursor(),
+            "telemetry_clean",
+            [(first_payload, "telemetry"), (second_payload, "telemetry")],
+        )
+
+        self.assertEqual(written, 3)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0].count("%s::jsonb"), 3)
+        self.assertEqual(len(calls[0][1]), 24)
+        self.assertEqual(calls[0][1][0], "motor-01")
+        self.assertEqual(calls[0][1][8], "motor-01")
+        self.assertEqual(calls[0][1][16], "pump-01")
+
+    def test_write_payload_batch_deduplicates_aggregate_upsert_keys(self) -> None:
+        calls: list[tuple[str, tuple]] = []
+
+        class FakeCursor:
+            def execute(self, query: str, params: tuple) -> None:
+                calls.append((query, params))
+
+        base_payload = {
+            "asset_id": "line-01",
+            "parameter": "temperature",
+            "unit": "celsius",
+            "classification": "TELEMETRY_AGGREGATE",
+            "window_start": "2026-06-02T12:00:00Z",
+            "window_end": "2026-06-02T12:01:00Z",
+            "aggregates": {
+                "avg": 88.0,
+                "min": 87.0,
+                "max": 89.0,
+                "stddev": 0.2,
+                "count": 60,
+                "p50": 88.0,
+                "p95": 88.8,
+                "p99": 89.0,
+            },
+            "quality_summary": {"good_samples": 60, "pct_good": 100.0},
+        }
+        newer_payload = {
+            **base_payload,
+            "aggregates": {
+                **base_payload["aggregates"],
+                "avg": 90.0,
+            },
+        }
+
+        written = sink_main._write_payload_batch(
+            FakeCursor(),
+            "telemetry_1min",
+            [(base_payload, "aggregate"), (newer_payload, "aggregate")],
+        )
+
+        self.assertEqual(written, 1)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0].count("%s::jsonb"), 1)
+        self.assertEqual(calls[0][1][6], 90.0)
+
+    def test_write_payload_batch_deduplicates_event_upsert_keys(self) -> None:
+        calls: list[tuple[str, tuple]] = []
+
+        class FakeCursor:
+            def execute(self, query: str, params: tuple) -> None:
+                calls.append((query, params))
+
+        base_payload = {
+            "asset_id": "line-01",
+            "event_type": "motor_state_change",
+            "classification": "EVENT",
+            "previous_state": {"motor_running": False},
+            "new_state": {"motor_running": True},
+            "timestamps": {
+                "gateway_time": "2026-06-02T12:00:00Z",
+                "device_time": None,
+            },
+            "metadata": {"adapter_id": "adapter-1", "pipeline_id": "line-01"},
+        }
+        newer_payload = {
+            **base_payload,
+            "new_state": {"motor_running": True, "verified": True},
+        }
+
+        written = sink_main._write_payload_batch(
+            FakeCursor(),
+            "events",
+            [(base_payload, "event"), (newer_payload, "event")],
+        )
+
+        self.assertEqual(written, 1)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0].count("%s::jsonb"), 4)
+        self.assertIn("verified", calls[0][1][6])
+
+    def test_flush_payload_batch_commits_db_before_kafka_offsets(self) -> None:
+        events: list[str] = []
+
+        class FakeCursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args) -> None:
+                return None
+
+            def execute(self, _query: str, _params: tuple) -> None:
+                events.append("execute")
+
+        class FakeConn:
+            def cursor(self) -> FakeCursor:
+                return FakeCursor()
+
+            def commit(self) -> None:
+                events.append("db_commit")
+
+            def rollback(self) -> None:
+                events.append("db_rollback")
+
+        class FakeConsumer:
+            def commit(self) -> None:
+                events.append("kafka_commit")
+
+        payload = {
+            "asset_id": "motor-01",
+            "gateway_time": "2026-06-02T12:00:00Z",
+            "readings": [
+                {"parameter": "speed_rpm", "value": 1480, "unit": "rpm", "quality": "GOOD"},
+            ],
+        }
+
+        sink_main._flush_payload_batch(
+            FakeConsumer(),
+            FakeConn(),
+            [(payload, "telemetry")],
+            {"telemetry"},
+            {"table": "telemetry_clean"},
+        )
+
+        self.assertEqual(events, ["execute", "db_commit", "kafka_commit"])
+
     def test_write_payload_inserts_event_row_shape(self) -> None:
         calls: list[tuple[str, tuple]] = []
 

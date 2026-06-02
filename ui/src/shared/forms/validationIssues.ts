@@ -46,7 +46,9 @@ export function connectionTestToViewModel(title: string, result: ConnectionTestR
   const tone =
     result.status === 'passed'
       ? 'success'
-      : result.status === 'unsupported_here' || result.status === 'cannot_test_from_control_plane'
+      : result.status === 'unsupported_here' ||
+          result.status === 'cannot_test_from_control_plane' ||
+          result.status === 'cannot_test_from_gateway'
         ? 'warning'
         : 'error'
 

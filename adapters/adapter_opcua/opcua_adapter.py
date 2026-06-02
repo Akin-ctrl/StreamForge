@@ -76,8 +76,9 @@ class OpcUaAdapter(BaseAdapter):
         if not endpoint:
             raise RuntimeError("OPC UA adapter requires 'endpoint'")
 
-        security_mode = str(self.config.get("security_mode", "None"))
-        security_policy = str(self.config.get("security_policy", "None"))
+        advanced = self.config.get("advanced") if isinstance(self.config.get("advanced"), dict) else {}
+        security_mode = str(self.config.get("security_mode") or advanced.get("security_mode") or "None")
+        security_policy = str(self.config.get("security_policy") or advanced.get("security_policy") or "None")
         if security_mode != "None" or security_policy != "None":
             raise RuntimeError("OPC UA adapter V1 supports only security_mode=None and security_policy=None")
 
@@ -91,10 +92,7 @@ class OpcUaAdapter(BaseAdapter):
                 client.set_password(password)
 
         client.connect()
-        subscription = client.create_subscription(
-            int(self.config.get("subscription_interval_ms", 1000)),
-            _SubscriptionHandler(self),
-        )
+        subscription = client.create_subscription(self._subscription_interval_ms(), _SubscriptionHandler(self))
         handles: list[object] = []
         for spec in self._monitored_items:
             node = client.get_node(spec.node_id)
@@ -188,12 +186,13 @@ class OpcUaAdapter(BaseAdapter):
             parameter = str(item.get("parameter", "")).strip()
             if not node_id or not parameter:
                 continue
+            asset_id = item.get("asset_id") or item.get("asset_id_override")
             specs.append(
                 MonitoredItemSpec(
                     node_id=node_id,
                     parameter=parameter,
                     unit=str(item.get("unit", "")),
-                    asset_id=str(item["asset_id"]) if item.get("asset_id") else None,
+                    asset_id=str(asset_id) if asset_id else None,
                 )
             )
         if not specs:
@@ -253,6 +252,15 @@ class OpcUaAdapter(BaseAdapter):
                     return candidate.replace(tzinfo=timezone.utc).isoformat()
                 return candidate.astimezone(timezone.utc).isoformat()
         return None
+
+    def _subscription_interval_ms(self) -> int:
+        """Return the canonical or legacy OPC UA subscription interval."""
+        subscription = self.config.get("subscription")
+        if isinstance(subscription, dict) and subscription.get("publishing_interval_ms") is not None:
+            return int(subscription["publishing_interval_ms"])
+        if self.config.get("subscription_interval_ms") is not None:
+            return int(self.config["subscription_interval_ms"])
+        return int(self.config.get("publishing_interval_ms", 1000))
 
     @staticmethod
     def _create_client(endpoint: str) -> OpcUaClientLike:

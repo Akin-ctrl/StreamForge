@@ -10,7 +10,23 @@ from app.db.deps import SessionLocal
 from app.db import models  # noqa: F401
 from app.db.models import User
 from app.db.schema import ensure_schema_ready
-from app.routers import adapters, aggregates, alarms, auth, catalog, deployments, dlq, events, gateways, health, logs, sinks, users
+from app.routers import (
+    adapters,
+    aggregates,
+    alarms,
+    auth,
+    catalog,
+    deployments,
+    dlq,
+    events,
+    gateway_connection_tests,
+    gateway_enrollments,
+    gateways,
+    health,
+    logs,
+    sinks,
+    users,
+)
 
 
 app = FastAPI(title="StreamForge Control Plane", version="0.1.0")
@@ -60,6 +76,12 @@ app.include_router(health.router, prefix="/api/v1", tags=["health"])
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
 app.include_router(catalog.router, prefix="/api/v1/catalog", tags=["catalog"])
+app.include_router(gateway_enrollments.router, prefix="/api/v1/gateway-enrollments", tags=["gateway-enrollments"])
+app.include_router(
+    gateway_connection_tests.router,
+    prefix="/api/v1/gateway-connection-tests",
+    tags=["gateway-connection-tests"],
+)
 app.include_router(gateways.router, prefix="/api/v1/gateways", tags=["gateways"])
 app.include_router(adapters.router, prefix="/api/v1/adapters", tags=["adapters"])
 app.include_router(deployments.router, prefix="/api/v1/deployments", tags=["deployments"])

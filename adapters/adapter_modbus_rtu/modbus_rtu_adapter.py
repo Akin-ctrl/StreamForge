@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from adapters.adapter_modbus_tcp.modbus_tcp_adapter import ModbusClientLike, ModbusTcpAdapter
 
 
@@ -13,7 +15,7 @@ class ModbusRtuAdapter(ModbusTcpAdapter):
         self._health.update(
             {
                 "transport": "rtu",
-                "serial_port": str(config.get("port", "")),
+                "serial_port": str(config.get("port") or config.get("device") or config.get("serial_port") or ""),
                 "baudrate": int(config.get("baudrate", 9600)),
                 "bytesize": int(config.get("bytesize", 8)),
                 "parity": str(config.get("parity", "N")),
@@ -24,9 +26,9 @@ class ModbusRtuAdapter(ModbusTcpAdapter):
 
     def connect(self) -> None:
         """Connect to a Modbus RTU serial device."""
-        serial_port = str(self.config.get("port") or self.config.get("device") or "").strip()
+        serial_port = str(self.config.get("port") or self.config.get("device") or self.config.get("serial_port") or "").strip()
         if not serial_port:
-            raise RuntimeError("Modbus RTU adapter requires 'port' or 'device'")
+            raise RuntimeError("Modbus RTU adapter requires 'port', 'device', or 'serial_port'")
 
         baudrate = int(self.config.get("baudrate", 9600))
         bytesize = int(self.config.get("bytesize", 8))
@@ -67,9 +69,23 @@ class ModbusRtuAdapter(ModbusTcpAdapter):
     ) -> ModbusClientLike:
         """Construct a Modbus RTU serial client."""
         try:
+            from pymodbus.client import ModbusTcpClient
             from pymodbus.client import ModbusSerialClient  # type: ignore
+            from pymodbus.framer import FramerType
         except ModuleNotFoundError as exc:
             raise RuntimeError("pymodbus is required for ModbusRtuAdapter") from exc
+
+        parsed = urlparse(port)
+        if parsed.scheme in {"rtu", "rtu-tcp", "tcp"}:
+            host = parsed.hostname or ""
+            if not host:
+                raise RuntimeError(f"Invalid Modbus RTU-over-TCP endpoint: {port}")
+            return ModbusTcpClient(
+                host,
+                port=parsed.port or 502,
+                framer=FramerType.RTU,
+                timeout=timeout,
+            )
 
         return ModbusSerialClient(
             port=port,

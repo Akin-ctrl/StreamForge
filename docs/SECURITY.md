@@ -335,8 +335,9 @@ async def create_pipeline(pipeline: PipelineCreate, user: User = Depends(get_cur
 └─────────────┬───────────────────────────────┘
               │ (Firewall)
 ┌─────────────▼───────────────────────────────┐
-│ Data Plane Network                          │
-│ - Kafka cluster (VPN/private peering only)  │
+│ Data Plane / Destination Network            │
+│ - Customer Kafka-compatible sink target     │
+│   (VPN/private peering only, if configured) │
 │ - Schema Registry                           │
 └─────────────┬───────────────────────────────┘
               │ (VPN)
@@ -355,9 +356,9 @@ Allow: TCP 443 (HTTPS) → Control API
 Block: All other inbound
 ```
 
-**Control Plane → Data Plane**:
+**Control Plane → Data Plane / Destinations**:
 ```
-Allow: TCP 9093 (Kafka over TLS)
+Allow: TCP 9093 (Kafka-compatible protocol over TLS, if using an external sink target)
 Allow: TCP 8081 (Schema Registry)
 Allow: TCP 5432 (PostgreSQL, internal only)
 ```
@@ -365,7 +366,7 @@ Allow: TCP 5432 (PostgreSQL, internal only)
 **Edge → Cloud** (outbound only):
 ```
 Allow: TCP 443 → control.streamforge.cloud (Control API)
-Allow: TCP 9093 → kafka.streamforge.cloud (Kafka replication)
+Allow: TCP 9093 → customer-owned Kafka-compatible sink target, if configured
 Allow: UDP 123 → pool.ntp.org (NTP)
 Block: All inbound (no SSH, no admin ports)
 ```

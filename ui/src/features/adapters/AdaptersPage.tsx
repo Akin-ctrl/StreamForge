@@ -7,8 +7,10 @@ import {
   createAdapter,
   deleteAdapter,
   getCatalog,
+  getGatewayConnectionTest,
   listAdapters,
   listDeployments,
+  requestGatewayConnectionTest,
   testAdapterConnection,
   updateAdapter,
   validateAdapterDraft,
@@ -38,6 +40,12 @@ import { ModbusTcpConfigSection } from './components/ModbusTcpConfigSection'
 import { MqttConfigSection } from './components/MqttConfigSection'
 import { OpcuaConfigSection } from './components/OpcuaConfigSection'
 
+const gatewayTestTerminalStatuses = new Set(['PASSED', 'FAILED', 'UNSUPPORTED'])
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
 export function AdaptersPage() {
   const [catalogAdapters, setCatalogAdapters] = useState<CatalogAdapterType[]>([])
   const [items, setItems] = useState<AdapterItem[]>([])
@@ -49,6 +57,7 @@ export function AdaptersPage() {
   const [error, setError] = useState<string | null>(null)
   const [actionResult, setActionResult] = useState<ActionResultViewModel | null>(null)
   const [actionPending, setActionPending] = useState<'validate' | 'test' | null>(null)
+  const [gatewayTestPendingId, setGatewayTestPendingId] = useState<string | null>(null)
 
   const refresh = async () => {
     setLoading(true)
@@ -136,6 +145,44 @@ export function AdaptersPage() {
       setError(actionError instanceof Error ? actionError.message : 'Failed to test adapter connection')
     } finally {
       setActionPending(null)
+    }
+  }
+
+  const waitForGatewayConnectionTest = async (requestId: string) => {
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      const current = await getGatewayConnectionTest(requestId)
+      if (gatewayTestTerminalStatuses.has(current.status) && current.result) {
+        return current
+      }
+      await sleep(2000)
+    }
+    throw new Error('Gateway-side connection test did not finish within 48 seconds')
+  }
+
+  const onGatewayConnectionTest = async (targetAdapterId: string, gatewayIds: string[]) => {
+    const gatewayId = gatewayIds[0]
+    if (!gatewayId) {
+      setError('Attach this adapter to an active gateway deployment before running a gateway-side connection test.')
+      return
+    }
+
+    setGatewayTestPendingId(targetAdapterId)
+    setError(null)
+    try {
+      const requested = await requestGatewayConnectionTest({
+        gateway_id: gatewayId,
+        target_kind: 'adapter',
+        target_id: targetAdapterId,
+      })
+      const completed = await waitForGatewayConnectionTest(requested.request_id)
+      if (!completed.result) {
+        throw new Error('Gateway-side connection test finished without a result')
+      }
+      setActionResult(connectionTestToViewModel(`Gateway Connection Test · ${gatewayId}`, completed.result))
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'Failed to run gateway-side connection test')
+    } finally {
+      setGatewayTestPendingId(null)
     }
   }
 
@@ -395,6 +442,14 @@ export function AdaptersPage() {
                           <div className="table-actions">
                             <button className="btn btn-secondary" onClick={() => startEdit(usage.adapter)} type="button">
                               Edit
+                            </button>
+                            <button
+                              className="btn btn-secondary"
+                              disabled={gatewayTestPendingId !== null}
+                              onClick={() => void onGatewayConnectionTest(usage.adapter.adapter_id, usage.gatewayIds)}
+                              type="button"
+                            >
+                              {gatewayTestPendingId === usage.adapter.adapter_id ? 'Testing On Gateway…' : 'Test On Gateway'}
                             </button>
                             <button
                               className="btn btn-secondary"

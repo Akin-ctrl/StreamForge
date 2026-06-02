@@ -17,12 +17,27 @@ export function AlertRouterSinkSection({ contract, form, setForm }: AlertRouterS
         <div className="card-header-copy">
           <h3>Alert Router</h3>
           <p className="muted">
-            Define where alarms should go without exposing the underlying ingress routing that the platform manages for
-            this sink.
+            Choose the alarm stream to route, then define the downstream notification destination.
           </p>
         </div>
       </div>
       <div className="inline-grid">
+        <label>
+          Source Topic
+          <input
+            list="alert-source-topic-options"
+            value={form.sourceTopic}
+            onChange={(event) => setForm((current) => ({ ...current, sourceTopic: event.target.value }))}
+          />
+          <span className="muted">Usually alarms.raw unless you are routing a custom alarm stream.</span>
+        </label>
+        <label>
+          Consumer Group
+          <input
+            value={form.kafkaGroupId}
+            onChange={(event) => setForm((current) => ({ ...current, kafkaGroupId: event.target.value }))}
+          />
+        </label>
         <label>
           Route Type
           <select value={form.routeType} onChange={(event) => setForm((current) => ({ ...current, routeType: event.target.value }))}>
@@ -55,7 +70,11 @@ export function AlertRouterSinkSection({ contract, form, setForm }: AlertRouterS
           </label>
         )}
       </div>
-      <p className="muted">Alarm ingress routing is managed by the platform for alert-router sinks.</p>
+      <datalist id="alert-source-topic-options">
+        <option value="alarms.raw" />
+        <option value="events.clean" />
+      </datalist>
+      <p className="muted">Use a distinct consumer group when this route should not share offsets with another alert sink.</p>
     </article>
   )
 }

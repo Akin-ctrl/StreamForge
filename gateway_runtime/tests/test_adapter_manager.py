@@ -105,7 +105,7 @@ class AdapterManagerMetadataTests(unittest.TestCase):
     def test_device_mappings_include_serial_port_and_explicit_devices(self) -> None:
         mappings = AdapterManager._device_mappings(
             {
-                "port": "/dev/ttyUSB0",
+                "serial_port": "/dev/ttyUSB0",
                 "devices": ["/dev/ttyS0:/dev/ttyS0:rwm"],
             }
         )

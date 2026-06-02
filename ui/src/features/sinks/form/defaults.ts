@@ -15,6 +15,7 @@ export function buildDefaultSinkForm(sinkType: string, contract?: CatalogSinkTyp
     description: '',
     sourceTopic:
       getCatalogStringDefault(contract, 'ingress', 'source_topic', '') ||
+      getCatalogStringDefault(contract, 'ingress', 'topic', '') ||
       (sinkType === 'alert_router' ? 'alarms.raw' : 'telemetry.clean'),
     kafkaBootstrap: getCatalogStringDefault(contract, 'ingress', 'kafka_bootstrap', 'kafka:9092'),
     kafkaGroupId: getCatalogStringDefault(contract, 'ingress', 'group_id', 'sf-sink-timescaledb'),

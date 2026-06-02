@@ -435,7 +435,7 @@ test('covers bootstrap, authentication, every route, and key UI actions', async 
 
     await rows.nth(0).locator('input[type="checkbox"]').check()
     await rows.nth(1).locator('input[type="checkbox"]').check()
-    await page.getByRole('button', { name: 'Bulk Approve' }).click()
+    await page.getByRole('button', { name: /Reprocess Selected/ }).click()
 
     await expect
       .poll(async () => page.locator('tbody').innerText(), { timeout: 30_000 })

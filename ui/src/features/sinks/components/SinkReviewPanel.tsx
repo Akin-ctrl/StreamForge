@@ -27,6 +27,13 @@ export function SinkReviewPanel({ form }: SinkReviewPanelProps) {
       </div>
 
       <div className="review-section">
+        <h4>Ingress</h4>
+        <p className="muted">
+          {form.sourceTopic || 'No source topic'} · {form.kafkaGroupId || 'No consumer group'}
+        </p>
+      </div>
+
+      <div className="review-section">
         <h4>Destination</h4>
         {form.sinkType === 'timescaledb' && (
           <p className="muted">

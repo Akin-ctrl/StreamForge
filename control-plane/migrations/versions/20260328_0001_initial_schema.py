@@ -37,6 +37,40 @@ def upgrade() -> None:
     op.create_index("ix_gateways_gateway_id", "gateways", ["gateway_id"], unique=False)
 
     op.create_table(
+        "gateway_enrollment_tokens",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("enrollment_id", sa.String(length=128), nullable=False),
+        sa.Column("name", sa.String(length=128), nullable=False),
+        sa.Column("token_hash", sa.String(length=128), nullable=False),
+        sa.Column("token_preview", sa.String(length=32), nullable=False),
+        sa.Column("site_name", sa.String(length=128), nullable=True),
+        sa.Column("site_code", sa.String(length=64), nullable=True),
+        sa.Column("expires_at", sa.DateTime(), nullable=True),
+        sa.Column("max_uses", sa.Integer(), nullable=True),
+        sa.Column("used_count", sa.Integer(), nullable=False),
+        sa.Column("disabled", sa.Boolean(), nullable=False),
+        sa.Column("last_used_at", sa.DateTime(), nullable=True),
+        sa.Column("created_by", sa.String(length=128), nullable=True),
+        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(), nullable=False),
+        sa.UniqueConstraint("enrollment_id"),
+        sa.UniqueConstraint("token_hash"),
+    )
+    op.create_index("ix_gateway_enrollment_tokens_id", "gateway_enrollment_tokens", ["id"], unique=False)
+    op.create_index(
+        "ix_gateway_enrollment_tokens_enrollment_id",
+        "gateway_enrollment_tokens",
+        ["enrollment_id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_gateway_enrollment_tokens_token_hash",
+        "gateway_enrollment_tokens",
+        ["token_hash"],
+        unique=False,
+    )
+
+    op.create_table(
         "users",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("username", sa.String(length=128), nullable=False),
@@ -97,6 +131,7 @@ def upgrade() -> None:
         sa.Column("requested_action", sa.String(length=32), nullable=True),
         sa.Column("reviewed_by", sa.String(length=128), nullable=True),
         sa.Column("reviewed_at", sa.DateTime(), nullable=True),
+        sa.Column("operator_note", sa.String(length=1024), nullable=True),
         sa.Column("action_completed_at", sa.DateTime(), nullable=True),
         sa.Column("last_error", sa.String(length=1024), nullable=True),
         sa.Column("failed_at", sa.DateTime(), nullable=False),
@@ -157,6 +192,62 @@ def upgrade() -> None:
     op.create_index("ix_sinks_name", "sinks", ["name"], unique=False)
     op.create_index("ix_sinks_sink_type", "sinks", ["sink_type"], unique=False)
     op.create_index("ix_sinks_status", "sinks", ["status"], unique=False)
+
+    op.create_table(
+        "gateway_connection_tests",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("request_id", sa.String(length=128), nullable=False),
+        sa.Column("gateway_id", sa.String(length=128), nullable=False),
+        sa.Column("target_kind", sa.String(length=32), nullable=False),
+        sa.Column("target_id", sa.String(length=128), nullable=False),
+        sa.Column("target_type", sa.String(length=64), nullable=False),
+        sa.Column("status", sa.String(length=32), nullable=False),
+        sa.Column("result", sa.JSON(), nullable=True),
+        sa.Column("last_error", sa.String(length=1024), nullable=True),
+        sa.Column("requested_by", sa.String(length=128), nullable=True),
+        sa.Column("started_at", sa.DateTime(), nullable=True),
+        sa.Column("completed_at", sa.DateTime(), nullable=True),
+        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(), nullable=False),
+        sa.UniqueConstraint("request_id"),
+    )
+    op.create_index("ix_gateway_connection_tests_id", "gateway_connection_tests", ["id"], unique=False)
+    op.create_index(
+        "ix_gateway_connection_tests_gateway_id",
+        "gateway_connection_tests",
+        ["gateway_id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_gateway_connection_tests_request_id",
+        "gateway_connection_tests",
+        ["request_id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_gateway_connection_tests_status",
+        "gateway_connection_tests",
+        ["status"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_gateway_connection_tests_target_id",
+        "gateway_connection_tests",
+        ["target_id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_gateway_connection_tests_target_kind",
+        "gateway_connection_tests",
+        ["target_kind"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_gateway_connection_tests_target_type",
+        "gateway_connection_tests",
+        ["target_type"],
+        unique=False,
+    )
 
     op.create_table(
         "config_secrets",
@@ -263,6 +354,15 @@ def downgrade() -> None:
     op.drop_index("ix_deployments_id", table_name="deployments")
     op.drop_table("deployments")
 
+    op.drop_index("ix_gateway_connection_tests_target_type", table_name="gateway_connection_tests")
+    op.drop_index("ix_gateway_connection_tests_target_kind", table_name="gateway_connection_tests")
+    op.drop_index("ix_gateway_connection_tests_target_id", table_name="gateway_connection_tests")
+    op.drop_index("ix_gateway_connection_tests_status", table_name="gateway_connection_tests")
+    op.drop_index("ix_gateway_connection_tests_request_id", table_name="gateway_connection_tests")
+    op.drop_index("ix_gateway_connection_tests_gateway_id", table_name="gateway_connection_tests")
+    op.drop_index("ix_gateway_connection_tests_id", table_name="gateway_connection_tests")
+    op.drop_table("gateway_connection_tests")
+
     op.drop_index("ix_sinks_status", table_name="sinks")
     op.drop_index("ix_sinks_sink_type", table_name="sinks")
     op.drop_index("ix_sinks_name", table_name="sinks")
@@ -306,6 +406,11 @@ def downgrade() -> None:
     op.drop_index("ix_users_username", table_name="users")
     op.drop_index("ix_users_id", table_name="users")
     op.drop_table("users")
+
+    op.drop_index("ix_gateway_enrollment_tokens_token_hash", table_name="gateway_enrollment_tokens")
+    op.drop_index("ix_gateway_enrollment_tokens_enrollment_id", table_name="gateway_enrollment_tokens")
+    op.drop_index("ix_gateway_enrollment_tokens_id", table_name="gateway_enrollment_tokens")
+    op.drop_table("gateway_enrollment_tokens")
 
     op.drop_index("ix_gateways_gateway_id", table_name="gateways")
     op.drop_index("ix_gateways_id", table_name="gateways")
