@@ -213,6 +213,7 @@ export type DlqItem = {
   requested_action: DlqAction | null
   reviewed_by: string | null
   reviewed_at: string | null
+  operator_note: string | null
   action_completed_at: string | null
   last_error: string | null
   failed_at: string
@@ -765,27 +766,50 @@ export function listDlq(filters?: {
   return request<DlqItem[]>(`/api/v1/dlq${suffix ? `?${suffix}` : ''}`)
 }
 
-export function approveDlqMessage(messageId: string, reviewedBy?: string) {
+export function approveDlqMessage(messageId: string, reviewedBy?: string, operatorNote?: string) {
   return request<DlqItem>(`/api/v1/dlq/messages/${messageId}/approve`, {
     method: 'POST',
-    body: reviewedBy ? JSON.stringify({ reviewed_by: reviewedBy }) : undefined,
+    body: reviewedBy || operatorNote ? JSON.stringify({ reviewed_by: reviewedBy, operator_note: operatorNote }) : undefined,
   })
 }
 
-export function bulkApproveDlqMessages(messageIds: string[], reviewedBy?: string) {
+export function bulkApproveDlqMessages(messageIds: string[], reviewedBy?: string, operatorNote?: string) {
   return request<DlqItem[]>('/api/v1/dlq/bulk/approve', {
     method: 'POST',
     body: JSON.stringify({
       message_ids: messageIds,
       reviewed_by: reviewedBy,
+      operator_note: operatorNote,
     }),
   })
 }
 
-export function discardDlqMessage(messageId: string, reviewedBy?: string) {
+export function bulkDiscardDlqMessages(messageIds: string[], reviewedBy?: string, operatorNote?: string) {
+  return request<DlqItem[]>('/api/v1/dlq/bulk/discard', {
+    method: 'POST',
+    body: JSON.stringify({
+      message_ids: messageIds,
+      reviewed_by: reviewedBy,
+      operator_note: operatorNote,
+    }),
+  })
+}
+
+export function bulkAnnotateDlqMessages(messageIds: string[], operatorNote: string, reviewedBy?: string) {
+  return request<DlqItem[]>('/api/v1/dlq/bulk/annotate', {
+    method: 'POST',
+    body: JSON.stringify({
+      message_ids: messageIds,
+      reviewed_by: reviewedBy,
+      operator_note: operatorNote,
+    }),
+  })
+}
+
+export function discardDlqMessage(messageId: string, reviewedBy?: string, operatorNote?: string) {
   return request<DlqItem>(`/api/v1/dlq/messages/${messageId}/discard`, {
     method: 'POST',
-    body: reviewedBy ? JSON.stringify({ reviewed_by: reviewedBy }) : undefined,
+    body: reviewedBy || operatorNote ? JSON.stringify({ reviewed_by: reviewedBy, operator_note: operatorNote }) : undefined,
   })
 }
 

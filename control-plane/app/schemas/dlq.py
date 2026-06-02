@@ -32,17 +32,32 @@ class DlqIngestRequest(BaseModel):
 
 class DlqActionRequest(BaseModel):
     reviewed_by: str | None = Field(default=None, min_length=1, max_length=128)
+    operator_note: str | None = Field(default=None, max_length=1024)
 
 
 class DlqBulkApproveRequest(BaseModel):
     message_ids: list[str] = Field(min_length=1)
     reviewed_by: str | None = Field(default=None, min_length=1, max_length=128)
+    operator_note: str | None = Field(default=None, max_length=1024)
+
+
+class DlqBulkDiscardRequest(BaseModel):
+    message_ids: list[str] = Field(min_length=1)
+    reviewed_by: str | None = Field(default=None, min_length=1, max_length=128)
+    operator_note: str | None = Field(default=None, max_length=1024)
+
+
+class DlqBulkAnnotateRequest(BaseModel):
+    message_ids: list[str] = Field(min_length=1)
+    reviewed_by: str | None = Field(default=None, min_length=1, max_length=128)
+    operator_note: str = Field(min_length=1, max_length=1024)
 
 
 class DlqGatewayAction(BaseModel):
     message_id: str
     gateway_id: str
     action: DlqAction
+    source_topic: str
     clean_topic: str
     original_payload: dict[str, Any]
     preview_payload: dict[str, Any]
@@ -70,6 +85,7 @@ class DlqItem(BaseModel):
     requested_action: DlqAction | None
     reviewed_by: str | None
     reviewed_at: datetime | None
+    operator_note: str | None
     action_completed_at: datetime | None
     last_error: str | None
     failed_at: datetime
@@ -77,4 +93,3 @@ class DlqItem(BaseModel):
     preview_payload: dict[str, Any]
     created_at: datetime
     updated_at: datetime
-

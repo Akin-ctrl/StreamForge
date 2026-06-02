@@ -4,7 +4,9 @@ import {
   DlqItem,
   DlqStatus,
   approveDlqMessage,
+  bulkAnnotateDlqMessages,
   bulkApproveDlqMessages,
+  bulkDiscardDlqMessages,
   discardDlqMessage,
   listDlq,
 } from '../../shared/api/client'
@@ -44,6 +46,7 @@ export function DlqPage() {
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkNote, setBulkNote] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   const refresh = async () => {
@@ -84,10 +87,20 @@ export function DlqPage() {
     () => Array.from(new Set(items.map((item) => item.reason))).sort(),
     [items],
   )
-  const selectableIds = useMemo(
-    () => items.filter((item) => canApprove(item)).map((item) => item.message_id),
-    [items],
+  const visibleIds = useMemo(() => items.map((item) => item.message_id), [items])
+  const selectedItems = useMemo(
+    () => items.filter((item) => selectedIds.includes(item.message_id)),
+    [items, selectedIds],
   )
+  const selectedApproveIds = useMemo(
+    () => selectedItems.filter((item) => canApprove(item)).map((item) => item.message_id),
+    [selectedItems],
+  )
+  const selectedDiscardIds = useMemo(
+    () => selectedItems.filter((item) => canDiscard(item)).map((item) => item.message_id),
+    [selectedItems],
+  )
+  const trimmedBulkNote = bulkNote.trim()
 
   const onToggleSelected = (messageId: string) => {
     setSelectedIds((current) =>
@@ -122,18 +135,56 @@ export function DlqPage() {
   }
 
   const onBulkApprove = async () => {
-    if (selectedIds.length === 0) {
+    if (selectedApproveIds.length === 0) {
       return
     }
 
     setBulkBusy(true)
     setError(null)
     try {
-      await bulkApproveDlqMessages(selectedIds)
+      await bulkApproveDlqMessages(selectedApproveIds, undefined, trimmedBulkNote || undefined)
       setSelectedIds([])
+      setBulkNote('')
       await refresh()
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : 'Failed to bulk approve DLQ messages')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
+  const onBulkDiscard = async () => {
+    if (selectedDiscardIds.length === 0) {
+      return
+    }
+
+    setBulkBusy(true)
+    setError(null)
+    try {
+      await bulkDiscardDlqMessages(selectedDiscardIds, undefined, trimmedBulkNote || undefined)
+      setSelectedIds([])
+      setBulkNote('')
+      await refresh()
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'Failed to bulk discard DLQ messages')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
+  const onBulkAnnotate = async () => {
+    if (selectedIds.length === 0 || !trimmedBulkNote) {
+      return
+    }
+
+    setBulkBusy(true)
+    setError(null)
+    try {
+      await bulkAnnotateDlqMessages(selectedIds, trimmedBulkNote)
+      setBulkNote('')
+      await refresh()
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'Failed to annotate DLQ messages')
     } finally {
       setBulkBusy(false)
     }
@@ -147,9 +198,6 @@ export function DlqPage() {
           <p className="muted">Review rejected telemetry, compare preview payloads, and request gateway-side reprocess or discard.</p>
         </div>
         <div className="page-actions">
-          <button className="btn btn-secondary" disabled={bulkBusy || selectedIds.length === 0} onClick={() => void onBulkApprove()}>
-            Bulk Approve
-          </button>
           <button className="btn" onClick={() => void refresh()}>
             Refresh
           </button>
@@ -193,6 +241,45 @@ export function DlqPage() {
         </label>
       </div>
 
+      <div className="card alarm-filters">
+        <label>
+          Bulk Note
+          <textarea
+            rows={3}
+            value={bulkNote}
+            placeholder="Example: Old bad scale/config rows. Discard after confirming current data is clean."
+            onChange={(event) => setBulkNote(event.target.value)}
+          />
+        </label>
+        <div className="page-actions">
+          <button
+            className="btn btn-secondary"
+            disabled={bulkBusy || selectedApproveIds.length === 0}
+            onClick={() => void onBulkApprove()}
+          >
+            Reprocess Selected ({selectedApproveIds.length})
+          </button>
+          <button
+            className="btn btn-secondary"
+            disabled={bulkBusy || selectedDiscardIds.length === 0}
+            onClick={() => void onBulkDiscard()}
+          >
+            Discard Selected ({selectedDiscardIds.length})
+          </button>
+          <button
+            className="btn"
+            disabled={bulkBusy || selectedIds.length === 0 || !trimmedBulkNote}
+            onClick={() => void onBulkAnnotate()}
+          >
+            Annotate Selected ({selectedIds.length})
+          </button>
+        </div>
+        <p className="muted">
+          Select visible DLQ rows, add an optional operator note, then reprocess, discard, or annotate the selection.
+          Reprocess and discard apply only to pending or failed rows.
+        </p>
+      </div>
+
       {loading && <p>Loading DLQ messages...</p>}
       {error && <p className="error">{error}</p>}
 
@@ -205,8 +292,8 @@ export function DlqPage() {
                   <th>
                     <input
                       type="checkbox"
-                      checked={selectableIds.length > 0 && selectedIds.length === selectableIds.length}
-                      onChange={(event) => setSelectedIds(event.target.checked ? selectableIds : [])}
+                      checked={visibleIds.length > 0 && selectedIds.length === visibleIds.length}
+                      onChange={(event) => setSelectedIds(event.target.checked ? visibleIds : [])}
                     />
                   </th>
                   <th>Reason</th>
@@ -221,7 +308,6 @@ export function DlqPage() {
                 {items.map((item) => {
                   const isBusy = busyId === item.message_id
                   const isSelected = selectedMessageId === item.message_id
-                  const selectable = canApprove(item)
                   return (
                     <tr
                       key={item.message_id}
@@ -232,7 +318,7 @@ export function DlqPage() {
                         <input
                           type="checkbox"
                           checked={selectedIds.includes(item.message_id)}
-                          disabled={!selectable}
+                          onClick={(event) => event.stopPropagation()}
                           onChange={(event) => {
                             event.stopPropagation()
                             onToggleSelected(item.message_id)
@@ -301,6 +387,9 @@ export function DlqPage() {
                 </p>
                 <p>
                   <strong>Reviewed At:</strong> {formatDateTimeValue(selectedItem.reviewed_at, timezone, { includeTimezone: true })}
+                </p>
+                <p>
+                  <strong>Operator Note:</strong> {selectedItem.operator_note ?? 'None'}
                 </p>
                 <p>
                   <strong>Action Completed:</strong> {formatDateTimeValue(selectedItem.action_completed_at, timezone, { includeTimezone: true })}

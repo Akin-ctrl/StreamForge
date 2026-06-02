@@ -20,8 +20,13 @@ class FakeProducer:
 
 
 class FakeControlPlane:
-    def __init__(self) -> None:
+    def __init__(self, actions: list[dict[str, object]] | None = None) -> None:
+        self.actions = actions or []
         self.posts: list[tuple[str, dict[str, object]]] = []
+
+    def get_json_list(self, path: str) -> list[dict[str, object]]:
+        self.posts.append((path, {"method": "GET"}))
+        return self.actions
 
     def post_json(self, path: str, payload: dict[str, object], authenticated: bool = True) -> dict[str, object]:
         self.posts.append((path, payload))
@@ -77,6 +82,8 @@ class ValidatorModuleAlarmTests(unittest.TestCase):
         self.assertEqual(messages[0]["payload"]["severity"], "CRITICAL")
         self.assertEqual(messages[1]["payload"]["state"], "CLEARED")
         self.assertEqual(messages[2]["payload"]["state"], "ACTIVE")
+        self.assertEqual(messages[0]["payload"]["metadata"]["pipeline_id"], "gw-edge-01")
+        self.assertEqual(messages[0]["payload"]["metadata"]["deployment_id"], "gw-edge-01")
         self.assertEqual(messages[0]["payload"]["alarm_id"], messages[1]["payload"]["alarm_id"])
         self.assertNotEqual(messages[1]["payload"]["alarm_id"], messages[2]["payload"]["alarm_id"])
 
@@ -104,6 +111,45 @@ class ValidatorModuleAlarmTests(unittest.TestCase):
 
         pending = next(iter(validator._pending_dlq_syncs.values()))
         self.assertEqual(pending["source_topic"], "telemetry.raw")
+
+    def test_dlq_action_processing_ignores_event_actions(self) -> None:
+        control_plane = FakeControlPlane(
+            actions=[
+                {
+                    "message_id": "event-dlq-1",
+                    "source_topic": "events.raw",
+                    "clean_topic": "events.clean",
+                    "action": "REPROCESS",
+                    "preview_payload": {"event_type": "motor_state_change"},
+                },
+                {
+                    "message_id": "telemetry-dlq-1",
+                    "source_topic": "telemetry.raw",
+                    "clean_topic": "telemetry.clean",
+                    "action": "REPROCESS",
+                    "preview_payload": {
+                        "asset_id": "asset-1",
+                        "gateway_time": "2026-06-02T10:00:00+00:00",
+                        "readings": [],
+                    },
+                },
+            ]
+        )
+        validator = ValidatorModule(
+            bootstrap="kafka:9092",
+            gateway_id="gw-edge-01",
+            rules={"raw_topic": "telemetry.raw", "clean_topic": "telemetry.clean"},
+            control_plane=control_plane,
+        )
+        validator._producer = FakeProducer()
+
+        validator._maybe_process_dlq_actions()
+
+        self.assertEqual(len(validator._producer.messages), 1)
+        self.assertEqual(validator._producer.messages[0]["topic"], "telemetry.clean")
+        completion_posts = [post for post in control_plane.posts if post[0].endswith("/complete")]
+        self.assertEqual(len(completion_posts), 1)
+        self.assertIn("telemetry-dlq-1", completion_posts[0][0])
 
     def test_health_reports_pipeline_stage_metrics_and_backpressure(self) -> None:
         validator = ValidatorModule(

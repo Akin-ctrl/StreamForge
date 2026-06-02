@@ -279,6 +279,7 @@ class DlqMessage(Base):
     requested_action: Mapped[str | None] = mapped_column(String(32), nullable=True)
     reviewed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    operator_note: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     action_completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     failed_at: Mapped[datetime] = mapped_column(DateTime, index=True)

@@ -131,6 +131,7 @@ def upgrade() -> None:
         sa.Column("requested_action", sa.String(length=32), nullable=True),
         sa.Column("reviewed_by", sa.String(length=128), nullable=True),
         sa.Column("reviewed_at", sa.DateTime(), nullable=True),
+        sa.Column("operator_note", sa.String(length=1024), nullable=True),
         sa.Column("action_completed_at", sa.DateTime(), nullable=True),
         sa.Column("last_error", sa.String(length=1024), nullable=True),
         sa.Column("failed_at", sa.DateTime(), nullable=False),

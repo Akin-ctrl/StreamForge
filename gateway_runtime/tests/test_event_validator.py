@@ -6,6 +6,7 @@ import sys
 from types import SimpleNamespace
 import types
 import unittest
+import unittest.mock
 
 from gateway_runtime.event_validator import EventValidatorModule
 
@@ -19,6 +20,20 @@ class FakeProducer:
 
     def flush(self) -> None:
         return None
+
+
+class FakeControlPlane:
+    def __init__(self, actions: list[dict[str, object]]) -> None:
+        self.actions = actions
+        self.posts: list[tuple[str, dict[str, object]]] = []
+
+    def get_json_list(self, path: str) -> list[dict[str, object]]:
+        self.posts.append((path, {"method": "GET"}))
+        return self.actions
+
+    def post_json(self, path: str, payload: dict[str, object], authenticated: bool = True) -> dict[str, object]:
+        self.posts.append((path, payload))
+        return {}
 
 
 class EventValidatorModuleTests(unittest.TestCase):
@@ -48,6 +63,20 @@ class EventValidatorModuleTests(unittest.TestCase):
 
         self.assertIsNone(validator._validate_message(self._valid_event()))
 
+    def test_validate_message_accepts_pipeline_id_when_deployment_id_is_absent(self) -> None:
+        validator = EventValidatorModule(
+            bootstrap="kafka:9092",
+            gateway_id="gw-edge-01",
+            rules={"raw_topic": "events.raw", "clean_topic": "events.clean", "dlq_topic": "dlq.events"},
+        )
+        event = self._valid_event()
+        metadata = event["metadata"]
+        assert isinstance(metadata, dict)
+        metadata.pop("deployment_id")
+        metadata["pipeline_id"] = "asset-1"
+
+        self.assertIsNone(validator._validate_message(event))
+
     def test_validate_message_rejects_missing_change(self) -> None:
         validator = EventValidatorModule(
             bootstrap="kafka:9092",
@@ -72,6 +101,41 @@ class EventValidatorModuleTests(unittest.TestCase):
         pending = next(iter(validator._pending_dlq_syncs.values()))
         self.assertEqual(pending["source_topic"], "events.raw")
         self.assertEqual(pending["clean_topic"], "events.clean")
+
+    def test_dlq_action_processing_ignores_telemetry_actions(self) -> None:
+        control_plane = FakeControlPlane(
+            actions=[
+                {
+                    "message_id": "telemetry-dlq-1",
+                    "source_topic": "telemetry.raw",
+                    "clean_topic": "telemetry.clean",
+                    "action": "REPROCESS",
+                    "preview_payload": {"asset_id": "asset-1", "readings": []},
+                },
+                {
+                    "message_id": "event-dlq-1",
+                    "source_topic": "events.raw",
+                    "clean_topic": "events.clean",
+                    "action": "REPROCESS",
+                    "preview_payload": self._valid_event(),
+                },
+            ]
+        )
+        validator = EventValidatorModule(
+            bootstrap="kafka:9092",
+            gateway_id="gw-edge-01",
+            rules={"raw_topic": "events.raw", "clean_topic": "events.clean"},
+            control_plane=control_plane,
+        )
+        validator._producer = FakeProducer()
+
+        validator._maybe_process_dlq_actions()
+
+        self.assertEqual(len(validator._producer.messages), 1)
+        self.assertEqual(validator._producer.messages[0]["topic"], "events.clean")
+        completion_posts = [post for post in control_plane.posts if post[0].endswith("/complete")]
+        self.assertEqual(len(completion_posts), 1)
+        self.assertIn("event-dlq-1", completion_posts[0][0])
 
     def test_health_reports_pipeline_stage_metrics_and_backpressure(self) -> None:
         validator = EventValidatorModule(
