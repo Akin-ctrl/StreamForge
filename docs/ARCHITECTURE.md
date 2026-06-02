@@ -110,14 +110,15 @@ Gateways are fully self-contained:
 │         │                                               │
 │  ┌──────┴───────┐  ┌──────────────┐                     │
 │  │ PostgreSQL   │  │   Schema     │                     │
-│  │ (or SQLite)  │  │   Registry   │                     │
+│  │              │  │   Registry   │                     │
 │  └──────────────┘  └──────────────┘                     │
 └─────────────────────────────────────────────────────────┘
 ```
 
 #### 1. Config & Control API
 - **Technology**: FastAPI (Python)
-- **Database**: PostgreSQL (remote mode) or SQLite (local mode)
+- **Database**: PostgreSQL in the current implementation. SQLite remains an
+  evaluated local-control-plane option, not the shipped storage model.
 - **Endpoints**:
   - `/api/v1/gateways` - Gateway inventory, approval, status, token issue/renew, config delivery, and heartbeat surfaces (self-registration is not enabled in the currently shipped implementation)
   - `/api/v1/pipelines` - Current deployment/pipeline management path
@@ -221,12 +222,14 @@ See [Adapters And Deployments Spec](ADAPTERS_AND_DEPLOYMENTS_SPEC.md) for the lo
 #### 4. Sink Services
 - **Deployment**: Docker containers on gateway
 - **Pattern**: Kafka-compatible consumer → external writer
-- **Examples**:
+- **Implemented sinks**:
   - `sink_timescaledb` - Writes to TimescaleDB
-  - `sink_postgres` - Writes to PostgreSQL
   - `sink_kafka` - Replicates to customer's Kafka-compatible cluster
-  - `sink_s3` - Batch writes to S3 in Parquet format
   - `sink_http` - HTTP POST to cloud endpoints
+  - `sink_alert_router` - Routes alarms to webhooks such as Slack
+
+Planned or deferred sink families include separate PostgreSQL/Supabase-specific
+writers and object-store/archive sinks such as S3/Parquet.
 
 #### 5. Validator Module
 - **Deployment**: Module inside Gateway Runtime (not a container)
@@ -323,23 +326,16 @@ Passed via environment variable `ADAPTER_CONFIG` (JSON):
 ```json
 {
   "adapter_id": "adapter_modbus_001",
-  "pipeline_id": "factory_line_1",
-  "protocol": "modbus_tcp",
-  "source": {
-    "host": "192.168.1.50",
-    "port": 502,
-    "unit_id": 1
+  "adapter_type": "modbus_tcp",
+  "host": "192.168.1.50",
+  "port": 502,
+  "unit_id": 1,
+  "asset_id": "line_1_sensor_01",
+  "registers": {
+    "40001": {"param": "temperature", "unit": "celsius", "type": "float32"}
   },
-  "mapping": {
-    "registers": {
-      "40001": {"param": "temperature", "unit": "celsius", "type": "float32"}
-    }
-  },
-  "output": {
-    "kafka_bootstrap": "localhost:9092",
-    "topic": "telemetry.raw",
-    "asset_id": "line_1_sensor_01"
-  },
+  "kafka_bootstrap": "kafka:9092",
+  "topic": "telemetry.raw",
   "poll_interval_ms": 1000
 }
 ```
@@ -579,7 +575,8 @@ All alarms visible in Control Plane UI regardless of alert routing.
 #### Gateway Authentication
 - JWT tokens (1-year validity)
 - Auto-renew before expiry
-- Gateway record is created in the control plane/UI before first token issuance
+- Gateway enrollment tokens create pending gateway records
+- Operator approval is required before token issuance
 
 #### User Authentication
 - Built-in username/password
@@ -843,7 +840,7 @@ Edge (each location):
 
 ```
 Gateway Device:
-  ├── Control Plane (SQLite)
+  ├── Control Plane (PostgreSQL in current implementation)
   ├── Gateway Runtime
   ├── Local stream broker
   ├── Adapters
@@ -983,7 +980,7 @@ Every Copilot action logged:
 | 13 | Coupling | Loosely coupled. Gateway runs offline indefinitely |
 | 14 | Sinks | Docker containers on gateway |
 | 15 | Autonomy | Full. First boot needs Control Plane, then offline OK |
-| 16 | Registration | Operator-driven gateway records today; production enrollment/approval UX pending |
+| 16 | Registration | Admin-managed enrollment tokens, pending gateway review, and operator approval today; packaged site runbooks still pending |
 | 17 | Auth | Gateways: JWT. Users: built-in auth today; OAuth/OIDC later |
 | 18 | RBAC | 4 roles + resource scoping |
 | 19 | Failure | Hybrid: restart + bulkhead + circuit breaker |

@@ -312,12 +312,19 @@ This spec does not require:
 - making every advanced protocol setting mandatory in the primary form
 - conflating adapter authoring with deployment composition
 
-## Current Gap Summary
+## Current Status Summary
 
-The current implementation is directionally correct at the runtime level, but not yet complete at the operator-model level:
+The current implementation now matches the core operator model:
 
-- adapter forms are still too shallow for MQTT and OPC UA
-- Modbus event/state mapping is underrepresented in the UI
-- the current catalog shape is too flat
-- adapters are not yet true first-class persisted objects
-- deployments still inherit too much protocol-authoring responsibility
+- adapters and sinks are first-class persisted objects
+- deployments compose already configured adapters and sinks
+- protocol-aware forms exist for Modbus TCP, Modbus RTU, MQTT, and OPC UA
+- sink ingress controls expose source topic and consumer group in advanced settings
+
+Remaining work is no longer about the basic object model. The open work is
+mostly verification and ergonomics:
+
+- real-hardware protocol verification
+- deeper protocol-level connection tests where practical
+- topology readability
+- responsive form/table polish under real operator screen sizes

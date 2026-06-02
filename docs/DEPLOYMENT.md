@@ -35,7 +35,8 @@ It starts:
 - Redpanda as the local Kafka-compatible broker and schema registry endpoint
 - the FastAPI control plane
 - the gateway runtime
-- a Modbus simulator
+- the plant simulator plane with Modbus TCP, simulated RTU endpoints, MQTT, and
+  OPC UA-style demo services
 - Kafdrop and Kafka UI for stream inspection
 - Prometheus
 - the React UI served through Nginx
