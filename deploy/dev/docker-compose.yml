@@ -5,12 +5,17 @@ x-dev-images:
   timescaledb: &timescaledb_image timescale/timescaledb@sha256:0af03ecf697825f6ddae76fd275d16bf46007bed6d00eb3d754779cb7db96fa6
   redpanda: &redpanda_image redpandadata/redpanda:v26.1.9
   dev_bootstrap: &dev_bootstrap_image python:3.12-slim
-  modbus_simulator: &modbus_simulator_image oitc/modbus-server@sha256:58a9e9b97b994a2bbfb79bbe43e25387a2e6c458220b44cd058007af3881c243
+  mqtt_broker: &mqtt_broker_image eclipse-mosquitto:2.0.22
   prometheus: &prometheus_image prom/prometheus:v3.2.1
   kafdrop: &kafdrop_image obsidiandynamics/kafdrop:3.30.0
   kafka_ui: &kafka_ui_image provectuslabs/kafka-ui@sha256:8f2ff02d64b0a7a2b71b6b3b3148b85f66d00ec20ad40c30bdcd415d46d31818
 
 services:
+  # Dev stack planes are intentionally startable independently:
+  # - UI/control plane: postgres, control_plane, ui
+  # - Plant simulator plane: mqtt-broker, plant-simulator
+  # - Edge plane: kafka, gateway_runtime, local sinks/observability
+  # Cross-plane availability is handled by runtime retry/onboarding, not startup blocking.
   postgres:
     image: *postgres_image
     environment:
@@ -122,10 +127,49 @@ services:
       DEV_GATEWAY_CONFIG_PATH: /app/deploy-dev/gateway_config.sample.json
     command: ["python", "/app/deploy-dev/dev_bootstrap.py"]
 
-  modbus-simulator:
-    image: *modbus_simulator_image
+  mqtt-broker:
+    image: *mqtt_broker_image
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
     ports:
-      - "5020:5020"
+      - "1883:1883"
+
+  plant-simulator:
+    image: streamforge/gateway_runtime:dev
+    build:
+      context: ../..
+      dockerfile: gateway_runtime/Dockerfile
+    depends_on:
+      mqtt-broker:
+        condition: service_started
+    volumes:
+      - .:/app/deploy-dev:ro
+    environment:
+      MQTT_BROKER_HOST: mqtt-broker
+      MQTT_BROKER_PORT: "1883"
+      LOG_LEVEL: INFO
+    command: ["python", "/app/deploy-dev/plant_simulator.py"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket,sys; ports=(15020,15021,15022,15023,16020,16021,4840,4841); sys.exit(0 if all(socket.create_connection(('127.0.0.1', port), timeout=2).close() is None for port in ports) else 1)",
+        ]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 20
+    ports:
+      - "15020:15020"
+      - "15021:15021"
+      - "15022:15022"
+      - "15023:15023"
+      - "16020:16020"
+      - "16021:16021"
+      - "4840:4840"
+      - "4841:4841"
 
   gateway_runtime:
     image: streamforge/gateway_runtime:dev
@@ -134,12 +178,6 @@ services:
       dockerfile: gateway_runtime/Dockerfile
     depends_on:
       kafka:
-        condition: service_healthy
-      modbus-simulator:
-        condition: service_started
-      control_plane:
-        condition: service_healthy
-      timescaledb:
         condition: service_healthy
     volumes:
       - ./gateway_config.sample.json:/config/gateway_config.json:ro
@@ -154,7 +192,7 @@ services:
       CONTROL_PLANE_URL: http://control_plane:8000
       CONTROL_PLANE_GATEWAY_ID: ${CONTROL_PLANE_GATEWAY_ID:-gateway-demo-01}
       CONTROL_PLANE_GATEWAY_HOSTNAME: ${CONTROL_PLANE_GATEWAY_HOSTNAME:-gateway-demo-01.local}
-      CONTROL_PLANE_ENROLLMENT_TOKEN: ${CONTROL_PLANE_ENROLLMENT_TOKEN:-}
+      CONTROL_PLANE_ENROLLMENT_TOKEN: ${CONTROL_PLANE_ENROLLMENT_TOKEN:-sfe_Y4qUqBYBAVrPogX4YD-SaqXJFlEgVMpMTdujgbdG6HA}
       CONTROL_PLANE_GATEWAY_HARDWARE_INFO: ${CONTROL_PLANE_GATEWAY_HARDWARE_INFO:-}
       OVERFLOW_MONITOR_PATH: /var/lib/redpanda/data
       OVERFLOW_CHECK_INTERVAL: ${OVERFLOW_CHECK_INTERVAL:-60}
@@ -185,6 +223,9 @@ services:
       KAFKA_BOOTSTRAP: kafka:9092
       SCHEMA_REGISTRY_URL: http://schema_registry:8081
       ADAPTER_MODBUS_TCP_IMAGE: streamforge/gateway_runtime:dev
+      ADAPTER_MODBUS_RTU_IMAGE: streamforge/gateway_runtime:dev
+      ADAPTER_MQTT_IMAGE: streamforge/gateway_runtime:dev
+      ADAPTER_OPCUA_IMAGE: streamforge/gateway_runtime:dev
       # When the local broker is not already reachable, gateway_runtime can provision and supervise
       # its own single-node Redpanda container through the Docker socket.
       KAFKA_AUTO_MANAGE: "true"

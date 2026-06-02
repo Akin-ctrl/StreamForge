@@ -1,25 +1,25 @@
 {
-  "host": "modbus-simulator",
-  "port": 5020,
+  "host": "plant-simulator",
+  "port": 15020,
   "unit_id": 1,
   "poll_interval_ms": 1000,
   "points": [
     {
-      "point_name": "temperature",
+      "point_name": "packaging_bearing_temperature",
       "memory_area": "holding_register",
-      "address": 40001,
-      "data_type": "float32",
+      "address": 40003,
+      "data_type": "uint16",
       "byte_order": "big",
       "word_order": "big",
-      "scale": 1.0,
+      "scale": 0.1,
       "offset": 0.0,
       "unit": "celsius",
       "classification": "telemetry"
     },
     {
-      "point_name": "motor_running",
+      "point_name": "packaging_jam_active",
       "memory_area": "coil",
-      "address": 1,
+      "address": 2,
       "data_type": "bool",
       "byte_order": "big",
       "word_order": "big",
@@ -27,13 +27,13 @@
       "offset": 0.0,
       "unit": "",
       "classification": "event",
-      "event_type": "motor_state_change"
+      "event_type": "packaging_jam_state_change"
     }
   ],
   "output": {
     "kafka_bootstrap": "kafka:9092",
     "topic": "telemetry.raw",
     "events_topic": "events.raw",
-    "asset_id": "demo_sensor_01"
+    "asset_id": "packaging_cell_01"
   }
 }

@@ -1,9 +1,8 @@
-"""Modbus simulator skeleton."""
+"""Compatibility entrypoint for the multi-protocol plant simulator."""
 
+from __future__ import annotations
 
-def main() -> None:
-    """Start a simple Modbus TCP simulator with static registers."""
-
+from plant_simulator import main
 
 if __name__ == "__main__":
     main()
