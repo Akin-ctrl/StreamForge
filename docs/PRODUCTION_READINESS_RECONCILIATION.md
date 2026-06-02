@@ -49,6 +49,11 @@ These are the most important unresolved items.
 Current shipped behavior:
 
 - the development stack uses `redpandadata/redpanda:v26.1.9`
+- the local dev compose stack now avoids floating `latest` image tags for
+  supporting services by pinning digest-only helper images where semantic tags
+  were not available from local metadata
+- the gateway runtime observes the Redpanda compose data volume read-only for
+  overflow/disk-pressure checks in local verification
 - the runtime-managed broker path is Redpanda-first with a Confluent fallback
 - application code uses Kafka-compatible producers, consumers, topics, offsets,
   and consumer groups

@@ -135,7 +135,7 @@ One Modbus adapter instance is expected to carry many mapped PLC points. A PLC w
 Notes:
 
 - Protocol default TCP port is `502`
-- Dev-simulator defaults such as `5020` must be treated as environment-specific presets, not protocol defaults
+- Dev-simulator defaults such as `15020` must be treated as environment-specific presets, not protocol defaults
 - The UI should support human-friendly Modbus addressing and show the translated wire address clearly
 
 ### Modbus RTU

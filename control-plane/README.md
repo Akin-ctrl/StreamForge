@@ -57,7 +57,7 @@ The container entrypoint runs `alembic upgrade head` before starting `uvicorn`, 
 
 ## Run (docker compose)
 
-From [deploy/docker-compose.dev.yml](deploy/docker-compose.dev.yml):
+From [deploy/dev/docker-compose.yml](../deploy/dev/docker-compose.yml):
 
 - `postgres` runs on `localhost:5432`
 - `control_plane` runs on `localhost:8001`
@@ -65,7 +65,7 @@ From [deploy/docker-compose.dev.yml](deploy/docker-compose.dev.yml):
 The default compose stack keeps first-user bootstrap intact for the UI. If you explicitly want a fully seeded demo topology, start the optional seed helper profile:
 
 ```bash
-docker compose -f deploy/docker-compose.dev.yml --profile seed up -d --build
+docker compose -f deploy/dev/docker-compose.yml --profile seed up -d --build
 ```
 
 The optional seed profile uses explicit dev-only admin credentials from the compose file and follows the first-user bootstrap flow when the control plane has no users yet.

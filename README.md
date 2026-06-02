@@ -128,7 +128,7 @@ streamforge/
 ├── sinks/           # Sink service implementations
 ├── ui/              # React/TypeScript operator UI
 ├── schemas/         # Avro and JSON schemas
-├── deploy/          # Development deployment assets
+├── deploy/          # Local dev stack and future package templates
 ├── docs/            # Architecture, security, readiness, and design docs
 └── copilot/         # Reserved for future AI/copilot work
 ```
@@ -140,13 +140,13 @@ broker. The config keys remain Kafka-named because they describe the protocol
 contract, not a dependency on Apache Kafka or Confluent images.
 
 ```bash
-docker compose -f deploy/docker-compose.dev.yml up -d --build
+docker compose -f deploy/dev/docker-compose.yml up -d --build
 ```
 
 Seed the demo environment:
 
 ```bash
-docker compose -f deploy/docker-compose.dev.yml --profile seed run --rm dev_bootstrap
+docker compose -f deploy/dev/docker-compose.yml --profile seed run --rm dev_bootstrap
 ```
 
 The seed path is only a local-demo shortcut. The production-like path is now

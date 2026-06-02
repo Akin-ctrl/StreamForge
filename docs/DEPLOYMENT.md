@@ -14,14 +14,19 @@ deployment instructions.
 - The local stream backbone is Kafka-compatible.
 - Redpanda is the chosen broker direction for StreamForge.
 - The current dev/runtime stack uses `redpandadata/redpanda:v26.1.9`.
+- The dev compose file avoids floating `latest` image tags; helper images
+  without trusted semantic tags are pinned by registry digest.
 - Kafka-compatible naming remains in config keys such as `KAFKA_BOOTSTRAP` and
   `kafka_bootstrap` because those describe the client protocol contract.
+- Redpanda data is stored in the `redpanda-data` compose volume. The gateway
+  runtime mounts that volume read-only so overflow checks observe the broker's
+  storage path instead of an unrelated container filesystem.
 - Production packaging, hardware sizing, image-pull templates, and remote-site
   installation guidance are still pending.
 
 ## Local Stack
 
-The local stack is defined in `deploy/docker-compose.dev.yml`.
+The local stack is defined in `deploy/dev/docker-compose.yml`.
 
 It starts:
 
@@ -35,6 +40,11 @@ It starts:
 - Prometheus
 - the React UI served through Nginx
 
+The compose project name is pinned to `deploy` so existing local container and
+network names remain stable after the dev files moved under `deploy/dev/`.
+This preserves the `deploy_default` Docker network expected by runtime-managed
+adapter and sink containers.
+
 ## Start Fresh
 
 Use this when you want a clean local verification run and do not need to keep
@@ -42,16 +52,16 @@ old local volumes. The seed command is a local-demo shortcut; it is not the
 production-like onboarding path.
 
 ```bash
-docker compose -f deploy/docker-compose.dev.yml down -v
-docker compose -f deploy/docker-compose.dev.yml up -d --build
-docker compose -f deploy/docker-compose.dev.yml --profile seed run --rm dev_bootstrap
+docker compose -f deploy/dev/docker-compose.yml down -v
+docker compose -f deploy/dev/docker-compose.yml up -d --build
+docker compose -f deploy/dev/docker-compose.yml --profile seed run --rm dev_bootstrap
 ```
 
 Use this when you want to rebuild without deleting local volumes:
 
 ```bash
-docker compose -f deploy/docker-compose.dev.yml up -d --build
-docker compose -f deploy/docker-compose.dev.yml --profile seed run --rm dev_bootstrap
+docker compose -f deploy/dev/docker-compose.yml up -d --build
+docker compose -f deploy/dev/docker-compose.yml --profile seed run --rm dev_bootstrap
 ```
 
 For production-like local verification, do not rely on `dev_bootstrap` to create
@@ -72,8 +82,8 @@ the local-demo seed shortcut.
 Start only the base services first:
 
 ```bash
-docker compose -f deploy/docker-compose.dev.yml up -d --build \
-  postgres timescaledb kafka modbus-simulator control_plane ui kafka_ui kafdrop
+docker compose -f deploy/dev/docker-compose.yml up -d --build \
+  postgres timescaledb kafka plant-simulator mqtt-broker control_plane ui kafka_ui kafdrop
 ```
 
 Then open the UI and bootstrap the first admin account. After login, create a
@@ -86,7 +96,7 @@ CONTROL_PLANE_GATEWAY_ID=gateway-site-01 \
 CONTROL_PLANE_GATEWAY_HOSTNAME=raspberrypi-line-1.local \
 CONTROL_PLANE_ENROLLMENT_TOKEN='<token-from-ui>' \
 CONTROL_PLANE_GATEWAY_HARDWARE_INFO='{"site":"local-verification","hardware":"raspberry-pi"}' \
-docker compose -f deploy/docker-compose.dev.yml up -d --build gateway_runtime prometheus
+docker compose -f deploy/dev/docker-compose.yml up -d --build gateway_runtime prometheus
 ```
 
 The gateway should appear as pending in the Gateways page. Approve it, then
@@ -181,7 +191,7 @@ If `gateway_runtime` logs show `gateway not registered`, choose one of two paths
 For local demo data, seed the dev topology:
 
 ```bash
-docker compose -f deploy/docker-compose.dev.yml --profile seed run --rm dev_bootstrap
+docker compose -f deploy/dev/docker-compose.yml --profile seed run --rm dev_bootstrap
 ```
 
 For production-like testing, create an enrollment token in the UI and restart the
@@ -209,7 +219,7 @@ wait briefly for the gateway manager to reconcile them. If they do not refresh,
 restart the dev stack with:
 
 ```bash
-docker compose -f deploy/docker-compose.dev.yml up -d --build
+docker compose -f deploy/dev/docker-compose.yml up -d --build
 ```
 
 ## What Is Not Covered Yet
