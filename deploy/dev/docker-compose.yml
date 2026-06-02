@@ -1,6 +1,18 @@
+name: deploy
+
+x-dev-images:
+  postgres: &postgres_image postgres:16-alpine
+  timescaledb: &timescaledb_image timescale/timescaledb@sha256:0af03ecf697825f6ddae76fd275d16bf46007bed6d00eb3d754779cb7db96fa6
+  redpanda: &redpanda_image redpandadata/redpanda:v26.1.9
+  dev_bootstrap: &dev_bootstrap_image python:3.12-slim
+  modbus_simulator: &modbus_simulator_image oitc/modbus-server@sha256:58a9e9b97b994a2bbfb79bbe43e25387a2e6c458220b44cd058007af3881c243
+  prometheus: &prometheus_image prom/prometheus:v3.2.1
+  kafdrop: &kafdrop_image obsidiandynamics/kafdrop:3.30.0
+  kafka_ui: &kafka_ui_image provectuslabs/kafka-ui@sha256:8f2ff02d64b0a7a2b71b6b3b3148b85f66d00ec20ad40c30bdcd415d46d31818
+
 services:
   postgres:
-    image: postgres:16-alpine
+    image: *postgres_image
     environment:
       POSTGRES_DB: streamforge
       POSTGRES_USER: streamforge
@@ -16,7 +28,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
 
   timescaledb:
-    image: timescale/timescaledb:latest-pg16
+    image: *timescaledb_image
     environment:
       POSTGRES_DB: streamforge
       POSTGRES_USER: streamforge
@@ -34,7 +46,7 @@ services:
   control_plane:
     image: streamforge/control-plane:dev
     build:
-      context: ../control-plane
+      context: ../../control-plane
       dockerfile: Dockerfile
     depends_on:
       postgres:
@@ -58,7 +70,7 @@ services:
       - "8001:8000"
 
   kafka:
-    image: redpandadata/redpanda:v26.1.9
+    image: *redpanda_image
     hostname: kafka
     command:
       - redpanda
@@ -96,29 +108,29 @@ services:
 
   dev_bootstrap:
     profiles: ["seed"]
-    image: python:3.12-slim
+    image: *dev_bootstrap_image
     depends_on:
       control_plane:
         condition: service_healthy
     volumes:
-      - .:/app/deploy:ro
+      - .:/app/deploy-dev:ro
     environment:
       CONTROL_PLANE_URL: http://control_plane:8000
       CONTROL_PLANE_GATEWAY_ID: gateway-demo-01
       DEV_ADMIN_USERNAME: streamforge_admin
       DEV_ADMIN_PASSWORD: LocalAdminBootstrap42
-      DEV_GATEWAY_CONFIG_PATH: /app/deploy/gateway_config.sample.json
-    command: ["python", "/app/deploy/dev_bootstrap.py"]
+      DEV_GATEWAY_CONFIG_PATH: /app/deploy-dev/gateway_config.sample.json
+    command: ["python", "/app/deploy-dev/dev_bootstrap.py"]
 
   modbus-simulator:
-    image: oitc/modbus-server:latest
+    image: *modbus_simulator_image
     ports:
       - "5020:5020"
 
   gateway_runtime:
     image: streamforge/gateway_runtime:dev
     build:
-      context: ..
+      context: ../..
       dockerfile: gateway_runtime/Dockerfile
     depends_on:
       kafka:
@@ -131,18 +143,20 @@ services:
         condition: service_healthy
     volumes:
       - ./gateway_config.sample.json:/config/gateway_config.json:ro
+      - redpanda-data:/var/lib/redpanda/data:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - gateway-data:/data
     environment:
       # Static config (uncomment to use instead of control-plane polling)
       # GATEWAY_CONFIG: /config/gateway_config.json
-     
+
       # Control-plane polling configuration (used for dynamic config)
       CONTROL_PLANE_URL: http://control_plane:8000
       CONTROL_PLANE_GATEWAY_ID: ${CONTROL_PLANE_GATEWAY_ID:-gateway-demo-01}
       CONTROL_PLANE_GATEWAY_HOSTNAME: ${CONTROL_PLANE_GATEWAY_HOSTNAME:-gateway-demo-01.local}
       CONTROL_PLANE_ENROLLMENT_TOKEN: ${CONTROL_PLANE_ENROLLMENT_TOKEN:-}
       CONTROL_PLANE_GATEWAY_HARDWARE_INFO: ${CONTROL_PLANE_GATEWAY_HARDWARE_INFO:-}
+      OVERFLOW_MONITOR_PATH: /var/lib/redpanda/data
       OVERFLOW_CHECK_INTERVAL: ${OVERFLOW_CHECK_INTERVAL:-60}
       OVERFLOW_COMPRESS_THRESHOLD_PERCENT: ${OVERFLOW_COMPRESS_THRESHOLD_PERCENT:-70}
       OVERFLOW_DOWNSAMPLE_THRESHOLD_PERCENT: ${OVERFLOW_DOWNSAMPLE_THRESHOLD_PERCENT:-80}
@@ -155,7 +169,7 @@ services:
       SCHEMA_CACHE_PATH: /data/schemas.cache.json
       # CONTROL_PLANE_CIRCUIT_BREAKER_FAILURE_THRESHOLD: Failures before control-plane requests pause (default: 5)
       # CONTROL_PLANE_CIRCUIT_BREAKER_OPEN_SECONDS: Cooldown before half-open retry (default: 30)
-      
+
       # Polling behavior tuning
       # GATEWAY_POLL_INTERVAL: Poll control-plane every N seconds (default: 30). Cached startups refresh immediately once.
       GATEWAY_POLL_INTERVAL: "30"
@@ -165,14 +179,16 @@ services:
       GATEWAY_POLL_MAX_BACKOFF: "300"
       # SINK_CIRCUIT_BREAKER_FAILURE_THRESHOLD: Failures before sink downstream writes pause (default: 5)
       # SINK_CIRCUIT_BREAKER_OPEN_SECONDS: Cooldown before sink retries resume (default: 30)
-      
+
       # Kafka-compatible broker and runtime configuration. The local broker image is Redpanda.
+      KAFKA_BROKER_FLAVOR: redpanda
       KAFKA_BOOTSTRAP: kafka:9092
       SCHEMA_REGISTRY_URL: http://schema_registry:8081
       ADAPTER_MODBUS_TCP_IMAGE: streamforge/gateway_runtime:dev
       # When the local broker is not already reachable, gateway_runtime can provision and supervise
       # its own single-node Redpanda container through the Docker socket.
       KAFKA_AUTO_MANAGE: "true"
+      REDPANDA_IMAGE: *redpanda_image
       HEALTH_HOST: 0.0.0.0
       HEALTH_PORT: "8088"
       DOCKER_NETWORK: deploy_default
@@ -193,7 +209,7 @@ services:
       - "8088:8088"
 
   prometheus:
-    image: prom/prometheus:v3.2.1
+    image: *prometheus_image
     depends_on:
       gateway_runtime:
         condition: service_started
@@ -203,7 +219,7 @@ services:
       - "9090:9090"
 
   kafdrop:
-    image: obsidiandynamics/kafdrop:3.30.0
+    image: *kafdrop_image
     depends_on:
       - kafka
     environment:
@@ -212,7 +228,7 @@ services:
       - "9000:9000"
 
   kafka_ui:
-    image: provectuslabs/kafka-ui:latest
+    image: *kafka_ui_image
     depends_on:
       - kafka
     ports:
@@ -224,7 +240,7 @@ services:
 
   ui:
     build:
-      context: ../ui
+      context: ../../ui
       dockerfile: Dockerfile
     depends_on:
       control_plane:
