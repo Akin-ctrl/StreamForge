@@ -185,6 +185,7 @@ class ControlPlaneConfigRepository(ConfigRepository):
             failure_threshold=int(os.getenv("CONTROL_PLANE_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "5")),
             open_duration_seconds=float(os.getenv("CONTROL_PLANE_CIRCUIT_BREAKER_OPEN_SECONDS", "30")),
         )
+        self._pending_cache_raw: dict | None = None
 
     @property
     def gateway_id(self) -> str:
@@ -211,11 +212,34 @@ class ControlPlaneConfigRepository(ConfigRepository):
 
     def refresh(self) -> GatewayConfig:
         """Fetch the latest config from the control plane and update the local cache."""
+        config = self.refresh_without_cache()
+        self.commit_pending_cache(config)
+        return config
+
+    def refresh_without_cache(self) -> GatewayConfig:
+        """Fetch the latest config without replacing the offline cache yet."""
         raw = self.get_json(f"/api/v1/gateways/{self._gateway_id}/config")
         self._assert_gateway_identity(raw)
         config = self._config_from_raw(raw, source="control_plane")
-        self._write_cache(raw)
+        self._pending_cache_raw = raw
         return config
+
+    def commit_pending_cache(self, config: GatewayConfig) -> None:
+        """Persist the most recent fetched config after runtime acceptance."""
+        raw = self._pending_cache_raw
+        if raw is None:
+            return
+        if raw.get("gateway_id") != config.gateway_id:
+            raise ConfigError("Pending config cache identity does not match accepted config")
+        raw_version = str(raw["version"]) if "version" in raw and raw["version"] is not None else None
+        if raw_version != config.version:
+            raise ConfigError("Pending config cache version does not match accepted config")
+        self._write_cache(raw)
+        self._pending_cache_raw = None
+
+    def discard_pending_cache(self) -> None:
+        """Drop the most recent fetched config when runtime acceptance fails."""
+        self._pending_cache_raw = None
 
     def health(self) -> dict[str, object]:
         """Return control-plane connectivity and cache health details."""

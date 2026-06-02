@@ -5,17 +5,19 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.secrets import upsert_secret_values
 from app.core.security import UserRole
-from app.db.models import Adapter, ConfigSecret, Gateway, Sink
+from app.db.models import Adapter, ConfigSecret, Deployment, Gateway, Sink
 from app.routers import adapters as adapter_routes
 from app.routers import deployments as deployment_routes
+from app.routers import gateways as gateway_routes
 from app.routers import sinks as sink_routes
 from app.schemas.adapters import AdapterCreateRequest
-from app.schemas.deployments import DeploymentCreateRequest
+from app.schemas.deployments import DeploymentCreateRequest, DeploymentUpdateRequest
 from app.schemas.sinks import SinkCreateRequest, SinkUpdateRequest
 
 
@@ -105,16 +107,21 @@ def build_timescaledb_sink_payload(sink_id: str = "sink-1") -> dict:
     }
 
 
-def seed_gateway(db_session: Session, gateway_id: str = "gateway-1") -> Gateway:
-    """Persist one approved online gateway for deployment tests."""
+def seed_gateway(
+    db_session: Session,
+    gateway_id: str = "gateway-1",
+    *,
+    approved: bool = True,
+) -> Gateway:
+    """Persist one gateway row for deployment tests."""
     gateway = Gateway(
         gateway_id=gateway_id,
         hostname=f"{gateway_id}.local",
-        status="online",
-        approved=True,
+        status="online" if approved else "pending",
+        approved=approved,
         created_by="tests",
         updated_by="tests",
-        approved_by="tests",
+        approved_by="tests" if approved else None,
     )
     db_session.add(gateway)
     db_session.commit()
@@ -157,6 +164,56 @@ def seed_sink(db_session: Session, sink_id: str = "sink-1") -> Sink:
     db_session.commit()
     db_session.refresh(sink)
     return sink
+
+
+def test_empty_inventory_routes_return_empty_lists(
+    db_session: Session,
+    user_factory: Callable[[UserRole, str | None], object],
+) -> None:
+    current_user = user_factory(UserRole.ADMIN)
+
+    assert gateway_routes.list_gateways(db=db_session, _=current_user) == []
+    assert adapter_routes.list_adapters(db=db_session, _=current_user) == []
+    assert sink_routes.list_sinks(db=db_session, _=current_user) == []
+    assert deployment_routes.list_deployments(db=db_session, _=current_user) == []
+
+
+def test_create_adapter_route_rejects_invalid_config_without_persisting(
+    db_session: Session,
+    user_factory: Callable[[UserRole, str | None], object],
+) -> None:
+    payload = build_modbus_adapter_payload()
+    payload["config"]["output"].pop("kafka_bootstrap")
+
+    with pytest.raises(HTTPException) as exc_info:
+        adapter_routes.create_adapter(
+            AdapterCreateRequest.model_validate(payload),
+            db=db_session,
+            current_user=user_factory(UserRole.ENGINEER),
+        )
+
+    assert exc_info.value.status_code == 422
+    assert "kafka_bootstrap" in str(exc_info.value.detail)
+    assert db_session.execute(select(Adapter)).scalars().all() == []
+
+
+def test_create_sink_route_rejects_invalid_config_without_persisting(
+    db_session: Session,
+    user_factory: Callable[[UserRole, str | None], object],
+) -> None:
+    payload = build_timescaledb_sink_payload()
+    payload["config"].pop("topic")
+
+    with pytest.raises(HTTPException) as exc_info:
+        sink_routes.create_sink(
+            SinkCreateRequest.model_validate(payload),
+            db=db_session,
+            current_user=user_factory(UserRole.ENGINEER),
+        )
+
+    assert exc_info.value.status_code == 422
+    assert "topic" in str(exc_info.value.detail)
+    assert db_session.execute(select(Sink)).scalars().all() == []
 
 
 def test_validate_adapter_route_surfaces_field_issue_for_missing_output_field(
@@ -319,3 +376,205 @@ def test_deployment_preflight_route_reports_missing_references(
     assert "Selected gateway was not found" in result.errors
     assert "Adapter 'adapter-missing' was not found" in result.errors
     assert "Sink 'sink-missing' was not found" in result.errors
+
+
+def test_active_deployment_create_rejects_pending_gateway_without_persisting(
+    db_session: Session,
+    user_factory: Callable[[UserRole, str | None], object],
+) -> None:
+    current_user = user_factory(UserRole.ADMIN)
+    gateway = seed_gateway(db_session, approved=False)
+    seed_adapter(db_session)
+    seed_sink(db_session)
+    payload = DeploymentCreateRequest.model_validate(
+        {
+            "deployment_id": "deployment-pending-gateway",
+            "name": "Pending Gateway Deployment",
+            "gateway_id": gateway.gateway_id,
+            "status": "active",
+            "adapter_ids": ["adapter-1"],
+            "sink_ids": ["sink-1"],
+        }
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        deployment_routes.create_deployment(payload, db=db_session, current_user=current_user)
+
+    assert exc_info.value.status_code == 409
+    assert "Gateway must be approved" in str(exc_info.value.detail)
+    assert db_session.execute(
+        select(Deployment).where(Deployment.deployment_id == "deployment-pending-gateway")
+    ).scalar_one_or_none() is None
+
+    gateway.approved = True
+    gateway.status = "approved"
+    gateway.approved_by = current_user.username
+    db_session.add(gateway)
+    db_session.commit()
+
+    created = deployment_routes.create_deployment(payload, db=db_session, current_user=current_user)
+
+    assert created.status == "active"
+    assert created.gateway_id == gateway.gateway_id
+
+
+def test_deployment_preflight_allows_pending_gateway_draft_with_warning(
+    db_session: Session,
+    user_factory: Callable[[UserRole, str | None], object],
+) -> None:
+    seed_gateway(db_session, approved=False)
+    seed_adapter(db_session)
+    seed_sink(db_session)
+
+    result = deployment_routes.preflight_deployment_route(
+        DeploymentCreateRequest.model_validate(
+            {
+                "deployment_id": "deployment-draft-pending",
+                "name": "Pending Gateway Draft",
+                "gateway_id": "gateway-1",
+                "status": "draft",
+                "adapter_ids": ["adapter-1"],
+                "sink_ids": ["sink-1"],
+            }
+        ),
+        db=db_session,
+        _=user_factory(UserRole.ENGINEER),
+    )
+
+    assert result.ready is True
+    assert result.errors == []
+    assert result.warnings == ["Gateway is not approved yet; deployment will not apply until approval is complete"]
+
+
+def test_active_deployment_create_rejects_failed_preflight_without_replacing_current_active(
+    db_session: Session,
+    user_factory: Callable[[UserRole, str | None], object],
+) -> None:
+    current_user = user_factory(UserRole.ADMIN)
+    seed_gateway(db_session)
+    seed_adapter(db_session, "adapter-good")
+    seed_sink(db_session)
+
+    active = deployment_routes.create_deployment(
+        DeploymentCreateRequest.model_validate(
+            {
+                "deployment_id": "deployment-current",
+                "name": "Current Good Deployment",
+                "gateway_id": "gateway-1",
+                "status": "active",
+                "adapter_ids": ["adapter-good"],
+                "sink_ids": ["sink-1"],
+            }
+        ),
+        db=db_session,
+        current_user=current_user,
+    )
+    assert active.status == "active"
+
+    invalid_config = build_modbus_adapter_payload("adapter-bad")["config"]
+    invalid_config["output"].pop("kafka_bootstrap")
+    db_session.add(
+        Adapter(
+            adapter_id="adapter-bad",
+            name="Bad PLC",
+            adapter_type="modbus_tcp",
+            status="active",
+            config=invalid_config,
+            created_by="tests",
+            updated_by="tests",
+        )
+    )
+    db_session.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        deployment_routes.create_deployment(
+            DeploymentCreateRequest.model_validate(
+                {
+                    "deployment_id": "deployment-bad",
+                    "name": "Bad Deployment",
+                    "gateway_id": "gateway-1",
+                    "status": "active",
+                    "adapter_ids": ["adapter-bad"],
+                    "sink_ids": ["sink-1"],
+                }
+            ),
+            db=db_session,
+            current_user=current_user,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "kafka_bootstrap" in str(exc_info.value.detail)
+
+    db_session.expire_all()
+    current = db_session.execute(
+        select(Deployment).where(Deployment.deployment_id == "deployment-current")
+    ).scalar_one()
+    assert current.status == "active"
+    assert db_session.execute(
+        select(Deployment).where(Deployment.deployment_id == "deployment-bad")
+    ).scalar_one_or_none() is None
+
+
+def test_active_deployment_update_rejects_failed_preflight_without_mutating_members(
+    db_session: Session,
+    user_factory: Callable[[UserRole, str | None], object],
+) -> None:
+    current_user = user_factory(UserRole.ADMIN)
+    seed_gateway(db_session)
+    seed_adapter(db_session, "adapter-good")
+    seed_sink(db_session)
+    deployment_routes.create_deployment(
+        DeploymentCreateRequest.model_validate(
+            {
+                "deployment_id": "deployment-current",
+                "name": "Current Good Deployment",
+                "gateway_id": "gateway-1",
+                "status": "active",
+                "adapter_ids": ["adapter-good"],
+                "sink_ids": ["sink-1"],
+            }
+        ),
+        db=db_session,
+        current_user=current_user,
+    )
+
+    invalid_config = build_modbus_adapter_payload("adapter-bad")["config"]
+    invalid_config["output"].pop("kafka_bootstrap")
+    db_session.add(
+        Adapter(
+            adapter_id="adapter-bad",
+            name="Bad PLC",
+            adapter_type="modbus_tcp",
+            status="active",
+            config=invalid_config,
+            created_by="tests",
+            updated_by="tests",
+        )
+    )
+    db_session.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        deployment_routes.update_deployment(
+            "deployment-current",
+            DeploymentUpdateRequest.model_validate(
+                {
+                    "name": "Invalid Update",
+                    "status": "active",
+                    "adapter_ids": ["adapter-bad"],
+                    "sink_ids": ["sink-1"],
+                }
+            ),
+            db=db_session,
+            current_user=current_user,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "kafka_bootstrap" in str(exc_info.value.detail)
+
+    db_session.rollback()
+    db_session.expire_all()
+    current = db_session.execute(
+        select(Deployment).where(Deployment.deployment_id == "deployment-current")
+    ).scalar_one()
+    assert current.status == "active"
+    assert [adapter.adapter_id for adapter in current.adapters] == ["adapter-good"]

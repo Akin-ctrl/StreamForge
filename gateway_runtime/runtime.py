@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 import logging
 import os
+import random
 import shutil
 import time
 from typing import Dict
@@ -82,7 +83,19 @@ class GatewayRuntime:
         self._heartbeat_interval = int(os.getenv("GATEWAY_HEARTBEAT_INTERVAL", "30"))
         self._connection_test_interval = max(int(os.getenv("GATEWAY_CONNECTION_TEST_INTERVAL", "5")), 1)
         self._metrics_path = os.getenv("GATEWAY_METRICS_PATH", "/data")
-        self._provisioning_retry_interval = max(int(os.getenv("GATEWAY_PROVISIONING_RETRY_INTERVAL", "5")), 1)
+        self._provisioning_retry_interval = max(float(os.getenv("GATEWAY_PROVISIONING_RETRY_INTERVAL", "5")), 1.0)
+        self._provisioning_retry_max_interval = max(
+            float(os.getenv("GATEWAY_PROVISIONING_RETRY_MAX_INTERVAL", "60")),
+            self._provisioning_retry_interval,
+        )
+        self._provisioning_retry_backoff_multiplier = max(
+            float(os.getenv("GATEWAY_PROVISIONING_RETRY_BACKOFF_MULTIPLIER", "2.0")),
+            1.0,
+        )
+        self._provisioning_retry_jitter_ratio = min(
+            max(float(os.getenv("GATEWAY_PROVISIONING_RETRY_JITTER_RATIO", "0.2")), 0.0),
+            1.0,
+        )
         self._startup_status = "initializing"
         self._startup_error: str | None = None
         self._adapter_throttle_policy: Dict[str, object] = {
@@ -259,8 +272,8 @@ class GatewayRuntime:
                 if backoff_delay > 0:
                     await asyncio.sleep(backoff_delay)
                 
-                # Fetch new config
-                new_config = self._config_repo.refresh()
+                # Fetch new config without replacing the offline cache until runtime acceptance.
+                new_config = self._refresh_config_candidate()
                 
                 # Apply config if different
                 if self._has_config_changed(self._current_config, new_config):
@@ -268,13 +281,15 @@ class GatewayRuntime:
                         "gateway runtime detected configuration change for gateway %s; applying update",
                         new_config.gateway_id,
                     )
-                    self._apply_config_update(new_config)
+                    self._apply_config_update_safely(new_config)
                     self._current_config = new_config
+                self._commit_config_candidate(new_config)
                 
                 # Reset backoff on success
                 backoff_delay = self._poll_interval
                 
             except ConfigError as exc:
+                self._discard_config_candidate()
                 # Control plane unreachable or error; exponential backoff
                 backoff_delay = self._next_poll_backoff(backoff_delay)
                 logger.warning(
@@ -286,6 +301,7 @@ class GatewayRuntime:
 
     def _load_initial_config(self) -> GatewayConfig:
         """Load initial config, retrying when the gateway is waiting for operator provisioning."""
+        retry_delay = self._provisioning_retry_interval
         while True:
             try:
                 config = self._config_repo.load()
@@ -297,8 +313,14 @@ class GatewayRuntime:
 
                 self._startup_status = "waiting_for_provisioning"
                 self._startup_error = str(exc)
-                logger.warning("gateway runtime waiting for provisioning: %s", exc)
-                time.sleep(self._provisioning_retry_interval)
+                sleep_delay = self._provisioning_retry_sleep_delay(retry_delay)
+                logger.warning(
+                    "gateway runtime waiting for provisioning; retrying in %.1fs: %s",
+                    sleep_delay,
+                    exc,
+                )
+                time.sleep(sleep_delay)
+                retry_delay = self._next_provisioning_backoff(retry_delay)
                 continue
 
             self._startup_status = "configured"
@@ -316,6 +338,23 @@ class GatewayRuntime:
             "gateway token request denied: gateway is pending approval",
         )
         return any(marker in message for marker in retryable_markers)
+
+    def _next_provisioning_backoff(self, current_delay: float) -> float:
+        """Calculate the next first-boot provisioning retry delay."""
+        if current_delay <= 0:
+            return self._provisioning_retry_interval
+        return min(
+            current_delay * self._provisioning_retry_backoff_multiplier,
+            self._provisioning_retry_max_interval,
+        )
+
+    def _provisioning_retry_sleep_delay(self, base_delay: float) -> float:
+        """Apply bounded jitter to one provisioning retry sleep."""
+        jitter_ratio = self._provisioning_retry_jitter_ratio
+        if jitter_ratio <= 0:
+            return max(base_delay, 1.0)
+        jitter_window = base_delay * jitter_ratio
+        return max(random.uniform(base_delay - jitter_window, base_delay + jitter_window), 1.0)
 
     async def _heartbeat_loop(self) -> None:
         """Push gateway runtime health and system metrics to the control plane."""
@@ -454,6 +493,22 @@ class GatewayRuntime:
             return float(self._poll_interval)
         return min(current_delay * self._poll_backoff_multiplier, self._poll_max_backoff)
 
+    def _refresh_config_candidate(self) -> GatewayConfig:
+        """Fetch one config candidate without committing it to offline cache yet."""
+        if isinstance(self._config_repo, ControlPlaneConfigRepository):
+            return self._config_repo.refresh_without_cache()
+        return self._config_repo.refresh()
+
+    def _commit_config_candidate(self, config: GatewayConfig) -> None:
+        """Persist accepted remote config for offline reuse."""
+        if isinstance(self._config_repo, ControlPlaneConfigRepository):
+            self._config_repo.commit_pending_cache(config)
+
+    def _discard_config_candidate(self) -> None:
+        """Discard an unaccepted remote config candidate."""
+        if isinstance(self._config_repo, ControlPlaneConfigRepository):
+            self._config_repo.discard_pending_cache()
+
     def _has_config_changed(self, old: GatewayConfig | None, new: GatewayConfig) -> bool:
         """Check if adapter configuration has changed."""
         if old is None:
@@ -489,6 +544,87 @@ class GatewayRuntime:
                 return True
         
         return False
+
+    def _apply_config_update_safely(self, new_config: GatewayConfig) -> None:
+        """Apply a candidate config without losing the current last-known-good config."""
+        last_good_config = self._current_config
+        try:
+            self._apply_config_update(new_config)
+        except Exception as exc:
+            if last_good_config is not None:
+                self._restore_last_known_good_config(last_good_config)
+            raise ConfigError(
+                f"Config update failed; retained last-known-good deployment: {exc}"
+            ) from exc
+
+    def _restore_last_known_good_config(self, config: GatewayConfig) -> None:
+        """Best-effort runtime rollback to the last accepted gateway config."""
+        logger.warning(
+            "gateway runtime restoring last-known-good config for gateway %s (deployment=%s, version=%s)",
+            config.gateway_id,
+            config.deployment_id or "none",
+            config.version,
+        )
+        try:
+            self._adapters.stop_all()
+            self._adapters.start_all(config.adapters)
+            if self._overflow is not None:
+                self._overflow.set_desired_adapters(config.adapters)
+            self._sinks.stop_all()
+            self._sinks.start_all(config.sinks)
+            self._restart_processing_modules(config)
+        except Exception:
+            logger.exception(
+                "gateway runtime failed to fully restore last-known-good config for gateway %s",
+                config.gateway_id,
+            )
+
+    def _restart_processing_modules(self, config: GatewayConfig) -> None:
+        """Restart validation/event/aggregate modules from one accepted config."""
+        if self._validator:
+            self._validator.stop()
+            self._validator = None
+        if self._event_validator:
+            self._event_validator.stop()
+            self._event_validator = None
+        if self._aggregator:
+            self._aggregator.stop()
+            self._aggregator = None
+
+        validation_rules = dict(config.validation) if isinstance(config.validation, dict) else {}
+        if config.deployment_id and "deployment_id" not in validation_rules:
+            validation_rules["deployment_id"] = config.deployment_id
+        if validation_rules.get("enabled", True):
+            control_plane_repo = self._config_repo if isinstance(self._config_repo, ControlPlaneConfigRepository) else None
+            self._validator = ValidatorModule(
+                bootstrap=self._kafka.bootstrap,
+                gateway_id=config.gateway_id,
+                rules=validation_rules,
+                control_plane=control_plane_repo,
+            )
+            self._validator.start()
+
+        event_rules = dict(config.events) if isinstance(config.events, dict) else {}
+        if config.deployment_id and "deployment_id" not in event_rules:
+            event_rules["deployment_id"] = config.deployment_id
+        if event_rules.get("enabled", False):
+            control_plane_repo = self._config_repo if isinstance(self._config_repo, ControlPlaneConfigRepository) else None
+            self._event_validator = EventValidatorModule(
+                bootstrap=self._kafka.bootstrap,
+                gateway_id=config.gateway_id,
+                rules=event_rules,
+                control_plane=control_plane_repo,
+            )
+            self._event_validator.start()
+
+        aggregate_rules = config.aggregates if isinstance(config.aggregates, dict) else {}
+        if aggregate_rules.get("enabled", True):
+            self._aggregator = AggregatorModule(
+                bootstrap=self._kafka.bootstrap,
+                gateway_id=config.gateway_id,
+                rules=aggregate_rules,
+            )
+            self._aggregator.start()
 
     def _apply_config_update(self, new_config: GatewayConfig) -> None:
         """Apply configuration changes by restarting affected adapters."""

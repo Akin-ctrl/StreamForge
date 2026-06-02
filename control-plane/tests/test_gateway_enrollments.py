@@ -11,12 +11,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.gateway_enrollments import hash_enrollment_token, utc_now
-from app.core.security import UserRole
+from app.core.security import UserRole, create_gateway_token
 from app.db.models import Gateway, GatewayEnrollmentToken
 from app.routers import gateway_enrollments as enrollment_routes
 from app.routers import gateways as gateway_routes
 from app.schemas.gateway_enrollments import GatewayEnrollmentCreateRequest
-from app.schemas.gateways import GatewayApproveResponse, GatewayEnrollRequest, GatewayTokenRequest
+from app.schemas.gateways import GatewayApproveResponse, GatewayEnrollRequest, GatewayHeartbeatRequest, GatewayTokenRequest
 
 
 def create_enrollment(
@@ -107,6 +107,51 @@ def test_gateway_enrolls_as_pending_then_gets_token_after_approval(
     issued = gateway_routes.issue_gateway_token(GatewayTokenRequest(gateway_id="gateway-plant-a-01"), db=db_session)
     assert issued.gateway_id == "gateway-plant-a-01"
     assert issued.token
+
+
+def test_pending_gateway_rejects_stale_runtime_token_until_approved(
+    db_session: Session,
+    user_factory: Callable[[UserRole, str | None], object],
+) -> None:
+    gateway = Gateway(
+        gateway_id="gateway-pending-runtime",
+        hostname="pending.local",
+        status="pending",
+        approved=False,
+        created_by="tests",
+    )
+    db_session.add(gateway)
+    db_session.commit()
+    token, _ = create_gateway_token(gateway.gateway_id)
+
+    with pytest.raises(HTTPException) as config_exc:
+        gateway_routes.get_gateway_config(gateway.gateway_id, token=token, db=db_session)
+    assert config_exc.value.status_code == 403
+    assert config_exc.value.detail == "Gateway is pending approval"
+
+    with pytest.raises(HTTPException) as heartbeat_exc:
+        gateway_routes.gateway_heartbeat(
+            gateway.gateway_id,
+            GatewayHeartbeatRequest(health={"status": "healthy"}, metrics={}),
+            token=token,
+            db=db_session,
+        )
+    assert heartbeat_exc.value.status_code == 403
+    assert heartbeat_exc.value.detail == "Gateway is pending approval"
+
+    with pytest.raises(HTTPException) as renew_exc:
+        gateway_routes.renew_gateway_token(token=token, db=db_session)
+    assert renew_exc.value.status_code == 403
+    assert renew_exc.value.detail == "Gateway is pending approval"
+
+    gateway_routes.approve_gateway(gateway.gateway_id, db=db_session, current_user=user_factory(UserRole.ADMIN))
+
+    renewed = gateway_routes.renew_gateway_token(token=token, db=db_session)
+    config = gateway_routes.get_gateway_config(gateway.gateway_id, token=renewed.token, db=db_session)
+
+    assert renewed.gateway_id == gateway.gateway_id
+    assert config["gateway_id"] == gateway.gateway_id
+    assert config["deployment_id"] is None
 
 
 def test_repeated_pending_enroll_refreshes_metadata_without_consuming_another_use(

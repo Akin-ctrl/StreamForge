@@ -146,6 +146,40 @@ class ControlPlaneConfigRepositoryTests(unittest.TestCase):
             updated = json.loads(cache_path.read_text(encoding="utf-8"))
             self.assertEqual(updated["version"], "2")
 
+    def test_refresh_without_cache_waits_for_runtime_acceptance_before_persisting(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "gateway.json"
+            cache_path.write_text(json.dumps(_raw_config("1")), encoding="utf-8")
+            repo = StubControlPlaneConfigRepository(str(cache_path), [_raw_config("2")])
+
+            cached = repo.load()
+            candidate = repo.refresh_without_cache()
+
+            self.assertEqual(cached.version, "1")
+            self.assertEqual(candidate.version, "2")
+            still_cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            self.assertEqual(still_cached["version"], "1")
+
+            repo.commit_pending_cache(candidate)
+
+            updated = json.loads(cache_path.read_text(encoding="utf-8"))
+            self.assertEqual(updated["version"], "2")
+
+    def test_invalid_refresh_candidate_does_not_replace_last_known_good_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "gateway.json"
+            cache_path.write_text(json.dumps(_raw_config("1")), encoding="utf-8")
+            repo = StubControlPlaneConfigRepository(
+                str(cache_path),
+                [{"gateway_id": "gw-edge-01", "version": "bad"}],
+            )
+
+            with self.assertRaisesRegex(ConfigError, "adapters"):
+                repo.refresh_without_cache()
+
+            still_cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            self.assertEqual(still_cached["version"], "1")
+
     def test_onboarding_token_responses_do_not_open_circuit_breaker(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             cache_path = Path(temp_dir) / "gateway.json"

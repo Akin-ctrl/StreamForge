@@ -116,6 +116,30 @@ def _to_item(row: Deployment) -> DeploymentItem:
     )
 
 
+def _preflight_failure_detail(result: DeploymentPreflightResult) -> dict:
+    return {
+        "message": "Deployment preflight failed",
+        "errors": result.errors,
+        "warnings": result.warnings,
+        "field_issues": [issue.model_dump() for issue in result.field_issues],
+    }
+
+
+def _enforce_activation_preflight(
+    db: Session,
+    payload: DeploymentCreateRequest,
+    gateway: Gateway,
+    adapters: list[Adapter],
+    sinks: list[Sink],
+) -> None:
+    if payload.status != "active":
+        return
+
+    result = preflight_deployment(db, payload, gateway, adapters, sinks)
+    if not result.ready:
+        raise HTTPException(status_code=409, detail=_preflight_failure_detail(result))
+
+
 @router.get("", response_model=list[DeploymentItem])
 def list_deployments(
     db: Session = Depends(get_db),
@@ -183,6 +207,11 @@ def create_deployment(
     gateway = _resolve_gateway(db, payload.gateway_id)
     adapters = _resolve_adapters(db, payload.adapter_ids)
     sinks = _resolve_sinks(db, payload.sink_ids)
+    _enforce_activation_preflight(db, payload, gateway, adapters, sinks)
+
+    if payload.status == "active":
+        _deactivate_other_deployments(db, gateway.id, None, current_user)
+        db.flush()
 
     row = Deployment(
         deployment_id=payload.deployment_id,
@@ -200,9 +229,6 @@ def create_deployment(
     row.sinks = sinks
     db.add(row)
     db.flush()
-
-    if row.status == "active":
-        _deactivate_other_deployments(db, gateway.id, row.id, current_user)
 
     record_audit_event(
         db,
@@ -255,20 +281,50 @@ def update_deployment(
         raise HTTPException(status_code=404, detail="Deployment not found")
 
     was_active = row.status == "active"
-    if payload.name is not None:
-        row.name = payload.name
     if payload.status is not None:
         validate_deployment_status(payload.status)
         if payload.status == "active" and row.status != "active" and "deployments:activate" not in permission_set_for_user(current_user):
             raise HTTPException(status_code=403, detail="Missing permission: deployments:activate")
-        row.status = payload.status
+
+    next_status = payload.status if payload.status is not None else row.status
+    next_adapter_ids = payload.adapter_ids if payload.adapter_ids is not None else [adapter.adapter_id for adapter in row.adapters]
+    next_sink_ids = payload.sink_ids if payload.sink_ids is not None else [sink.sink_id for sink in row.sinks]
 
     if payload.adapter_ids is not None:
-        validate_deployment_payload(payload.adapter_ids, payload.sink_ids or [sink.sink_id for sink in row.sinks])
-        row.adapters = _resolve_adapters(db, payload.adapter_ids)
+        validate_deployment_payload(payload.adapter_ids, next_sink_ids)
     if payload.sink_ids is not None:
-        validate_deployment_payload(payload.adapter_ids or [adapter.adapter_id for adapter in row.adapters], payload.sink_ids)
-        row.sinks = _resolve_sinks(db, payload.sink_ids)
+        validate_deployment_payload(next_adapter_ids, payload.sink_ids)
+
+    next_adapters = _resolve_adapters(db, next_adapter_ids) if payload.adapter_ids is not None else list(row.adapters)
+    next_sinks = _resolve_sinks(db, next_sink_ids) if payload.sink_ids is not None else list(row.sinks)
+    next_validation_config = payload.validation_config if payload.validation_config is not None else row.validation_config
+    next_events_config = payload.events_config if payload.events_config is not None else row.events_config
+    next_aggregates_config = payload.aggregates_config if payload.aggregates_config is not None else row.aggregates_config
+    activation_payload = DeploymentCreateRequest(
+        deployment_id=row.deployment_id,
+        name=payload.name or row.name,
+        gateway_id=row.gateway.gateway_id,
+        status=next_status,
+        adapter_ids=next_adapter_ids,
+        sink_ids=next_sink_ids,
+        validation_config=next_validation_config if isinstance(next_validation_config, dict) else {},
+        events_config=next_events_config if isinstance(next_events_config, dict) else {},
+        aggregates_config=next_aggregates_config if isinstance(next_aggregates_config, dict) else {},
+    )
+    _enforce_activation_preflight(db, activation_payload, row.gateway, next_adapters, next_sinks)
+
+    if next_status == "active" and row.status != "active":
+        _deactivate_other_deployments(db, row.gateway_id, row.id, current_user)
+        db.flush()
+
+    if payload.name is not None:
+        row.name = payload.name
+    if payload.status is not None:
+        row.status = payload.status
+    if payload.adapter_ids is not None:
+        row.adapters = next_adapters
+    if payload.sink_ids is not None:
+        row.sinks = next_sinks
 
     if payload.validation_config is not None:
         row.validation_config = payload.validation_config

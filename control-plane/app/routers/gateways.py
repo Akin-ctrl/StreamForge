@@ -272,7 +272,7 @@ def issue_gateway_token(
 
 
 @router.post("/token/renew", response_model=GatewayTokenResponse)
-def renew_gateway_token(token: str = Depends(oauth2_scheme)) -> GatewayTokenResponse:
+def renew_gateway_token(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> GatewayTokenResponse:
     try:
         claims = decode_gateway_token(token)
     except AuthError as exc:
@@ -281,6 +281,12 @@ def renew_gateway_token(token: str = Depends(oauth2_scheme)) -> GatewayTokenResp
     gateway_id = claims.get("sub")
     if not gateway_id:
         raise HTTPException(status_code=401, detail="Invalid gateway token")
+
+    gateway = db.execute(select(Gateway).where(Gateway.gateway_id == gateway_id)).scalar_one_or_none()
+    if gateway is None:
+        raise HTTPException(status_code=401, detail="Gateway not found")
+    if not gateway.approved:
+        raise HTTPException(status_code=403, detail="Gateway is pending approval")
 
     new_token, expires_at = create_gateway_token(gateway_id)
     return GatewayTokenResponse(token=new_token, expires_at=expires_at, gateway_id=gateway_id)

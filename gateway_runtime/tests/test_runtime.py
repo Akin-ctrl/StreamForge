@@ -7,16 +7,16 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from gateway_runtime.config import ConfigError, ControlPlaneConfigRepository, GatewayConfig
+from gateway_runtime.config import AdapterConfig, ConfigError, ControlPlaneConfigRepository, GatewayConfig
 from gateway_runtime.health import HealthReporter
 from gateway_runtime.runtime import GatewayRuntime
 
 
-def _gateway_config(version: str) -> GatewayConfig:
+def _gateway_config(version: str, adapters: list[AdapterConfig] | None = None) -> GatewayConfig:
     return GatewayConfig(
         gateway_id="gw-edge-01",
         deployment_id="deployment-demo-01",
-        adapters=[],
+        adapters=list(adapters or []),
         sinks=[],
         validation={"enabled": False},
         events={"enabled": False},
@@ -47,6 +47,15 @@ class PollingControlPlaneRepo(ControlPlaneConfigRepository):
         self.refresh_calls += 1
         self._last_load_source = "control_plane"
         return _gateway_config("cached")
+
+    def refresh_without_cache(self) -> GatewayConfig:
+        return self.refresh()
+
+    def commit_pending_cache(self, config: GatewayConfig) -> None:
+        return None
+
+    def discard_pending_cache(self) -> None:
+        return None
 
     def cleanup(self) -> None:
         self._temp_dir.cleanup()
@@ -98,6 +107,82 @@ class ProvisioningRetryRepo(PollingControlPlaneRepo):
             raise response
         self._last_load_source = "control_plane"
         return response
+
+
+class RecoveringPollingControlPlaneRepo(PollingControlPlaneRepo):
+    def __init__(self, responses: list[GatewayConfig | Exception]) -> None:
+        super().__init__()
+        self._responses = list(responses)
+        self.committed_versions: list[str | None] = []
+        self.discard_count = 0
+        self.stop_event: asyncio.Event | None = None
+
+    def refresh_without_cache(self) -> GatewayConfig:
+        self.refresh_calls += 1
+        if not self._responses:
+            raise AssertionError("Unexpected polling refresh")
+        response = self._responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        self._last_load_source = "control_plane"
+        if self.stop_event is not None:
+            self.stop_event.set()
+        return response
+
+    def commit_pending_cache(self, config: GatewayConfig) -> None:
+        self.committed_versions.append(config.version)
+
+    def discard_pending_cache(self) -> None:
+        self.discard_count += 1
+
+
+class RecoveringHeartbeatControlPlaneRepo(PollingControlPlaneRepo):
+    def __init__(self) -> None:
+        super().__init__()
+        self.post_attempts = 0
+        self.heartbeats: list[dict] = []
+        self.stop_event: asyncio.Event | None = None
+
+    def post_json(self, path: str, payload: dict, authenticated: bool = True) -> dict:
+        self.post_attempts += 1
+        if self.post_attempts == 1:
+            raise ConfigError("Control Plane heartbeat endpoint unreachable")
+        self.heartbeats.append({"path": path, "payload": payload, "authenticated": authenticated})
+        if self.stop_event is not None:
+            self.stop_event.set()
+        return {}
+
+
+class RecoveringConnectionTestControlPlaneRepo(PollingControlPlaneRepo):
+    def __init__(self) -> None:
+        super().__init__()
+        self.pending_calls = 0
+        self.post_attempts = 0
+        self.completions: list[dict] = []
+        self.stop_event: asyncio.Event | None = None
+
+    def get_json_list(self, path: str, authenticated: bool = True) -> list[dict]:
+        self.pending_calls += 1
+        if path != "/api/v1/gateway-connection-tests/pending":
+            return []
+        return [
+            {
+                "request_id": "gct-retry",
+                "target_kind": "adapter",
+                "target_id": "mqtt-source",
+                "target_type": "mqtt",
+                "config": {"broker_host": "mqtt.local", "broker_port": 1883},
+            }
+        ]
+
+    def post_json(self, path: str, payload: dict, authenticated: bool = True) -> dict:
+        self.post_attempts += 1
+        if self.post_attempts == 1:
+            raise ConfigError("Control Plane completion endpoint unreachable")
+        self.completions.append({"path": path, "payload": payload, "authenticated": authenticated})
+        if self.stop_event is not None:
+            self.stop_event.set()
+        return {}
 
 
 class FakeKafkaManager:
@@ -292,6 +377,74 @@ class GatewayRuntimePollingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("health", heartbeat["payload"])
         self.assertIn("metrics", heartbeat["payload"])
 
+    async def test_polling_loop_recovers_after_control_plane_refresh_failure(self) -> None:
+        recovered_adapter = AdapterConfig(
+            adapter_id="adapter-recovered",
+            adapter_type="modbus_tcp",
+            config={"host": "192.168.1.50", "port": 502},
+        )
+        recovered_config = _gateway_config("recovered", adapters=[recovered_adapter])
+        repo = RecoveringPollingControlPlaneRepo(
+            [
+                ConfigError("Control Plane request failed: temporary network partition"),
+                recovered_config,
+            ]
+        )
+        runtime = GatewayRuntime(
+            config_repo=repo,
+            kafka=FakeKafkaManager(),
+            adapters=FakeAdapterManager(),
+            sinks=FakeSinkManager(),
+            health=FakeHealthReporter(),
+        )
+        runtime._current_config = _gateway_config("cached")
+        runtime._polling_stop_event = asyncio.Event()
+        runtime._poll_interval = 1
+        repo.stop_event = runtime._polling_stop_event
+        real_sleep = asyncio.sleep
+
+        async def fast_sleep(delay: float) -> None:
+            await real_sleep(0)
+
+        try:
+            with patch("gateway_runtime.runtime.asyncio.sleep", side_effect=fast_sleep):
+                await runtime._polling_loop()
+        finally:
+            repo.cleanup()
+
+        self.assertEqual(repo.refresh_calls, 2)
+        self.assertEqual(repo.discard_count, 1)
+        self.assertEqual(repo.committed_versions, ["recovered"])
+        self.assertEqual(runtime._current_config.version, "recovered")
+
+    async def test_heartbeat_loop_recovers_after_control_plane_post_failure(self) -> None:
+        repo = RecoveringHeartbeatControlPlaneRepo()
+        runtime = GatewayRuntime(
+            config_repo=repo,
+            kafka=FakeKafkaManager(),
+            adapters=FakeAdapterManager(),
+            sinks=FakeSinkManager(),
+            health=FakeHealthReporter(),
+        )
+        runtime._current_config = _gateway_config("heartbeat")
+        runtime._heartbeat_stop_event = asyncio.Event()
+        runtime._heartbeat_interval = 1
+        repo.stop_event = runtime._heartbeat_stop_event
+        real_sleep = asyncio.sleep
+
+        async def fast_sleep(delay: float) -> None:
+            await real_sleep(0)
+
+        try:
+            with patch("gateway_runtime.runtime.asyncio.sleep", side_effect=fast_sleep):
+                await runtime._heartbeat_loop()
+        finally:
+            repo.cleanup()
+
+        self.assertEqual(repo.post_attempts, 2)
+        self.assertEqual(len(repo.heartbeats), 1)
+        self.assertEqual(repo.heartbeats[0]["path"], "/api/v1/gateways/gw-edge-01/heartbeat")
+
     async def test_runtime_processes_gateway_connection_test_actions(self) -> None:
         repo = ConnectionTestControlPlaneRepo()
         runtime = GatewayRuntime(
@@ -320,6 +473,46 @@ class GatewayRuntimePollingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(repo.completions[0]["path"], "/api/v1/gateway-connection-tests/gct-test/complete")
         self.assertTrue(repo.completions[0]["payload"]["result"]["ok"])
 
+    async def test_connection_test_loop_recovers_after_completion_post_failure(self) -> None:
+        repo = RecoveringConnectionTestControlPlaneRepo()
+        runtime = GatewayRuntime(
+            config_repo=repo,
+            kafka=FakeKafkaManager(),
+            adapters=FakeAdapterManager(),
+            sinks=FakeSinkManager(),
+            health=FakeHealthReporter(),
+        )
+        runtime._current_config = _gateway_config("connection-tests")
+        runtime._connection_test_stop_event = asyncio.Event()
+        runtime._connection_test_interval = 1
+        repo.stop_event = runtime._connection_test_stop_event
+        real_sleep = asyncio.sleep
+
+        async def fast_sleep(delay: float) -> None:
+            await real_sleep(0)
+
+        with patch(
+            "gateway_runtime.runtime.run_gateway_connection_test",
+            return_value={
+                "ok": True,
+                "status": "passed",
+                "message": "Reached mqtt.local:1883",
+                "warnings": [],
+                "probes": [{"name": "MQTT", "status": "passed", "message": "Reached mqtt.local:1883"}],
+            },
+        ) as probe_mock:
+            try:
+                with patch("gateway_runtime.runtime.asyncio.sleep", side_effect=fast_sleep):
+                    await runtime._connection_test_loop()
+            finally:
+                repo.cleanup()
+
+        self.assertEqual(repo.pending_calls, 2)
+        self.assertEqual(repo.post_attempts, 2)
+        self.assertEqual(len(repo.completions), 1)
+        self.assertEqual(repo.completions[0]["path"], "/api/v1/gateway-connection-tests/gct-retry/complete")
+        self.assertEqual(probe_mock.call_count, 2)
+
     async def test_initial_start_waits_for_gateway_registration_and_then_recovers(self) -> None:
         repo = ProvisioningRetryRepo(
             [
@@ -344,6 +537,118 @@ class GatewayRuntimePollingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(config.version, "provisioned")
         self.assertEqual(runtime._startup_status, "configured")
         self.assertEqual(sleep_mock.call_count, 1)
+
+    async def test_initial_provisioning_retry_uses_bounded_exponential_backoff(self) -> None:
+        repo = ProvisioningRetryRepo(
+            [
+                ConfigError("Gateway token request failed: gateway not registered"),
+                ConfigError("Gateway token request denied: gateway is pending approval"),
+                ConfigError("Gateway token request failed: gateway not registered"),
+                _gateway_config("provisioned"),
+            ]
+        )
+        runtime = GatewayRuntime(
+            config_repo=repo,
+            kafka=FakeKafkaManager(),
+            adapters=FakeAdapterManager(),
+            sinks=FakeSinkManager(),
+            health=FakeHealthReporter(),
+        )
+        runtime._provisioning_retry_interval = 5.0
+        runtime._provisioning_retry_backoff_multiplier = 2.0
+        runtime._provisioning_retry_max_interval = 12.0
+        runtime._provisioning_retry_jitter_ratio = 0.0
+
+        try:
+            with patch("gateway_runtime.runtime.time.sleep", return_value=None) as sleep_mock:
+                config = runtime._load_initial_config()
+        finally:
+            repo.cleanup()
+
+        self.assertEqual(config.version, "provisioned")
+        self.assertEqual([call.args[0] for call in sleep_mock.call_args_list], [5.0, 10.0, 12.0])
+        self.assertEqual(runtime._startup_status, "configured")
+
+    async def test_initial_provisioning_retry_applies_bounded_jitter(self) -> None:
+        repo = PollingControlPlaneRepo()
+        runtime = GatewayRuntime(
+            config_repo=repo,
+            kafka=FakeKafkaManager(),
+            adapters=FakeAdapterManager(),
+            sinks=FakeSinkManager(),
+            health=FakeHealthReporter(),
+        )
+        runtime._provisioning_retry_jitter_ratio = 0.2
+
+        try:
+            with patch("gateway_runtime.runtime.random.uniform", return_value=11.5) as jitter_mock:
+                delay = runtime._provisioning_retry_sleep_delay(10.0)
+        finally:
+            repo.cleanup()
+
+        self.assertEqual(delay, 11.5)
+        jitter_mock.assert_called_once_with(8.0, 12.0)
+
+    async def test_failed_config_apply_restores_last_known_good_runtime_config(self) -> None:
+        class FailingAdapterManager(FakeAdapterManager):
+            def __init__(self) -> None:
+                super().__init__()
+                self.operations: list[tuple[str, str | list[str]]] = []
+
+            def start_all(self, adapters) -> None:
+                self.started = list(adapters)
+                self.operations.append(("start_all", [adapter.adapter_id for adapter in adapters]))
+
+            def stop_all(self) -> None:
+                self.operations.append(("stop_all", [adapter.adapter_id for adapter in self.started]))
+                self.started = []
+
+            def start_adapter(self, adapter) -> None:
+                self.operations.append(("start_adapter", adapter.adapter_id))
+                if adapter.adapter_id == "adapter-bad":
+                    raise RuntimeError("adapter container failed to start")
+                self.started = [item for item in self.started if item.adapter_id != adapter.adapter_id]
+                self.started.append(adapter)
+
+            def stop_adapter(self, adapter_id: str) -> None:
+                self.operations.append(("stop_adapter", adapter_id))
+                self.started = [adapter for adapter in self.started if adapter.adapter_id != adapter_id]
+
+        repo = PollingControlPlaneRepo()
+        adapters = FailingAdapterManager()
+        old_adapter = AdapterConfig(
+            adapter_id="adapter-good",
+            adapter_type="modbus_tcp",
+            config={"host": "192.168.1.10", "port": 502},
+        )
+        bad_adapter = AdapterConfig(
+            adapter_id="adapter-bad",
+            adapter_type="modbus_tcp",
+            config={"host": "192.168.1.20", "port": 502},
+        )
+        old_config = _gateway_config("good", adapters=[old_adapter])
+        bad_config = _gateway_config("bad", adapters=[bad_adapter])
+        runtime = GatewayRuntime(
+            config_repo=repo,
+            kafka=FakeKafkaManager(),
+            adapters=adapters,
+            sinks=FakeSinkManager(),
+            health=FakeHealthReporter(),
+        )
+        runtime._current_config = old_config
+        adapters.start_all(old_config.adapters)
+
+        try:
+            with self.assertRaisesRegex(ConfigError, "retained last-known-good"):
+                runtime._apply_config_update_safely(bad_config)
+        finally:
+            repo.cleanup()
+
+        self.assertIs(runtime._current_config, old_config)
+        self.assertEqual([adapter.adapter_id for adapter in adapters.started], ["adapter-good"])
+        self.assertIn(("stop_adapter", "adapter-good"), adapters.operations)
+        self.assertIn(("start_adapter", "adapter-bad"), adapters.operations)
+        self.assertIn(("start_all", ["adapter-good"]), adapters.operations)
 
     async def test_metrics_snapshot_exposes_validator_pipeline_metrics(self) -> None:
         repo = PollingControlPlaneRepo()

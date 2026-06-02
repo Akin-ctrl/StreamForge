@@ -172,7 +172,12 @@ def preflight_deployment(
         field_issues.append(ValidationIssue(field_path="gateway_id", message="Selected gateway was not found"))
     else:
         if not gateway.approved:
-            warnings.append("Gateway is not approved yet; deployment will not apply until approval is complete")
+            message = "Gateway must be approved before an active deployment can be applied"
+            if payload.status == "active":
+                errors.append(message)
+                field_issues.append(ValidationIssue(field_path="gateway_id", message=message))
+            else:
+                warnings.append("Gateway is not approved yet; deployment will not apply until approval is complete")
         if payload.status == "active" and gateway.status == "offline":
             warnings.append("Gateway is offline; activation will remain pending until the gateway reconnects")
 
