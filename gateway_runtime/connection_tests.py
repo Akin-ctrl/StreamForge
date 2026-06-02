@@ -92,8 +92,17 @@ def _test_modbus_tcp(config: dict) -> dict:
     try:
         from pymodbus.client import ModbusTcpClient  # type: ignore
     except ModuleNotFoundError:
-        return _single_probe_result(
-            _probe("Modbus TCP client availability", "unsupported", "pymodbus is not installed in the gateway runtime")
+        return _result(
+            ok=False,
+            status="cannot_test_from_gateway",
+            message="pymodbus is not installed in the gateway runtime",
+            probes=[
+                _probe(
+                    "Modbus TCP client availability",
+                    "unsupported",
+                    "pymodbus is not installed in the gateway runtime",
+                )
+            ],
         )
 
     client = ModbusTcpClient(host=host, port=port, timeout=3)
@@ -121,6 +130,15 @@ def _test_modbus_rtu(config: dict) -> dict:
             status="cannot_test_from_gateway",
             message="Serial port is required before the gateway can test Modbus RTU access",
             probes=[_probe("Modbus RTU device access from gateway", "unsupported", "Missing serial_port")],
+        )
+    parsed = urlparse(serial_port)
+    if parsed.scheme in {"rtu", "rtu-tcp", "tcp"}:
+        return _single_probe_result(
+            _probe_tcp_endpoint(
+                "Modbus RTU-framed endpoint reachability from gateway",
+                host=parsed.hostname or "",
+                port=parsed.port or 502,
+            )
         )
     if not os.path.exists(serial_port):
         return _result(

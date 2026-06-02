@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import pytest
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,13 +19,14 @@ from app.schemas.gateway_connection_tests import (
 from app.schemas.operations import ConnectionProbeResult, ConnectionTestResult
 
 
-def _seed_gateway(db_session: Session) -> Gateway:
+def _seed_gateway(db_session: Session, *, approved: bool = True) -> Gateway:
     gateway = Gateway(
         gateway_id="gateway-site-01",
         hostname="gateway-site-01.local",
-        status="approved",
-        approved=True,
+        status="approved" if approved else "pending",
+        approved=approved,
         created_by="tests",
+        approved_by="tests" if approved else None,
     )
     db_session.add(gateway)
     db_session.commit()
@@ -71,6 +74,48 @@ def test_operator_requests_gateway_side_adapter_test_and_gateway_receives_action
     ).scalar_one()
     assert row.status == "RUNNING"
     assert row.started_at is not None
+
+
+def test_pending_gateway_cannot_receive_connection_test_until_approved(
+    db_session: Session,
+    user_factory: Callable[[UserRole, str | None], object],
+) -> None:
+    gateway = _seed_gateway(db_session, approved=False)
+    db_session.add(
+        Adapter(
+            adapter_id="modbus-line-1",
+            name="Line 1 PLC",
+            adapter_type="modbus_tcp",
+            status="active",
+            config={"host": "10.0.0.10", "port": 502},
+            created_by="tests",
+        )
+    )
+    db_session.commit()
+    current_user = user_factory(UserRole.ENGINEER)
+    payload = GatewayConnectionTestCreateRequest(
+        gateway_id=gateway.gateway_id,
+        target_kind="adapter",
+        target_id="modbus-line-1",
+    )
+
+    with pytest.raises(HTTPException) as pending_exc:
+        routes.request_gateway_connection_test(payload, db=db_session, current_user=current_user)
+
+    assert pending_exc.value.status_code == 409
+    assert "approved" in str(pending_exc.value.detail)
+    assert db_session.execute(select(GatewayConnectionTest)).scalars().all() == []
+
+    gateway.approved = True
+    gateway.status = "approved"
+    gateway.approved_by = "tests"
+    db_session.add(gateway)
+    db_session.commit()
+
+    requested = routes.request_gateway_connection_test(payload, db=db_session, current_user=current_user)
+
+    assert requested.gateway_id == gateway.gateway_id
+    assert requested.status == "REQUESTED"
 
 
 def test_gateway_completion_persists_terminal_result(

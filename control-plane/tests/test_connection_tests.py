@@ -57,6 +57,28 @@ def test_modbus_tcp_connection_uses_default_port_when_input_is_invalid(monkeypat
     assert seen == [("192.168.1.10", 502)]
 
 
+def test_modbus_rtu_framed_tcp_endpoint_uses_reachability_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[tuple[str, int]] = []
+
+    def fake_create_connection(address: tuple[str, int], timeout: int) -> object:
+        seen.append(address)
+        return nullcontext()
+
+    monkeypatch.setattr("app.core.connection_tests.create_connection", fake_create_connection)
+
+    result = run_adapter_connection(
+        "modbus_rtu",
+        {
+            "serial_port": "rtu://plant-simulator:16020",
+        },
+    )
+
+    assert result.ok is True
+    assert result.status == "passed"
+    assert seen == [("plant-simulator", 16020)]
+    assert result.probes[0].name == "Modbus RTU-framed endpoint reachability"
+
+
 def test_timescaledb_connection_reports_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.core.connection_tests.psycopg.connect", lambda dsn, connect_timeout: _FakeConnection())
 

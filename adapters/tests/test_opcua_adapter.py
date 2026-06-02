@@ -39,6 +39,7 @@ class FakeOpcUaClient:
         self.connected = False
         self.endpoint = None
         self.subscription = None
+        self.subscription_interval_ms = None
 
     def set_user(self, username: str) -> None:
         self.username = username
@@ -53,6 +54,7 @@ class FakeOpcUaClient:
         self.connected = False
 
     def create_subscription(self, interval_ms: int, handler) -> FakeSubscription:
+        self.subscription_interval_ms = interval_ms
         self.subscription = FakeSubscription(handler)
         return self.subscription
 
@@ -101,6 +103,25 @@ class OpcUaAdapterTests(unittest.TestCase):
         self.assertEqual(client.username, "demo")
         self.assertEqual(client.password, "secret")
         self.assertEqual(client.subscription.handles, ["handle:ns=2;s=Line1.Temperature"])
+
+    def test_canonical_subscription_and_asset_override_fields_are_accepted(self) -> None:
+        config = self._config()
+        config.pop("subscription_interval_ms")
+        config["subscription"] = {"publishing_interval_ms": 750}
+        config["advanced"] = {"security_mode": "None", "security_policy": "None"}
+        config["monitored_items"][0].pop("asset_id")
+        config["monitored_items"][0]["asset_id_override"] = "line1_override"
+        adapter = OpcUaAdapter(config)
+        client = FakeOpcUaClient()
+        adapter._create_client = lambda endpoint: client  # type: ignore[method-assign]
+
+        adapter.connect()
+        adapter._ingest_datachange(FakeNode("ns=2;s=Line1.Temperature"), 81.0, FakeDataChange())
+        message = adapter.transform(adapter.poll())
+
+        self.assertEqual(client.subscription_interval_ms, 750)
+        self.assertEqual(client.subscription.handles, ["handle:ns=2;s=Line1.Temperature"])
+        self.assertEqual(message["asset_id"], "line1_override")
 
     def test_disconnect_unsubscribes_monitored_items_and_clears_connection(self) -> None:
         adapter = OpcUaAdapter(self._config())

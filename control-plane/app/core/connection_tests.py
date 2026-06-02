@@ -31,6 +31,15 @@ def test_adapter_connection(adapter_type: str, config: dict) -> ConnectionTestRe
                 message="Serial port is required before the control plane can test Modbus RTU access",
                 probes=[ConnectionProbeResult(name="Modbus RTU device access", status="unsupported", message="Missing serial_port")],
             )
+        parsed = urlparse(serial_port)
+        if parsed.scheme in {"rtu", "rtu-tcp", "tcp"}:
+            return _single_probe_result(
+                _probe_tcp_endpoint(
+                    "Modbus RTU-framed endpoint reachability",
+                    host=parsed.hostname or "",
+                    port=parsed.port or 502,
+                )
+            )
         if not os.path.exists(serial_port):
             return ConnectionTestResult(
                 ok=False,

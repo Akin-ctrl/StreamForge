@@ -399,7 +399,7 @@ class AdapterManager:
             for item in raw_devices:
                 if isinstance(item, str) and item.strip():
                     devices.append(item.strip())
-        serial_port = config.get("port") or config.get("device")
+        serial_port = config.get("port") or config.get("device") or config.get("serial_port")
         if isinstance(serial_port, str) and serial_port.startswith("/dev/"):
             mapping = f"{serial_port}:{serial_port}:rwm"
             if mapping not in devices:
